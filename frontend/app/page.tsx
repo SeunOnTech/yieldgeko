@@ -6,7 +6,7 @@ import { EIP712_DOMAIN, ADDRESSES } from '@yieldgeko/core'
 import { useSignIntent } from '../hooks/useSignIntent'
 import { useYieldVault } from '../hooks/useYieldVault'
 import { storageService } from '../lib/storage'
-import { useYieldGekoRouterNonces } from '../src/generated'
+import { useReadYieldGekoRouterNonces } from '../src/generated'
 
 export default function Home() {
   const { address, isConnected } = useAccount()
@@ -25,7 +25,7 @@ export default function Home() {
   const targetYields = [8, 18, 35] // Target APYs
 
   // Get live nonce from contract
-  const { data: nonce } = useYieldGekoRouterNonces({
+  const { data: nonce } = useReadYieldGekoRouterNonces({
     address: ADDRESSES.YIELD_GEKO_ROUTER as `0x${string}`,
     args: address ? [address] : undefined
   })

@@ -1,14 +1,14 @@
 import { useWriteContract, useAccount, useReadContract } from 'wagmi';
 import { ADDRESSES } from '@yieldgeko/core';
 import { parseUnits } from 'viem';
-import { useYieldGekoRouterUserBalances } from '../src/generated';
+import { useReadYieldGekoRouterUserBalances } from '../src/generated';
 
 export function useYieldVault(assetAddress: `0x${string}`) {
   const { writeContractAsync } = useWriteContract();
   const { address } = useAccount();
 
   // Read current balance from contract
-  const { data: balance, refetch: refetchBalance } = useYieldGekoRouterUserBalances({
+  const { data: balance, refetch: refetchBalance } = useReadYieldGekoRouterUserBalances({
     address: ADDRESSES.YIELD_GEKO_ROUTER as `0x${string}`,
     args: address ? [address, assetAddress] : undefined
   });

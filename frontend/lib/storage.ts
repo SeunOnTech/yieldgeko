@@ -12,11 +12,11 @@ export interface StorageConfig {
   indexerUrl: string;
 }
 
-// Default Galileo Testnet Config
+// Official Galileo Testnet Config
 const DEFAULT_CONFIG: StorageConfig = {
   rpcUrl: "https://evmrpc-testnet.0g.ai",
-  storageNodeUrl: "https://storage-node-testnet.0g.ai", // Placeholder, will be injected via env
-  indexerUrl: "https://indexer-testnet.0g.ai"
+  storageNodeUrl: "https://indexer-storage-testnet-turbo.0g.ai", // Using the turbo indexer
+  indexerUrl: "https://indexer-storage-testnet-turbo.0g.ai"
 };
 
 export class YieldGekoStorage {

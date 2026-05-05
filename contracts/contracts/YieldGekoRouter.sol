@@ -94,6 +94,19 @@ contract YieldGekoRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
         emit Withdrawn(msg.sender, _asset, _amount);
     }
 
+    struct BatchMigrationParams {
+        Intent intent;
+        bytes signature;
+        address fromStrategy;
+        address toStrategy;
+        address asset;
+        uint256 amount;
+        uint256 actualSlippageBps;
+        uint256 actualAPY;
+    }
+
+    event MigrationFailed(address indexed user, string reason);
+
     function executeMigration(
         Intent calldata _intent,
         bytes calldata _signature,
@@ -104,6 +117,64 @@ contract YieldGekoRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
         uint256 _actualSlippageBps,
         uint256 _actualAPY
     ) external onlyAuthorizedAgent whenNotPaused nonReentrant {
+        _executeMigration(
+            _intent, _signature, _fromStrategy, _toStrategy, _asset, _amount, _actualSlippageBps, _actualAPY
+        );
+    }
+
+    function executeBatchMigration(BatchMigrationParams[] calldata _params)
+        external
+        onlyAuthorizedAgent
+        whenNotPaused
+        nonReentrant
+    {
+        for (uint256 i = 0; i < _params.length; i++) {
+            // Note: In production, we'd use a more sophisticated way to handle gas left
+            try this.executeMigrationExternal(
+                _params[i].intent,
+                _params[i].signature,
+                _params[i].fromStrategy,
+                _params[i].toStrategy,
+                _params[i].asset,
+                _params[i].amount,
+                _params[i].actualSlippageBps,
+                _params[i].actualAPY
+            ) {
+            // Success
+            }
+            catch {
+                emit MigrationFailed(_params[i].intent.user, "Batch migration failed");
+            }
+        }
+    }
+
+    // Helper to allow try-catch to work on internal logic
+    function executeMigrationExternal(
+        Intent calldata _intent,
+        bytes calldata _signature,
+        address _fromStrategy,
+        address _toStrategy,
+        address _asset,
+        uint256 _amount,
+        uint256 _actualSlippageBps,
+        uint256 _actualAPY
+    ) external {
+        require(msg.sender == address(this), "Only internal batching");
+        _executeMigration(
+            _intent, _signature, _fromStrategy, _toStrategy, _asset, _amount, _actualSlippageBps, _actualAPY
+        );
+    }
+
+    function _executeMigration(
+        Intent calldata _intent,
+        bytes calldata _signature,
+        address _fromStrategy,
+        address _toStrategy,
+        address _asset,
+        uint256 _amount,
+        uint256 _actualSlippageBps,
+        uint256 _actualAPY
+    ) internal {
         require(block.timestamp <= _intent.deadline, "Intent expired");
         require(_intent.nonce == nonces[_intent.user], "Invalid nonce");
         require(registry.isStrategyApproved(_toStrategy), "Target not approved");
@@ -136,9 +207,6 @@ contract YieldGekoRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
         if (totalFee > 0) {
             IERC20(_asset).safeTransfer(treasury, totalFee);
         }
-
-        // Logic for routing netAmount to strategy adapter would go here
-        // uint256 netAmount = _amount - totalFee;
 
         // Increment nonce AFTER successful execution
         nonces[_intent.user]++;

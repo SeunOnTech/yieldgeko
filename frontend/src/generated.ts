@@ -283,6 +283,44 @@ export const yieldGekoRouterAbi = [
     type: 'function',
     inputs: [
       {
+        name: '_params',
+        internalType: 'struct YieldGekoRouter.BatchMigrationParams[]',
+        type: 'tuple[]',
+        components: [
+          {
+            name: 'intent',
+            internalType: 'struct YieldGekoRouter.Intent',
+            type: 'tuple',
+            components: [
+              { name: 'user', internalType: 'address', type: 'address' },
+              { name: 'minAPY', internalType: 'uint256', type: 'uint256' },
+              { name: 'maxSlippage', internalType: 'uint256', type: 'uint256' },
+              { name: 'nonce', internalType: 'uint256', type: 'uint256' },
+              { name: 'deadline', internalType: 'uint256', type: 'uint256' },
+            ],
+          },
+          { name: 'signature', internalType: 'bytes', type: 'bytes' },
+          { name: 'fromStrategy', internalType: 'address', type: 'address' },
+          { name: 'toStrategy', internalType: 'address', type: 'address' },
+          { name: 'asset', internalType: 'address', type: 'address' },
+          { name: 'amount', internalType: 'uint256', type: 'uint256' },
+          {
+            name: 'actualSlippageBps',
+            internalType: 'uint256',
+            type: 'uint256',
+          },
+          { name: 'actualAPY', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+    ],
+    name: 'executeBatchMigration',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      {
         name: '_intent',
         internalType: 'struct YieldGekoRouter.Intent',
         type: 'tuple',
@@ -303,6 +341,33 @@ export const yieldGekoRouterAbi = [
       { name: '_actualAPY', internalType: 'uint256', type: 'uint256' },
     ],
     name: 'executeMigration',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      {
+        name: '_intent',
+        internalType: 'struct YieldGekoRouter.Intent',
+        type: 'tuple',
+        components: [
+          { name: 'user', internalType: 'address', type: 'address' },
+          { name: 'minAPY', internalType: 'uint256', type: 'uint256' },
+          { name: 'maxSlippage', internalType: 'uint256', type: 'uint256' },
+          { name: 'nonce', internalType: 'uint256', type: 'uint256' },
+          { name: 'deadline', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+      { name: '_signature', internalType: 'bytes', type: 'bytes' },
+      { name: '_fromStrategy', internalType: 'address', type: 'address' },
+      { name: '_toStrategy', internalType: 'address', type: 'address' },
+      { name: '_asset', internalType: 'address', type: 'address' },
+      { name: '_amount', internalType: 'uint256', type: 'uint256' },
+      { name: '_actualSlippageBps', internalType: 'uint256', type: 'uint256' },
+      { name: '_actualAPY', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'executeMigrationExternal',
     outputs: [],
     stateMutability: 'nonpayable',
   },
@@ -470,6 +535,20 @@ export const yieldGekoRouterAbi = [
       },
     ],
     name: 'MigrationExecuted',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'user', internalType: 'address', type: 'address', indexed: true },
+      {
+        name: 'reason',
+        internalType: 'string',
+        type: 'string',
+        indexed: false,
+      },
+    ],
+    name: 'MigrationFailed',
   },
   {
     type: 'event',
@@ -921,12 +1000,30 @@ export const useWriteYieldGekoRouterDeposit =
   })
 
 /**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `functionName` set to `"executeBatchMigration"`
+ */
+export const useWriteYieldGekoRouterExecuteBatchMigration =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: yieldGekoRouterAbi,
+    functionName: 'executeBatchMigration',
+  })
+
+/**
  * Wraps __{@link useWriteContract}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `functionName` set to `"executeMigration"`
  */
 export const useWriteYieldGekoRouterExecuteMigration =
   /*#__PURE__*/ createUseWriteContract({
     abi: yieldGekoRouterAbi,
     functionName: 'executeMigration',
+  })
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `functionName` set to `"executeMigrationExternal"`
+ */
+export const useWriteYieldGekoRouterExecuteMigrationExternal =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: yieldGekoRouterAbi,
+    functionName: 'executeMigrationExternal',
   })
 
 /**
@@ -1008,12 +1105,30 @@ export const useSimulateYieldGekoRouterDeposit =
   })
 
 /**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `functionName` set to `"executeBatchMigration"`
+ */
+export const useSimulateYieldGekoRouterExecuteBatchMigration =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: yieldGekoRouterAbi,
+    functionName: 'executeBatchMigration',
+  })
+
+/**
  * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `functionName` set to `"executeMigration"`
  */
 export const useSimulateYieldGekoRouterExecuteMigration =
   /*#__PURE__*/ createUseSimulateContract({
     abi: yieldGekoRouterAbi,
     functionName: 'executeMigration',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `functionName` set to `"executeMigrationExternal"`
+ */
+export const useSimulateYieldGekoRouterExecuteMigrationExternal =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: yieldGekoRouterAbi,
+    functionName: 'executeMigrationExternal',
   })
 
 /**
@@ -1119,6 +1234,15 @@ export const useWatchYieldGekoRouterMigrationExecutedEvent =
   /*#__PURE__*/ createUseWatchContractEvent({
     abi: yieldGekoRouterAbi,
     eventName: 'MigrationExecuted',
+  })
+
+/**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `eventName` set to `"MigrationFailed"`
+ */
+export const useWatchYieldGekoRouterMigrationFailedEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({
+    abi: yieldGekoRouterAbi,
+    eventName: 'MigrationFailed',
   })
 
 /**

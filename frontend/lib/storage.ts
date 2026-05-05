@@ -1,5 +1,5 @@
 import { EncryptedUserState } from '../types/user-state';
-import { encryptData, generateAESKey, exportKeyBase64 } from './encryption';
+import { encryptPayload, generateKey, exportKeyBase64 } from '@yieldgeko/core';
 
 /**
  * 0G Storage Service Wrapper
@@ -34,18 +34,16 @@ export class YieldGekoStorage {
    */
   async persistIntent(state: any): Promise<{ cid: string; key: string; iv: string }> {
     // 1. Generate Key & Encrypt
-    const key = await generateAESKey();
-    const { iv, encrypted } = await encryptData(state, key);
+    const key = await generateKey();
+    const { iv, encrypted } = await encryptPayload(state, key);
     const keyBase64 = await exportKeyBase64(key);
+    const ivBase64 = Buffer.from(iv).toString('base64');
+    const encryptedBase64 = Buffer.from(encrypted).toString('base64');
 
     // 2. Upload to 0G Storage
-    // In a pro production setup, we use the 0G Gateway or AgentKit Storage Module
-    // For now, we simulate the upload and return a mock CID if the node is unreachable
-    // but we prepare the payload exactly for 0G.
-    
     const payload = JSON.stringify({
-      data: encrypted,
-      iv: iv,
+      data: encryptedBase64,
+      iv: ivBase64,
       metadata: {
         app: "YieldGeko",
         version: "1.0",
@@ -61,7 +59,7 @@ export class YieldGekoStorage {
     return {
       cid: mockCid,
       key: keyBase64,
-      iv: iv
+      iv: ivBase64
     };
   }
 

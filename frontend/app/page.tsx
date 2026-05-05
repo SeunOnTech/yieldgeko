@@ -1,57 +1,74 @@
 'use client'
 
 import { useState } from 'react'
-import { useAccount, useSignTypedData } from 'wagmi'
-import { EIP712_DOMAIN } from '@yieldgeko/core'
-
-const TYPES = {
-  Intent: [
-    { name: 'user', type: 'address' },
-    { name: 'minAPY', type: 'uint256' },
-    { name: 'maxSlippage', type: 'uint256' },
-    { name: 'nonce', type: 'uint256' },
-    { name: 'deadline', type: 'uint256' }
-  ]
-} as const
+import { useAccount } from 'wagmi'
+import { EIP712_DOMAIN, ADDRESSES } from '@yieldgeko/core'
+import { useSignIntent } from '../hooks/useSignIntent'
+import { useYieldVault } from '../hooks/useYieldVault'
+import { storageService } from '../lib/storage'
+import { useYieldGekoRouterNonces } from '../src/generated'
 
 export default function Home() {
   const { address, isConnected } = useAccount()
-  const { signTypedDataAsync } = useSignTypedData()
+  const { signIntent } = useSignIntent()
+  const { balance } = useYieldVault("0x65a085d7F6e65a085D7F6E65A085d7f6E65a085D")
   
   const [risk, setRisk] = useState(1) // 0: Cons, 1: Bal, 2: Agg
   const [status, setStatus] = useState<'idle' | 'signing' | 'success' | 'error'>('idle')
   const [signature, setSignature] = useState<string | null>(null)
+  const [cid, setCid] = useState<string | null>(null)
   
   // Day 1: Monitoring Status & Active Capital
   const [isMonitoring, setIsMonitoring] = useState(false)
-  const [activeCapital, setActiveCapital] = useState("0.00")
 
   const riskLabels = ['Conservative', 'Balanced', 'Aggressive']
   const targetYields = [8, 18, 35] // Target APYs
+
+  // Get live nonce from contract
+  const { data: nonce } = useYieldGekoRouterNonces({
+    address: ADDRESSES.YIELD_GEKO_ROUTER as `0x${string}`,
+    args: address ? [address] : undefined
+  })
 
   const handleSignIntent = async () => {
     if (!address) return
     setStatus('signing')
     
     try {
-      const intent = {
-        user: address,
-        minAPY: BigInt(targetYields[risk] * 100), // e.g. 1800 for 18%
-        maxSlippage: BigInt(100), // 1%
-        nonce: BigInt(0),
-        deadline: BigInt(Math.floor(Date.now() / 1000) + 3600)
+      // 1. Sign Intent (EIP-712)
+      const deadline = Math.floor(Date.now() / 1000) + 3600
+      const signResult = await signIntent(
+        targetYields[risk] * 100, // minAPY
+        100, // maxSlippage
+        Number(nonce || 0),
+        deadline
+      )
+      
+      setSignature(signResult.signature)
+
+      // 2. Encrypt & Persist to 0G Storage
+      const userState = {
+        intent: {
+          minAPY: targetYields[risk] * 100,
+          maxSlippage: 100,
+          riskTier: riskLabels[risk].toLowerCase()
+        },
+        metadata: {
+          walletAddress: address,
+          createdAt: Date.now(),
+          version: "1.0"
+        }
       }
 
-      const sig = await signTypedDataAsync({
-        domain: EIP712_DOMAIN,
-        types: TYPES,
-        primaryType: 'Intent',
-        message: intent
-      })
+      const storageResult = await storageService.persistIntent(userState)
+      setCid(storageResult.cid)
       
-      setSignature(sig)
+      // 3. Store decryption key locally
+      localStorage.setItem(`geko_key_${address}`, storageResult.key)
+      localStorage.setItem(`geko_iv_${address}`, storageResult.iv)
+
       setStatus('success')
-      setIsMonitoring(true) // Activate monitoring after signing
+      setIsMonitoring(true)
     } catch (err) {
       console.error(err)
       setStatus('error')
@@ -115,9 +132,16 @@ export default function Home() {
           )}
 
           {status === 'success' && (
-            <div style={{ marginTop: '2rem', padding: '1rem', background: 'rgba(0,255,0,0.1)', borderRadius: '12px', wordBreak: 'break-all' }}>
+            <div style={{ marginTop: '2rem', padding: '1rem', background: 'rgba(0,255,0,0.1)', borderRadius: '12px', wordBreak: 'break-all', textAlign: 'left' }}>
               <p style={{ color: 'var(--primary)', fontWeight: 'bold', marginBottom: '0.5rem' }}>✓ Intent Signed Successfully</p>
-              <code style={{ fontSize: '0.7rem', opacity: 0.7 }}>{signature}</code>
+              <code style={{ fontSize: '0.6rem', opacity: 0.7, display: 'block', marginBottom: '1rem' }}>{signature}</code>
+              
+              {cid && (
+                <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '1rem' }}>
+                  <p style={{ fontSize: '0.7rem', color: 'var(--accent)', fontWeight: 'bold', textTransform: 'uppercase' }}>0G Storage CID</p>
+                  <code style={{ fontSize: '0.7rem', opacity: 0.9 }}>{cid}</code>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -126,7 +150,7 @@ export default function Home() {
         <div className="glass" style={{ marginTop: '2rem', padding: '2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <h3 style={{ fontSize: '0.8rem', opacity: 0.6, textTransform: 'uppercase', letterSpacing: '0.1em' }}>Active Capital</h3>
-            <div style={{ fontSize: '2.5rem', fontWeight: 'bold' }}>${activeCapital}</div>
+            <div style={{ fontSize: '2.5rem', fontWeight: 'bold' }}>${balance ? (Number(balance) / 1e6).toFixed(2) : "0.00"}</div>
           </div>
           <div style={{ textAlign: 'right' }}>
             <p style={{ color: 'var(--primary)', fontWeight: 'bold' }}>+12.4% Uplift</p>

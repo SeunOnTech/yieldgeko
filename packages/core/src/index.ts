@@ -14,3 +14,13 @@ export const EIP712_DOMAIN = {
   chainId: CHAIN_ID,
   verifyingContract: ADDRESSES.YIELD_GEKO_ROUTER
 } as const;
+
+export const INTENT_TYPES = {
+  Intent: [
+    { name: "user", type: "address" },
+    { name: "minAPY", type: "uint256" },
+    { name: "maxSlippage", type: "uint256" },
+    { name: "nonce", type: "uint256" },
+    { name: "deadline", type: "uint256" },
+  ],
+} as const;

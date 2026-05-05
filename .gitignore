@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+.pnpm-debug.log
+
+# Build Outputs
+.next/
+out/
+dist/
+build/
+artifacts/
+cache/
+typechain/
+typechain-types/
+
+# Foundry
+out/
+cache/
+
+# Turborepo
+.turbo/
+
+# Secrets (CRITICAL)
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+PRIVATE_KEY
+
+# IDEs
+.vscode/
+.idea/
+.DS_Store
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+deploy_*.log
+*.log

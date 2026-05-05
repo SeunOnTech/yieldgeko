@@ -19,8 +19,22 @@ export default function Home() {
   const [cid, setCid] = useState<string | null>(null)
   const [selectedProof, setSelectedProof] = useState<any | null>(null)
   
-  // Day 1: Monitoring Status & Active Capital
   const [isMonitoring, setIsMonitoring] = useState(false)
+  const [ledger, setLedger] = useState([
+    { date: '2026-05-05', type: 'Migration', uplift: '+$2.50', fee: '$0.18', venue: 'Pendle weETH', hash: '0xc7b5...f07' },
+    { date: '2026-05-04', type: 'Migration', uplift: '+$1.10', fee: '$0.05', venue: 'Aave USDC', hash: '0x88f...12' },
+  ])
+
+  const handleExportCSV = () => {
+    const headers = "Date,Venue,Type,Uplift,Fee,ProofHash\n"
+    const rows = ledger.map(e => `${e.date},${e.venue},${e.type},${e.uplift},${e.fee},${e.hash}`).join("\n")
+    const blob = new Blob([headers + rows], { type: 'text/csv' })
+    const url = window.URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `yieldgeko_audit_${address}.csv`
+    a.click()
+  }
 
   const riskLabels = ['Conservative', 'Balanced', 'Aggressive']
   const targetYields = [8, 18, 35] // Target APYs
@@ -165,7 +179,10 @@ export default function Home() {
             <h3 style={{ fontSize: '0.9rem', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <span style={{ color: 'var(--accent)' }}>📊</span> Financial Transparency
             </h3>
-            <button style={{ fontSize: '0.7rem', color: 'var(--primary)', background: 'none', border: '1px solid var(--primary)', padding: '0.25rem 0.75rem', borderRadius: '6px', cursor: 'pointer' }}>
+            <button 
+              onClick={handleExportCSV}
+              style={{ fontSize: '0.7rem', color: 'var(--primary)', background: 'none', border: '1px solid var(--primary)', padding: '0.25rem 0.75rem', borderRadius: '6px', cursor: 'pointer' }}
+            >
               Export Audit CSV
             </button>
           </div>
@@ -173,27 +190,24 @@ export default function Home() {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '2rem' }}>
             <div style={{ padding: '1.5rem', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.05)' }}>
               <p style={{ fontSize: '0.65rem', opacity: 0.6, textTransform: 'uppercase', marginBottom: '0.5rem' }}>Net Uplift Generated</p>
-              <p style={{ fontSize: '1.5rem', fontWeight: 'bold', color: 'var(--primary)' }}>+$45.20</p>
+              <p style={{ fontSize: '1.5rem', fontWeight: 'bold', color: 'var(--primary)' }}>+${ledger.reduce((acc, curr) => acc + parseFloat(curr.uplift.slice(2)), 0).toFixed(2)}</p>
             </div>
             <div style={{ padding: '1.5rem', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.05)' }}>
               <p style={{ fontSize: '0.65rem', opacity: 0.6, textTransform: 'uppercase', marginBottom: '0.5rem' }}>Total Fees Paid</p>
-              <p style={{ fontSize: '1.5rem', fontWeight: 'bold', color: 'white' }}>$3.15</p>
+              <p style={{ fontSize: '1.5rem', fontWeight: 'bold', color: 'white' }}>${ledger.reduce((acc, curr) => acc + parseFloat(curr.fee.slice(1)), 0).toFixed(2)}</p>
             </div>
           </div>
 
           <div style={{ fontSize: '0.8rem', opacity: 0.8, marginBottom: '1rem', fontWeight: 'bold' }}>Itemized Fee Ledger</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            {[
-              { date: '2026-05-05', type: 'Migration', uplift: '+$2.50', fee: '$0.18', venue: 'Pendle weETH' },
-              { date: '2026-05-04', type: 'Migration', uplift: '+$1.10', fee: '$0.05', venue: 'Aave USDC' },
-            ].map((entry, i) => (
+            {ledger.map((entry, i) => (
               <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 1.5fr 1fr 1fr 0.5fr', fontSize: '0.7rem', padding: '1rem', background: 'rgba(255,255,255,0.02)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)', alignItems: 'center' }}>
                 <span style={{ opacity: 0.5 }}>{entry.date}</span>
                 <span style={{ fontWeight: 'bold' }}>{entry.venue}</span>
                 <span style={{ color: 'var(--primary)', fontWeight: 'bold' }}>{entry.uplift}</span>
                 <span>{entry.fee}</span>
                 <button 
-                  onClick={() => setSelectedProof(entry)}
+                  onClick={() => setSelectedProof({ ...entry, type: 'EXECUTION' })}
                   style={{ color: 'var(--accent)', background: 'none', border: 'none', textAlign: 'right', fontSize: '0.65rem', cursor: 'pointer', padding: 0 }}
                 >
                   Verify

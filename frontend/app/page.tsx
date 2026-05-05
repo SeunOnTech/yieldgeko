@@ -2,9 +2,7 @@
 
 import { useState } from 'react'
 import { useAccount, useSignTypedData } from 'wagmi'
-
 import { EIP712_DOMAIN } from '@yieldgeko/core'
-import { useSignTypedData } from 'wagmi'
 
 const TYPES = {
   Intent: [

@@ -157,6 +157,40 @@ export default function Home() {
             <p style={{ fontSize: '0.8rem', opacity: 0.6 }}>Verified on 0G Galileo</p>
           </div>
         </div>
+
+        {/* Day 5: Verifiable Activity Feed */}
+        <div className="glass" style={{ marginTop: '2rem', padding: '2rem' }}>
+          <h3 style={{ fontSize: '0.9rem', fontWeight: 'bold', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <span style={{ color: 'var(--primary)' }}>⚡</span> Verifiable Agent Activity
+          </h3>
+          
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            {[
+              { id: 1, type: 'ABORT', reason: 'APY_DRIFT_EXCEEDED', venue: 'Pendle weETH', cid: '0g-abort-41424f52', time: 'Just now', color: 'rgb(239, 68, 68)' },
+              { id: 2, type: 'EXECUTE', venue: 'Aave USDC', tx: '0x873f...88', time: '1h ago', color: 'rgb(34, 197, 94)' }
+            ].map((item) => (
+              <div key={item.id} style={{ padding: '1rem', borderRadius: '12px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
+                    <span style={{ fontSize: '0.7rem', fontWeight: 'bold', color: item.color, background: `${item.color}20`, padding: '0.1rem 0.4rem', borderRadius: '4px' }}>
+                      {item.type}
+                    </span>
+                    <span style={{ fontWeight: 'bold' }}>{item.venue}</span>
+                  </div>
+                  <div style={{ fontSize: '0.7rem', opacity: 0.5 }}>
+                    {item.type === 'ABORT' ? `Reason: ${item.reason}` : `Proof: ${item.tx}`}
+                  </div>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontSize: '0.8rem', opacity: 0.8 }}>{item.time}</div>
+                  <a href={`#`} style={{ fontSize: '0.6rem', color: 'var(--primary)', textDecoration: 'none' }}>
+                    View 0G Proof →
+                  </a>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       </section>
 
       <footer style={{ marginTop: '6rem', textAlign: 'center', opacity: 0.4, fontSize: '0.8rem' }}>

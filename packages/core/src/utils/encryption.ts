@@ -18,9 +18,9 @@ export async function encryptPayload(
   const encoded = new TextEncoder().encode(typeof data === 'string' ? data : JSON.stringify(data));
 
   const encrypted = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv },
+    { name: "AES-GCM", iv: iv as any },
     key,
-    encoded
+    encoded as any
   );
 
   return { iv, encrypted };
@@ -32,9 +32,9 @@ export async function decryptPayload(
   key: CryptoKey
 ): Promise<any> {
   const decrypted = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv },
+    { name: "AES-GCM", iv: iv as any },
     key,
-    encrypted
+    encrypted as any
   );
 
   const decoded = new TextDecoder().decode(decrypted);

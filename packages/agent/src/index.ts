@@ -1,47 +1,80 @@
 import { fetchAaveUSDCSupplyAPY } from './parsers/aave-v3';
-import { fetchPendleMarketYield, DEFAULT_PENDLE_MARKET } from './parsers/pendle';
-import { normalizeAaveData, normalizePendleData, applyRiskAdjustment } from './engine/normalize';
-import { persistNormalizedYield } from './storage/persist';
-import { generateKey } from '@yieldgeko/core';
+import { fetchPendleMarketYield } from './parsers/pendle';
+import { IntentProcessor } from './tee/intent-processor';
+import { TEERuntime } from './tee/runtime';
 
 async function main() {
-  console.log('🦎 YieldGeko Agent: Omni-Fetcher Starting (Live State)...');
+  console.log("🦎 YieldGeko Agent: Day 4 Sealed Inference Validation...");
 
   try {
-    // 1. Fetch Live State from Arbitrum
-    console.log('[1/4] Fetching Live State from Arbitrum...');
-    const aaveRaw = await fetchAaveUSDCSupplyAPY();
-    const pendleRaw = await fetchPendleMarketYield(DEFAULT_PENDLE_MARKET);
+    // 1. Initialize TEE
+    await TEERuntime.initialize();
 
-    console.log(` - Aave USDC APY: ${(Number(aaveRaw.apyBps) / 100).toFixed(2)}%`);
-    console.log(` - Pendle Implied APY: ${(Number(pendleRaw.impliedApyBps) / 100).toFixed(2)}%`);
+    // 2. Fetch Live State (Senses)
+    console.log("[1/4] Fetching Live State from Arbitrum...");
+    const aaveData = await fetchAaveUSDCSupplyAPY();
+    const pendleData = await fetchPendleMarketYield();
 
-    // 2. Normalize Data
-    console.log('[2/4] Normalizing & Scoring Opportunities...');
-    const aaveNorm = normalizeAaveData(aaveRaw);
-    const pendleNorm = normalizePendleData(pendleRaw, DEFAULT_PENDLE_MARKET);
+    const venues = [
+      {
+        venue: "aave-v3-arbitrum-usdc",
+        chainId: 42161,
+        contractAddress: "0x794a61358D6845594F94dc1DB02A252b5b4814aD",
+        apyBps: aaveData.apyBps,
+        liquidityUsd: aaveData.liquidity, // Use actual liquidity
+        utilizationBps: aaveData.utilization,
+        riskScore: 95,
+        lastUpdated: Date.now(),
+        source: 'aave-v3'
+      },
+      {
+        venue: "pendle-market-weeth",
+        chainId: 42161,
+        contractAddress: "0x46d62a8dede1bf2d0de04f2ed863245cbba5e538",
+        apyBps: pendleData.impliedApyBps,
+        liquidityUsd: pendleData.liquidity,
+        utilizationBps: 0n,
+        riskScore: 82,
+        lastUpdated: Date.now(),
+        source: 'pendle'
+      }
+    ];
 
-    // 3. Apply Risk Adjustments (e.g., for a Balanced User)
-    console.log('[3/4] Applying Risk-Adjusted Scoring (Balanced Profile)...');
-    const balancedAave = applyRiskAdjustment(aaveNorm, 'balanced');
-    const balancedPendle = applyRiskAdjustment(pendleNorm, 'balanced');
+    console.log(` - Aave USDC APY: ${(Number(aaveData.apyBps) / 100).toFixed(2)}%`);
+    console.log(` - Pendle Implied APY: ${(Number(pendleData.impliedApyBps) / 100).toFixed(2)}%`);
 
-    console.log(` - Adjusted Aave APY: ${(Number(balancedAave.apyBps) / 100).toFixed(2)}%`);
-    console.log(` - Adjusted Pendle APY: ${(Number(balancedPendle.apyBps) / 100).toFixed(2)}%`);
+    // 3. Mock User Intent
+    const mockIntent = {
+      minApyBps: 200n, // 2% floor
+      maxSlippageBps: 100n,
+      riskTier: 'balanced',
+      excludedVenues: []
+    };
+    
+    console.log("[2/4] Processing TEE Intent (Decryption & Bounds Filtering)...");
+    
+    // 4. Scoring & Ranking (Brain)
+    console.log("[3/4] Applying Deterministic Scoring inside Enclave...");
+    const ranked = await IntentProcessor.processIntent(
+      { iv: 'mock', encrypted: 'mock' }, 
+      'mock-key', 
+      venues as any
+    );
 
-    // 4. Persist to 0G Storage (Sealed Proof)
-    console.log('[4/4] Sealing Intelligence to 0G Storage...');
-    // Generate a temporary key for the demo
-    const mockKey = await generateKey(); 
-    const result = await persistNormalizedYield(balancedPendle, '0xUSER_ADDRESS', mockKey);
+    console.log(` - Best Rank: ${ranked[0].venue} (GeckoScore: ${ranked[0].geckoScore})`);
 
-    console.log('\n✅ Day 3 Validation Complete:');
-    console.log(` - Best Opportunity: ${balancedPendle.venue}`);
-    console.log(` - 0G Storage CID: ${result.cid}`);
-    console.log(` - Proof Hash: ${result.proofHash}`);
+    // 5. Sealed Output & Wipe
+    console.log("[4/4] Generating Sealed Output & Wiping Memory...");
+    const signature = await TEERuntime.signOutput(ranked);
+    const wipeProof = await TEERuntime.wipeMemory([mockIntent, ranked, venues]);
+
+    console.log("\n✅ Day 4 Validation Complete:");
+    console.log(` - Signature: ${signature.slice(0, 20)}...`);
+    console.log(` - Wipe Proof: ${wipeProof}`);
+    console.log(` - Verifiable Decision: ${ranked[0].venue} is the optimal yield.`);
 
   } catch (error) {
-    console.error('❌ Agent Execution Failed:', error);
+    console.error("❌ Agent Execution Failed:", error);
   }
 }
 

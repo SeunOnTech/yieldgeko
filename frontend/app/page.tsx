@@ -45,6 +45,28 @@ export default function Home() {
     },
   ])
 
+  const [liveVenues, setLiveVenues] = useState([
+    { id: 'pendle', name: 'Pendle weETH', apy: 24.2, type: 'boost' },
+    { id: 'aave', name: 'Aave USDC', apy: 8.5, type: 'safe' }
+  ])
+
+  useEffect(() => {
+    const fetchLiveYields = async () => {
+      try {
+        const res = await fetch('/yield-status.json')
+        if (res.ok) {
+          const data = await res.json()
+          setLiveVenues(data.venues)
+        }
+      } catch (err) {
+        console.error("Failed to fetch live yields", err)
+      }
+    }
+    fetchLiveYields()
+    const interval = setInterval(fetchLiveYields, 30000)
+    return () => clearInterval(interval)
+  }, [])
+
   const handleVerify = async (entry: any) => {
     setSelectedProof(entry)
     setVerificationResult(null) // Reset
@@ -226,6 +248,29 @@ export default function Home() {
               )}
             </div>
 
+            <div className="glass" style={{ padding: '2rem', marginBottom: '2rem', border: '1px solid rgba(0, 255, 136, 0.2)' }}>
+              <h3 style={{ fontSize: '0.9rem', fontWeight: 'bold', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span style={{ color: 'var(--primary)' }}>🛡️</span> Protocol Security Stack
+              </h3>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem', textAlign: 'center' }}>
+                <div style={{ padding: '1rem', background: 'rgba(255,255,255,0.02)', borderRadius: '12px' }}>
+                  <div style={{ fontSize: '1.2rem', marginBottom: '0.5rem' }}>🔐</div>
+                  <div style={{ fontSize: '0.7rem', fontWeight: 'bold', marginBottom: '0.25rem' }}>Sealed TEE</div>
+                  <div style={{ fontSize: '0.6rem', opacity: 0.5 }}>Private Execution</div>
+                </div>
+                <div style={{ padding: '1rem', background: 'rgba(255,255,255,0.02)', borderRadius: '12px' }}>
+                  <div style={{ fontSize: '1.2rem', marginBottom: '0.5rem' }}>📦</div>
+                  <div style={{ fontSize: '0.7rem', fontWeight: 'bold', marginBottom: '0.25rem' }}>0G Storage</div>
+                  <div style={{ fontSize: '0.6rem', opacity: 0.5 }}>Immutable Proofs</div>
+                </div>
+                <div style={{ padding: '1rem', background: 'rgba(255,255,255,0.02)', borderRadius: '12px' }}>
+                  <div style={{ fontSize: '1.2rem', marginBottom: '0.5rem' }}>⚓</div>
+                  <div style={{ fontSize: '0.7rem', fontWeight: 'bold', marginBottom: '0.25rem' }}>EVM Anchor</div>
+                  <div style={{ fontSize: '0.6rem', opacity: 0.5 }}>Final Settlement</div>
+                </div>
+              </div>
+            </div>
+
             <div className="glass" style={{ padding: '2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
               <div>
                 <h3 style={{ fontSize: '0.8rem', opacity: 0.6, textTransform: 'uppercase', letterSpacing: '0.1em' }}>Active Capital</h3>
@@ -266,7 +311,12 @@ export default function Home() {
                 {ledger.map((entry, i) => (
                   <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 1.5fr 1fr 1fr 0.5fr', fontSize: '0.7rem', padding: '1rem', background: 'rgba(255,255,255,0.02)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)', alignItems: 'center' }}>
                     <span style={{ opacity: 0.5 }}>{entry.date}</span>
-                    <span style={{ fontWeight: 'bold' }}>{entry.venue}</span>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                      <span style={{ fontWeight: 'bold' }}>{entry.venue}</span>
+                      <span className={`badge-risk ${entry.venue.includes('Aave') ? 'badge-safe' : 'badge-boost'}`} style={{ width: 'fit-content' }}>
+                        {entry.venue.includes('Aave') ? 'Safe' : 'Boosted'}
+                      </span>
+                    </div>
                     <span style={{ color: 'var(--primary)', fontWeight: 'bold' }}>{entry.uplift}</span>
                     <span>{entry.fee}</span>
                     <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', gap: '2px' }}>
@@ -290,19 +340,44 @@ export default function Home() {
               </div>
             </div>
 
+            <div className="glass" style={{ padding: '2rem', marginBottom: '2rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+                <h3 style={{ fontSize: '0.9rem', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span style={{ color: 'var(--primary)' }}>💎</span> Active Opportunities
+                </h3>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                {liveVenues.map(v => (
+                  <div key={v.id} style={{ padding: '1rem', borderRadius: '12px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)', position: 'relative' }}>
+                    <div className={`badge-risk ${v.type === 'safe' ? 'badge-safe' : 'badge-boost'}`} style={{ position: 'absolute', top: '1rem', right: '1rem' }}>
+                      {v.type === 'safe' ? 'Reserve' : 'Boosted'}
+                    </div>
+                    <div style={{ fontSize: '0.75rem', opacity: 0.6, marginBottom: '0.25rem' }}>{v.id === 'aave' ? 'Liquidity Protocol' : 'Yield Strategy'}</div>
+                    <div style={{ fontWeight: 'bold', fontSize: '0.9rem', marginBottom: '0.5rem' }}>{v.name}</div>
+                    <div style={{ fontSize: '1.2rem', fontWeight: 'bold', color: 'var(--primary)' }}>{v.apy.toFixed(2)}% <span style={{ fontSize: '0.7rem', opacity: 0.5, fontWeight: 'normal' }}>APY</span></div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
             <div className="glass" style={{ padding: '2rem', borderBottom: '4px solid var(--primary)', marginBottom: '2rem' }}>
-              <h3 style={{ fontSize: '0.9rem', fontWeight: 'bold', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <span style={{ color: 'var(--primary)' }}>⚡</span> Real-Time Activity
+              <h3 style={{ fontSize: '0.9rem', fontWeight: 'bold', marginBottom: '1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span style={{ color: 'var(--primary)' }}>⚡</span> Real-Time Activity
+                </div>
+                <div className="live-indicator">
+                  <div className="live-dot" /> LIVE MONITORING
+                </div>
               </h3>
               
               <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                 {[
-                  { id: 1, type: 'SHIELDED', reason: 'Safety Floor Maintained', venue: 'Aave USDC', time: 'Just now', color: '#4ade80' },
-                  { id: 2, type: 'MOVED', venue: 'Pendle weETH', uplift: '+2.4%', time: '1h ago', color: 'var(--primary)' }
+                  { id: 1, type: 'SHIELDED', reason: 'Safety Floor Maintained', venue: 'Aave USDC', time: 'Just now', color: '#00ccff' },
+                  { id: 2, type: 'MOVED', venue: 'Pendle weETH', uplift: '+2.4%', time: '1h ago', color: '#a855f7' }
                 ].map((item) => (
                   <div key={item.id} style={{ padding: '1rem', borderRadius: '12px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                      <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: `${item.color}20`, display: 'flex', justifyContent: 'center', alignItems: 'center', color: item.color }}>
+                      <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: `${item.color}20`, display: 'flex', justifyContent: 'center', alignItems: 'center', color: item.color, fontSize: '1rem' }}>
                         {item.type === 'SHIELDED' ? '🛡️' : '🚀'}
                       </div>
                       <div>

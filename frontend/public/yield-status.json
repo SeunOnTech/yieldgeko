@@ -1,0 +1,17 @@
+{
+  "updatedAt": 1777999044982,
+  "venues": [
+    {
+      "id": "pendle",
+      "name": "Pendle weETH",
+      "apy": 2.95,
+      "type": "boost"
+    },
+    {
+      "id": "aave",
+      "name": "Aave USDC",
+      "apy": 3.18,
+      "type": "safe"
+    }
+  ]
+}

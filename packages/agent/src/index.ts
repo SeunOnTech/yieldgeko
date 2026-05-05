@@ -5,6 +5,10 @@ import { AgentIDManager } from './tee/agent-id';
 import { TEESigner } from './tee/signer';
 import { getAddress } from 'viem';
 import * as dotenv from 'dotenv';
+import { fetchPendleMarketYield } from './parsers/pendle';
+import { fetchAaveUSDCSupplyAPY } from './parsers/aave-v3';
+import * as fs from 'fs';
+import * as path from 'path';
 
 dotenv.config();
 
@@ -17,6 +21,36 @@ async function main() {
   
   await TEERuntime.initialize();
   await AgentIDManager.initializeAgentID();
+
+  // 1. Start Live Yield Sync for Dashboard
+  const syncLiveYields = async () => {
+    try {
+      const [pendle, aave] = await Promise.all([
+        fetchPendleMarketYield(),
+        fetchAaveUSDCSupplyAPY()
+      ]);
+      
+      const status = {
+        updatedAt: Date.now(),
+        venues: [
+          { id: 'pendle', name: 'Pendle weETH', apy: Number(pendle.impliedApyBps) / 100, type: 'boost' },
+          { id: 'aave', name: 'Aave USDC', apy: Number(aave.apyBps) / 100, type: 'safe' }
+        ]
+      };
+      
+      const publicPath = path.resolve(process.cwd(), '../../frontend/public/yield-status.json');
+      const dir = path.dirname(publicPath);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      
+      fs.writeFileSync(publicPath, JSON.stringify(status, null, 2));
+      console.log(`[Sync] ✅ Dashboard Sync: Pendle=${status.venues[0].apy}%, Aave=${status.venues[1].apy}%`);
+    } catch (err) {
+      console.error("[Sync] ❌ Failed to update dashboard yields:", err);
+    }
+  };
+
+  syncLiveYields();
+  setInterval(syncLiveYields, 30000);
 
   // 2. Mock Queue Item for Execution (Alpha User)
   const item = {

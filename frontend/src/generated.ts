@@ -310,6 +310,8 @@ export const yieldGekoRouterAbi = [
             type: 'uint256',
           },
           { name: 'actualAPY', internalType: 'uint256', type: 'uint256' },
+          { name: 'receiptHash', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'gasPriceInAsset', internalType: 'uint256', type: 'uint256' },
         ],
       },
     ],
@@ -339,6 +341,8 @@ export const yieldGekoRouterAbi = [
       { name: '_amount', internalType: 'uint256', type: 'uint256' },
       { name: '_actualSlippageBps', internalType: 'uint256', type: 'uint256' },
       { name: '_actualAPY', internalType: 'uint256', type: 'uint256' },
+      { name: '_receiptHash', internalType: 'bytes32', type: 'bytes32' },
+      { name: '_gasPriceInAsset', internalType: 'uint256', type: 'uint256' },
     ],
     name: 'executeMigration',
     outputs: [],
@@ -366,6 +370,8 @@ export const yieldGekoRouterAbi = [
       { name: '_amount', internalType: 'uint256', type: 'uint256' },
       { name: '_actualSlippageBps', internalType: 'uint256', type: 'uint256' },
       { name: '_actualAPY', internalType: 'uint256', type: 'uint256' },
+      { name: '_receiptHash', internalType: 'bytes32', type: 'bytes32' },
+      { name: '_gasPriceInAsset', internalType: 'uint256', type: 'uint256' },
     ],
     name: 'executeMigrationExternal',
     outputs: [],
@@ -504,6 +510,38 @@ export const yieldGekoRouterAbi = [
     name: 'Deposited',
   },
   { type: 'event', anonymous: false, inputs: [], name: 'EIP712DomainChanged' },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'user', internalType: 'address', type: 'address', indexed: true },
+      {
+        name: 'migrationFee',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      {
+        name: 'successFee',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      {
+        name: 'gasFee',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      {
+        name: 'receiptHash',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: false,
+      },
+    ],
+    name: 'FeeSettled',
+  },
   {
     type: 'event',
     anonymous: false,
@@ -1225,6 +1263,15 @@ export const useWatchYieldGekoRouterEip712DomainChangedEvent =
   /*#__PURE__*/ createUseWatchContractEvent({
     abi: yieldGekoRouterAbi,
     eventName: 'EIP712DomainChanged',
+  })
+
+/**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `eventName` set to `"FeeSettled"`
+ */
+export const useWatchYieldGekoRouterFeeSettledEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({
+    abi: yieldGekoRouterAbi,
+    eventName: 'FeeSettled',
   })
 
 /**

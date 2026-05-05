@@ -94,6 +94,10 @@ contract YieldGekoRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
         emit Withdrawn(msg.sender, _asset, _amount);
     }
 
+    event FeeSettled(
+        address indexed user, uint256 migrationFee, uint256 successFee, uint256 gasFee, bytes32 receiptHash
+    );
+
     struct BatchMigrationParams {
         Intent intent;
         bytes signature;
@@ -103,6 +107,8 @@ contract YieldGekoRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
         uint256 amount;
         uint256 actualSlippageBps;
         uint256 actualAPY;
+        bytes32 receiptHash; // SHA-256 of off-chain audit JSON
+        uint256 gasPriceInAsset; // TEE-verified conversion (e.g. 1 USDC per 1M gas)
     }
 
     event MigrationFailed(address indexed user, string reason);
@@ -115,10 +121,21 @@ contract YieldGekoRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
         address _asset,
         uint256 _amount,
         uint256 _actualSlippageBps,
-        uint256 _actualAPY
+        uint256 _actualAPY,
+        bytes32 _receiptHash,
+        uint256 _gasPriceInAsset
     ) external onlyAuthorizedAgent whenNotPaused nonReentrant {
         _executeMigration(
-            _intent, _signature, _fromStrategy, _toStrategy, _asset, _amount, _actualSlippageBps, _actualAPY
+            _intent,
+            _signature,
+            _fromStrategy,
+            _toStrategy,
+            _asset,
+            _amount,
+            _actualSlippageBps,
+            _actualAPY,
+            _receiptHash,
+            _gasPriceInAsset
         );
     }
 
@@ -129,7 +146,6 @@ contract YieldGekoRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
         nonReentrant
     {
         for (uint256 i = 0; i < _params.length; i++) {
-            // Note: In production, we'd use a more sophisticated way to handle gas left
             try this.executeMigrationExternal(
                 _params[i].intent,
                 _params[i].signature,
@@ -138,7 +154,9 @@ contract YieldGekoRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
                 _params[i].asset,
                 _params[i].amount,
                 _params[i].actualSlippageBps,
-                _params[i].actualAPY
+                _params[i].actualAPY,
+                _params[i].receiptHash,
+                _params[i].gasPriceInAsset
             ) {
             // Success
             }
@@ -157,11 +175,22 @@ contract YieldGekoRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
         address _asset,
         uint256 _amount,
         uint256 _actualSlippageBps,
-        uint256 _actualAPY
+        uint256 _actualAPY,
+        bytes32 _receiptHash,
+        uint256 _gasPriceInAsset
     ) external {
         require(msg.sender == address(this), "Only internal batching");
         _executeMigration(
-            _intent, _signature, _fromStrategy, _toStrategy, _asset, _amount, _actualSlippageBps, _actualAPY
+            _intent,
+            _signature,
+            _fromStrategy,
+            _toStrategy,
+            _asset,
+            _amount,
+            _actualSlippageBps,
+            _actualAPY,
+            _receiptHash,
+            _gasPriceInAsset
         );
     }
 
@@ -173,8 +202,12 @@ contract YieldGekoRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
         address _asset,
         uint256 _amount,
         uint256 _actualSlippageBps,
-        uint256 _actualAPY
+        uint256 _actualAPY,
+        bytes32 _receiptHash,
+        uint256 _gasPriceInAsset
     ) internal {
+        uint256 startGas = gasleft();
+
         require(block.timestamp <= _intent.deadline, "Intent expired");
         require(_intent.nonce == nonces[_intent.user], "Invalid nonce");
         require(registry.isStrategyApproved(_toStrategy), "Target not approved");
@@ -194,15 +227,23 @@ contract YieldGekoRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
         address signer = ECDSA.recover(hash, _signature);
         require(signer == _intent.user, "Invalid signature");
 
-        // Calculate fees
-        uint256 migrationFee = (_amount * MIGRATION_FEE_BPS) / 10000;
-        uint256 uplift = _actualAPY > _intent.minAPY ? _actualAPY - _intent.minAPY : 0;
-        uint256 successFee = (_amount * uplift * SUCCESS_FEE_BPS) / (10000 * 10000);
-        uint256 totalFee = migrationFee + successFee;
+        // --- PRECISION FEE CALCULATION ---
 
+        // 1. Migration Fee (10 BPS = 0.10%)
+        uint256 migrationFee = (_amount * MIGRATION_FEE_BPS) / 10000;
+
+        // 2. Success Fee (25 BPS on Uplift)
+        uint256 upliftBps = _actualAPY > _intent.minAPY ? _actualAPY - _intent.minAPY : 0;
+        uint256 successFee = (_amount * upliftBps * SUCCESS_FEE_BPS) / 100000000;
+
+        // 3. Gas Recovery (Dynamic with TEE-verified conversion)
+        uint256 gasUsed = startGas - gasleft() + 60000; // +60k for remaining steps
+        uint256 gasFee = (gasUsed * _gasPriceInAsset) / 1000000;
+
+        uint256 totalFee = migrationFee + successFee + gasFee;
         require(_amount > totalFee, "Amount too small for fees");
 
-        // Deduct balance and route fees
+        // Deduct balance and route fees to Treasury
         userBalances[_intent.user][_asset] -= _amount;
         if (totalFee > 0) {
             IERC20(_asset).safeTransfer(treasury, totalFee);
@@ -212,5 +253,6 @@ contract YieldGekoRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
         nonces[_intent.user]++;
 
         emit MigrationExecuted(_intent.user, _fromStrategy, _toStrategy, _amount - totalFee, totalFee);
+        emit FeeSettled(_intent.user, migrationFee, successFee, gasFee, _receiptHash);
     }
 }

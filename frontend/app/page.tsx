@@ -159,6 +159,50 @@ export default function Home() {
           </div>
         </div>
 
+        {/* Day 8: Financial Performance Hub */}
+        <div className="glass" style={{ marginTop: '2rem', padding: '2rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+            <h3 style={{ fontSize: '0.9rem', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <span style={{ color: 'var(--accent)' }}>📊</span> Financial Transparency
+            </h3>
+            <button style={{ fontSize: '0.7rem', color: 'var(--primary)', background: 'none', border: '1px solid var(--primary)', padding: '0.25rem 0.75rem', borderRadius: '6px', cursor: 'pointer' }}>
+              Export Audit CSV
+            </button>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '2rem' }}>
+            <div style={{ padding: '1.5rem', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.05)' }}>
+              <p style={{ fontSize: '0.65rem', opacity: 0.6, textTransform: 'uppercase', marginBottom: '0.5rem' }}>Net Uplift Generated</p>
+              <p style={{ fontSize: '1.5rem', fontWeight: 'bold', color: 'var(--primary)' }}>+$45.20</p>
+            </div>
+            <div style={{ padding: '1.5rem', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.05)' }}>
+              <p style={{ fontSize: '0.65rem', opacity: 0.6, textTransform: 'uppercase', marginBottom: '0.5rem' }}>Total Fees Paid</p>
+              <p style={{ fontSize: '1.5rem', fontWeight: 'bold', color: 'white' }}>$3.15</p>
+            </div>
+          </div>
+
+          <div style={{ fontSize: '0.8rem', opacity: 0.8, marginBottom: '1rem', fontWeight: 'bold' }}>Itemized Fee Ledger</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            {[
+              { date: '2026-05-05', type: 'Migration', uplift: '+$2.50', fee: '$0.18', venue: 'Pendle weETH' },
+              { date: '2026-05-04', type: 'Migration', uplift: '+$1.10', fee: '$0.05', venue: 'Aave USDC' },
+            ].map((entry, i) => (
+              <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 1.5fr 1fr 1fr 0.5fr', fontSize: '0.7rem', padding: '1rem', background: 'rgba(255,255,255,0.02)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)', alignItems: 'center' }}>
+                <span style={{ opacity: 0.5 }}>{entry.date}</span>
+                <span style={{ fontWeight: 'bold' }}>{entry.venue}</span>
+                <span style={{ color: 'var(--primary)', fontWeight: 'bold' }}>{entry.uplift}</span>
+                <span>{entry.fee}</span>
+                <button 
+                  onClick={() => setSelectedProof(entry)}
+                  style={{ color: 'var(--accent)', background: 'none', border: 'none', textAlign: 'right', fontSize: '0.65rem', cursor: 'pointer', padding: 0 }}
+                >
+                  Verify
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+
         {/* Day 5: Verifiable Activity Feed */}
         <div className="glass" style={{ marginTop: '2rem', padding: '2rem' }}>
           <h3 style={{ fontSize: '0.9rem', fontWeight: 'bold', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>

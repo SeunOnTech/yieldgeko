@@ -100,7 +100,16 @@ contract YieldGekoTest is Test {
 
         vm.prank(agent);
         router.executeMigration(
-            intent, signature, address(0), targetStrat, address(token), amount, actualSlippage, actualAPY
+            intent,
+            signature,
+            address(0),
+            targetStrat,
+            address(token),
+            amount,
+            actualSlippage,
+            actualAPY,
+            bytes32(0),
+            100
         );
 
         // Verify Balance Deduction
@@ -114,7 +123,7 @@ contract YieldGekoTest is Test {
         YieldGekoRouter.Intent memory intent;
         vm.prank(user); // Non-agent
         vm.expectRevert("Caller not authorized");
-        router.executeMigration(intent, "", address(0), address(0), address(0), 0, 0, 0);
+        router.executeMigration(intent, "", address(0), address(0), address(0), 0, 0, 0, bytes32(0), 0);
     }
 
     function test_RevertBoundsExceeded() public {

@@ -20,6 +20,7 @@ export default function Home() {
   const [status, setStatus] = useState<'idle' | 'signing' | 'success' | 'error'>('idle')
   const [signature, setSignature] = useState<string | null>(null)
   const [cid, setCid] = useState<string | null>(null)
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [selectedProof, setSelectedProof] = useState<any | null>(null)
   
   const [isMonitoring, setIsMonitoring] = useState(false)
@@ -139,8 +140,9 @@ export default function Home() {
 
       setStatus('success')
       setIsMonitoring(true)
-    } catch (err) {
+    } catch (err: any) {
       console.error(err)
+      setErrorMsg(err.message || 'Authorization failed. Please try again.')
       setStatus('error')
     }
   }
@@ -244,6 +246,12 @@ export default function Home() {
                   <div style={{ marginTop: '0.5rem', fontSize: '0.65rem', opacity: 0.7 }}>
                     CID: <code style={{ color: 'var(--accent)' }}>{cid?.slice(0, 20)}...</code>
                   </div>
+                </div>
+              )}
+
+              {status === 'error' && (
+                <div style={{ marginTop: '2rem', padding: '1rem', background: 'rgba(239,68,68,0.1)', borderRadius: '12px', textAlign: 'left', border: '1px solid rgba(239,68,68,0.2)' }}>
+                  <p style={{ color: '#ef4444', fontWeight: 'bold', fontSize: '0.8rem' }}>❌ {errorMsg}</p>
                 </div>
               )}
             </div>

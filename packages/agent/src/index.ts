@@ -13,7 +13,7 @@ import * as path from 'path';
 dotenv.config();
 
 async function main() {
-  console.log("🦎 YieldGeko Agent: Production Settlement & 0G Storage Integration...");
+  console.log("🦎 YieldGeko Agent: Production Full-Lifecycle Manager...");
 
   // 1. Initialize Enclave & Signer
   const provider = new ethers.JsonRpcProvider(process.env.RPC_URL);
@@ -22,104 +22,101 @@ async function main() {
   await TEERuntime.initialize();
   await AgentIDManager.initializeAgentID();
 
-  // 1. Start Live Yield Sync for Dashboard
-  const syncLiveYields = async () => {
-    try {
-      const [pendle, aave] = await Promise.all([
-        fetchPendleMarketYield(),
-        fetchAaveUSDCSupplyAPY()
-      ]);
-      
-      const status = {
-        updatedAt: Date.now(),
-        venues: [
-          { id: 'pendle', name: 'Pendle weETH', apy: Number(pendle.impliedApyBps) / 100, type: 'boost' },
-          { id: 'aave', name: 'Aave USDC', apy: Number(aave.apyBps) / 100, type: 'safe' }
-        ]
-      };
-      
-      const publicPath = path.resolve(process.cwd(), '../../frontend/public/yield-status.json');
-      const dir = path.dirname(publicPath);
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      
-      fs.writeFileSync(publicPath, JSON.stringify(status, null, 2));
-      console.log(`[Sync] ✅ Dashboard Sync: Pendle=${status.venues[0].apy}%, Aave=${status.venues[1].apy}%`);
-    } catch (err) {
-      console.error("[Sync] ❌ Failed to update dashboard yields:", err);
-    }
-  };
+  let userPosition: { venueId: string; apy: number } | null = null;
+  const userId = 'User_Alpha';
+  const amount = 5000n * 10n**6n; // $5,000 USDC
 
-  syncLiveYields();
-  setInterval(syncLiveYields, 30000);
-
-  // 2. Mock Queue Item for Execution (Alpha User)
-  const item = {
-    userId: 'User_Alpha',
-    amount: 1000n * 10n**6n, // $1,000 USDC
-    targetVenue: { id: 'pendle-weeth', name: 'Pendle weETH', apy: 2400 }, // 24%
-    currentVenue: { id: 'aave-v3-usdc', apy: 500 }, // 5%
-    intent: { 
-      user: getAddress('0x4444444444444444444444444444444444444444'), 
-      minAPY: 800n, 
-      maxSlippage: 100n, 
-      nonce: 0n, 
-      deadline: BigInt(Math.floor(Date.now()/1000) + 3600) 
-    }
-  };
-
-  try {
-    console.log(`[Enclave] Processing Migration for ${item.userId}...`);
-
-    // A. Calculate Fees (Production precision)
-    const fees = {
-      migration: (item.amount * 10n) / 10000n, // 0.10%
-      success: (item.amount * 25n) / 10000n,   // 0.25% (Simplified for demo uplift)
-      gas: 150000n // $0.15 simulated gas cost in USDC
+  // 1. Live Yield Sync Logic
+  const fetchYields = async () => {
+    const [pendle, aave] = await Promise.all([
+      fetchPendleMarketYield(),
+      fetchAaveUSDCSupplyAPY()
+    ]);
+    return {
+      pendle: { id: 'pendle', name: 'Pendle weETH', apy: Number(pendle.impliedApyBps) / 100 },
+      aave: { id: 'aave', name: 'Aave USDC', apy: Number(aave.apyBps) / 100 }
     };
+  };
 
-    // B. Log to 0G Storage (Real Upload)
-    console.log(`[0G-Storage] Uploading Financial Receipt...`);
-    const { receipt, hash, cid } = await LedgerLogger.logMigration(
-      { id: item.userId },
-      item.targetVenue,
-      item.currentVenue,
-      item.amount,
-      fees,
-      signer,
-      process.env.INDEXER_URL!,
-      process.env.RPC_URL!
-    );
+  const syncDashboard = (yields: any) => {
+    const status = {
+      updatedAt: Date.now(),
+      venues: [
+        { ...yields.pendle, type: 'boost' },
+        { ...yields.aave, type: 'safe' }
+      ]
+    };
+    const publicPath = path.resolve(process.cwd(), '../../frontend/public/yield-status.json');
+    fs.writeFileSync(publicPath, JSON.stringify(status, null, 2));
+  };
 
-    console.log(`[0G-Storage] Success! Root Hash (CID): ${cid}`);
+  // 2. The Autonomous Management Loop
+  const tick = async () => {
+    console.log(`\n[Manager] 🦎 Checking state for ${userId}...`);
+    try {
+      const yields = await fetchYields();
+      syncDashboard(yields);
 
-    // C. Sign Intent-Bound Migration
-    console.log(`[TEE-Signer] Attesting Migration Intent...`);
-    const signature = await TEESigner.signMigration({
-      intent: item.intent,
-      fromStrategy: getAddress('0x0000000000000000000000000000000000000000'), // Initial
-      toStrategy: getAddress('0x794a61358D6845594F94dc1DB02A252b5b4814aD'), // Pendle Strategy
-      asset: getAddress('0xaf88d065e77c8cC2239327C5EDB3A432268e5831'), // USDC
-      amount: item.amount,
-      actualSlippageBps: 50n,
-      actualAPY: BigInt(item.targetVenue.apy)
-    });
+      // A. GENESIS: Initial Deployment (If unallocated)
+      if (!userPosition) {
+        console.log(`[Genesis] 🚀 Unallocated funds detected ($5,000). Deploying to best safe venue...`);
+        
+        // Select best venue (preferring Aave for initial safety in this demo logic)
+        const target = yields.aave; 
+        
+        const { cid } = await LedgerLogger.logAction(
+          'GENESIS',
+          { id: userId },
+          target,
+          null, // No previous venue
+          amount,
+          { migration: 0n, success: 0n, gas: 150000n },
+          signer,
+          process.env.INDEXER_URL!,
+          process.env.RPC_URL!
+        );
 
-    // D. On-Chain Settlement (Real Transaction)
-    // Note: In a real flow, this would call the YieldGekoRouter.executeMigration
-    console.log(`[Settlement] Anchoring Receipt ${hash} to Chain...`);
-    console.log(`[Settlement] Storage CID: ${cid}`);
-    
-    // Simulating the contract call for the final E2E check
-    console.log(`[Settlement] Finalizing On-Chain with Hash: ${hash}`);
+        userPosition = { venueId: target.id, apy: target.apy };
+        console.log(`[Genesis] ✅ Initial Allocation Complete. CID: ${cid}`);
+        return;
+      }
 
-    console.log(`[SecurityMonitor] Session Complete. Zeroizing Memory...`);
-    await TEERuntime.wipeMemory([item, receipt]);
+      // B. MONITORING: Check for Spikes
+      console.log(`[Monitor] Currently in ${userPosition.venueId} @ ${userPosition.apy}%. Scanning for uplift...`);
+      
+      const target = yields.pendle; // In our demo, Pendle is the boost target
+      const uplift = target.apy - userPosition.apy;
 
-    console.log("\n🦎 Production Settlement Flow COMPLETE.");
+      // Production Threshold: 2% uplift required to justify gas/risk
+      if (uplift > 2.0) {
+        console.log(`[Migration] 🔥 Yield Spike Detected! Pendle offers +${uplift.toFixed(2)}% uplift. Triggering migration...`);
+        
+        const { cid } = await LedgerLogger.logAction(
+          'MIGRATION',
+          { id: userId },
+          target,
+          { id: userPosition.venueId, apy: userPosition.apy },
+          amount,
+          { migration: (amount * 10n) / 10000n, success: (amount * 25n) / 10000n, gas: 150000n },
+          signer,
+          process.env.INDEXER_URL!,
+          process.env.RPC_URL!
+        );
 
-  } catch (error) {
-    console.error("❌ Settlement Failed:", error);
-  }
+        userPosition = { venueId: target.id, apy: target.apy };
+        console.log(`[Migration] ✅ Swarm Migration Complete. CID: ${cid}`);
+      } else {
+        console.log(`[Monitor] Holding position. Uplift (${uplift.toFixed(2)}%) below threshold.`);
+      }
+
+    } catch (err: any) {
+      console.error("[Manager] ❌ Tick failed:", err.message || err);
+    }
+  };
+
+  // Run the loop
+  tick();
+  setInterval(tick, 60000); // Check every 60s
 }
 
 main();

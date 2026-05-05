@@ -4,7 +4,7 @@ import { arbitrum } from 'viem/chains';
 
 /**
  * 0G Agent ID Management
- * Manages the hardware-bound identity of the YieldSync agent.
+ * Manages the hardware-bound identity of the YieldGeko agent.
  */
 export class AgentIDManager {
   private static agentAccount: any = null;

@@ -37,7 +37,21 @@ export class YieldGekoStorage {
       metadata: { app: "YieldGeko", type: "intent" }
     });
 
-    // 2. Upload to 0G Storage via SDK
+    // 2. Robust Balance Check before upload
+    try {
+        const address = await signer.getAddress();
+        const provider = signer.provider || new ethers.JsonRpcProvider(this.config.rpcUrl);
+        const balance = await provider.getBalance(address);
+        
+        if (balance < ethers.parseEther("0.001")) {
+            throw new Error('Insufficient 0G balance. Please fund your wallet at faucet.0g.ai');
+        }
+    } catch (balErr: any) {
+        if (balErr.message.includes('Insufficient 0G balance')) throw balErr;
+        console.warn("Balance check skipped due to provider error:", balErr);
+    }
+
+    // 3. Upload to 0G Storage via SDK
     const indexer = new Indexer(this.config.indexerUrl);
     
     const encoder = new TextEncoder();
@@ -45,7 +59,10 @@ export class YieldGekoStorage {
     const memData = new MemData(data);
     
     try {
-        const response: any = await indexer.upload(memData, this.config.rpcUrl, signer);
+        // We add a manual gas limit to bypass cryptic estimateGas failures
+        const response: any = await indexer.upload(memData, this.config.rpcUrl, signer, {
+            gasLimit: 500000 
+        });
         
         if (!response) {
           throw new Error('No response returned from 0G upload');

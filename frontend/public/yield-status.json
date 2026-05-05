@@ -1,5 +1,5 @@
 {
-  "updatedAt": 1777999044982,
+  "updatedAt": 1778009265628,
   "venues": [
     {
       "id": "pendle",
@@ -10,7 +10,7 @@
     {
       "id": "aave",
       "name": "Aave USDC",
-      "apy": 3.18,
+      "apy": 3.17,
       "type": "safe"
     }
   ]

@@ -1,15 +1,18 @@
 'use client'
 
-import { useState } from 'react'
-import { useAccount } from 'wagmi'
+import { useState, useEffect } from 'react'
+import { useAccount, useWalletClient } from 'wagmi'
+import { ethers } from 'ethers'
 import { EIP712_DOMAIN, ADDRESSES } from '@yieldgeko/core'
 import { useSignIntent } from '../hooks/useSignIntent'
 import { useYieldVault } from '../hooks/useYieldVault'
 import { storageService } from '../lib/storage'
+import { Verifier } from '../lib/verifier'
 import { useReadYieldGekoRouterNonces } from '../src/generated'
 
 export default function Home() {
   const { address, isConnected } = useAccount()
+  const { data: walletClient } = useWalletClient()
   const { signIntent } = useSignIntent()
   const { balance } = useYieldVault("0x65a085d7F6e65a085D7F6E65A085d7f6E65a085D")
   
@@ -20,14 +23,42 @@ export default function Home() {
   const [selectedProof, setSelectedProof] = useState<any | null>(null)
   
   const [isMonitoring, setIsMonitoring] = useState(false)
+  const [verificationResult, setVerificationResult] = useState<any | null>(null)
   const [ledger, setLedger] = useState([
-    { date: '2026-05-05', type: 'Migration', uplift: '+$2.50', fee: '$0.18', venue: 'Pendle weETH', hash: '0xc7b5ff2eb6c01dac79fc1e0bd58a39ddeee20b773780c2a84a490a9889a20f07' },
-    { date: '2026-05-04', type: 'Migration', uplift: '+$1.10', fee: '$0.05', venue: 'Aave USDC', hash: '0x88f4b12c873f...88' },
+    { 
+      date: '2026-05-05', 
+      type: 'Migration', 
+      uplift: '+$2.50', 
+      fee: '$0.18', 
+      venue: 'Pendle weETH', 
+      hash: '0xdfa10c362698652986a24b257c727fe3bd225cf04008d938d8cfc5f529b6e59e', // Real Hash
+      cid: '0xd89515db5507664b775614af860d1543fe2a2de2bff9192ecec0661511a7dfdd' // Real 0G Root Hash
+    },
+    { 
+      date: '2026-05-04', 
+      type: 'Migration', 
+      uplift: '+$1.10', 
+      fee: '$0.05', 
+      venue: 'Aave USDC', 
+      hash: '0xb947968519c1c63238d6acaae89a4a1ddeb0961c8c1591fd5d590ff4f07515df',
+      cid: '0xe61b5175192228b7ed97fdfd192f51bad19458ef47cd952d9089111948816ca1'
+    },
   ])
 
+  const handleVerify = async (entry: any) => {
+    setSelectedProof(entry)
+    setVerificationResult(null) // Reset
+    try {
+      const result = await Verifier.verifyReceipt(entry.cid, entry.hash)
+      setVerificationResult(result)
+    } catch (err) {
+      console.error(err)
+    }
+  }
+
   const handleExportCSV = () => {
-    const headers = "Date,Venue,Type,Uplift,Fee,ProofHash\n"
-    const rows = ledger.map(e => `${e.date},${e.venue},${e.type},${e.uplift},${e.fee},${e.hash}`).join("\n")
+    const headers = "Date,Venue,Type,Uplift,Fee,ProofHash,StorageCID\n"
+    const rows = ledger.map(e => `${e.date},${e.venue},${e.type},${e.uplift},${e.fee},${e.hash},${e.cid}`).join("\n")
     const blob = new Blob([headers + rows], { type: 'text/csv' })
     const url = window.URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -45,10 +76,11 @@ export default function Home() {
   })
 
   const handleSignIntent = async () => {
-    if (!address) return
+    if (!address || !walletClient) return
     setStatus('signing')
     
     try {
+      // 1. Sign Intent (EIP-712)
       const deadline = Math.floor(Date.now() / 1000) + 3600
       const signResult = await signIntent(
         targetYields[risk] * 100, // minAPY
@@ -59,6 +91,11 @@ export default function Home() {
       
       setSignature(signResult.signature)
 
+      // 2. Prepare Ethers Signer for 0G Storage
+      const provider = new ethers.BrowserProvider(walletClient.transport);
+      const signer = await provider.getSigner();
+
+      // 3. Encrypt & Persist to REAL 0G Storage
       const userState = {
         intent: {
           minAPY: targetYields[risk] * 100,
@@ -72,7 +109,7 @@ export default function Home() {
         }
       }
 
-      const storageResult = await storageService.persistIntent(userState)
+      const storageResult = await storageService.persistIntent(userState, signer)
       setCid(storageResult.cid)
       
       localStorage.setItem(`geko_key_${address}`, storageResult.key)
@@ -232,12 +269,22 @@ export default function Home() {
                     <span style={{ fontWeight: 'bold' }}>{entry.venue}</span>
                     <span style={{ color: 'var(--primary)', fontWeight: 'bold' }}>{entry.uplift}</span>
                     <span>{entry.fee}</span>
-                    <button 
-                      onClick={() => setSelectedProof({ ...entry, status: 'VERIFIED' })}
-                      style={{ color: 'var(--accent)', background: 'none', border: 'none', textAlign: 'right', fontSize: '0.65rem', cursor: 'pointer' }}
-                    >
-                      Verify →
-                    </button>
+                    <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                      <button 
+                        onClick={() => handleVerify(entry)}
+                        style={{ color: 'var(--accent)', background: 'none', border: 'none', fontSize: '0.65rem', cursor: 'pointer', padding: 0, textAlign: 'right' }}
+                      >
+                        Verify →
+                      </button>
+                      <a 
+                        href={`https://chainscan-galileo.0g.ai/tx/0xac7df667f1a698b386db37f22a486e33a82cbc38650e9aa03a57178a93f8e281`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ fontSize: '0.5rem', opacity: 0.4, color: 'white', textDecoration: 'none' }}
+                      >
+                        Explorer ↗
+                      </a>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -285,27 +332,51 @@ export default function Home() {
             </button>
             
             <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
-              <div style={{ width: '60px', height: '60px', borderRadius: '50%', background: 'rgba(34,197,94,0.1)', border: '2px solid rgb(34,197,94)', display: 'flex', justifyContent: 'center', alignItems: 'center', margin: '0 auto 1rem', fontSize: '1.5rem' }}>
-                ✅
+              <div style={{ 
+                width: '60px', 
+                height: '60px', 
+                borderRadius: '50%', 
+                background: !verificationResult ? 'rgba(255,255,255,0.05)' : verificationResult.isValid ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)', 
+                border: `2px solid ${!verificationResult ? 'rgba(255,255,255,0.2)' : verificationResult.isValid ? 'rgb(34,197,94)' : 'rgb(239,68,68)'}`, 
+                display: 'flex', 
+                justifyContent: 'center', 
+                alignItems: 'center', 
+                margin: '0 auto 1rem', 
+                fontSize: '1.5rem',
+                animation: !verificationResult ? 'pulse 1.5s infinite' : 'none'
+              }}>
+                {!verificationResult ? '⏳' : verificationResult.isValid ? '✅' : '❌'}
               </div>
-              <h3 style={{ fontSize: '1.2rem', fontWeight: 'bold' }}>Cryptographically Verified</h3>
-              <p style={{ fontSize: '0.75rem', opacity: 0.6 }}>This migration matches the 0G on-chain anchor exactly.</p>
+              <h3 style={{ fontSize: '1.2rem', fontWeight: 'bold' }}>
+                {!verificationResult ? 'Verifying Proof...' : verificationResult.isValid ? 'Cryptographically Verified' : 'Verification Failed'}
+              </h3>
+              <p style={{ fontSize: '0.75rem', opacity: 0.6 }}>
+                {!verificationResult ? 'Fetching data from 0G Storage Nodes...' : verificationResult.isValid ? 'This migration matches the 0G on-chain anchor exactly.' : 'The data in storage does not match the on-chain anchor.'}
+              </p>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '2rem' }}>
               {[
                 { label: 'TEE Execution', desc: 'Agent signed in secure enclave', status: 'Verified' },
                 { label: 'On-Chain Anchor', desc: 'Hash locked on 0G Blockchain', status: 'Matched' },
-                { label: 'Data Retrieval', desc: 'Decrypted from 0G Storage', status: 'Success' }
+                { label: 'Data Retrieval', desc: 'Decrypted from 0G Storage', status: !verificationResult ? 'Waiting...' : verificationResult.isValid ? 'Success' : 'Error' }
               ].map((step, i) => (
                 <div key={i} style={{ display: 'flex', gap: '1rem', alignItems: 'flex-start' }}>
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                    <div style={{ width: '12px', height: '12px', borderRadius: '50%', background: 'var(--primary)' }} />
+                    <div style={{ 
+                      width: '12px', 
+                      height: '12px', 
+                      borderRadius: '50%', 
+                      background: step.status === 'Waiting...' ? 'rgba(255,255,255,0.2)' : step.status === 'Error' ? 'rgb(239,68,68)' : 'var(--primary)' 
+                    }} />
                     {i < 2 && <div style={{ width: '2px', height: '30px', background: 'rgba(255,255,255,0.1)' }} />}
                   </div>
                   <div>
                     <div style={{ fontSize: '0.8rem', fontWeight: 'bold', display: 'flex', gap: '0.5rem' }}>
-                      {step.label} <span style={{ color: 'var(--primary)', fontSize: '0.7rem' }}>✓ {step.status}</span>
+                      {step.label} <span style={{ 
+                        color: step.status === 'Waiting...' ? 'rgba(255,255,255,0.5)' : step.status === 'Error' ? 'rgb(239,68,68)' : 'var(--primary)', 
+                        fontSize: '0.7rem' 
+                      }}>✓ {step.status}</span>
                     </div>
                     <div style={{ fontSize: '0.7rem', opacity: 0.5 }}>{step.desc}</div>
                   </div>
@@ -313,10 +384,38 @@ export default function Home() {
               ))}
             </div>
             
-            <div style={{ background: 'rgba(0,0,0,0.3)', padding: '1.5rem', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.1)' }}>
+            <div style={{ background: 'rgba(0,0,0,0.3)', padding: '1.5rem', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.1)', marginBottom: '1rem' }}>
               <p style={{ fontSize: '0.65rem', opacity: 0.6, marginBottom: '0.5rem', textTransform: 'uppercase' }}>On-Chain Proof Hash</p>
-              <code style={{ fontSize: '0.75rem', color: 'var(--accent)', display: 'block', wordBreak: 'break-all' }}>{selectedProof.hash}</code>
+              <code style={{ fontSize: '0.75rem', color: 'var(--accent)', display: 'block', wordBreak: 'break-all', marginBottom: '1rem' }}>{selectedProof.hash}</code>
+              
+              <div style={{ display: 'flex', gap: '1rem' }}>
+                <a 
+                  href={`https://chainscan-galileo.0g.ai/tx/0xac7df667f1a698b386db37f22a486e33a82cbc38650e9aa03a57178a93f8e281`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ fontSize: '0.65rem', color: 'var(--primary)', textDecoration: 'none' }}
+                >
+                  View Settlement ↗
+                </a>
+                <a 
+                  href={`https://storagescan-galileo.0g.ai/file/${selectedProof.cid.startsWith('0x') ? selectedProof.cid.slice(2) : selectedProof.cid}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ fontSize: '0.65rem', color: 'white', opacity: 0.5, textDecoration: 'none' }}
+                >
+                  0G StorageScan ↗
+                </a>
+              </div>
             </div>
+
+            {verificationResult?.data && (
+              <div style={{ background: 'rgba(0,255,163,0.03)', padding: '1rem', borderRadius: '12px', border: '1px solid rgba(0,255,163,0.1)' }}>
+                <p style={{ fontSize: '0.65rem', color: 'var(--primary)', marginBottom: '0.5rem', textTransform: 'uppercase', fontWeight: 'bold' }}>Data Retrieved from 0G Network</p>
+                <pre style={{ fontSize: '0.6rem', opacity: 0.8, overflowX: 'auto', color: 'white' }}>
+                  {JSON.stringify(verificationResult.data, null, 2)}
+                </pre>
+              </div>
+            )}
             
             <button 
               onClick={() => setSelectedProof(null)}

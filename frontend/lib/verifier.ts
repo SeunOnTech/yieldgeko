@@ -5,6 +5,8 @@
  * matches the hash anchored on the 0G blockchain.
  */
 
+import { storageService } from './storage';
+
 export interface VerificationResult {
   isValid: boolean;
   computedHash: string;
@@ -17,11 +19,9 @@ export class Verifier {
    * Computes SHA-256 hash of a JSON object (canonicalized)
    */
   public static async computeHash(data: any): Promise<string> {
-    // 1. Canonicalize (simple alphabetical sort for keys)
     const sortedKeys = Object.keys(data).sort();
     const canonical = JSON.stringify(data, sortedKeys);
     
-    // 2. Hash using Web Crypto API
     const msgUint8 = new TextEncoder().encode(canonical);
     const hashBuffer = await crypto.subtle.digest('SHA-256', msgUint8);
     const hashArray = Array.from(new Uint8Array(hashBuffer));
@@ -30,10 +30,14 @@ export class Verifier {
   }
 
   /**
-   * Verifies a receipt against an on-chain hash
+   * Verifies a receipt by fetching it from real 0G Storage
    */
-  public static async verifyReceipt(receipt: any, onChainHash: string): Promise<VerificationResult> {
+  public static async verifyReceipt(cid: string, onChainHash: string): Promise<VerificationResult> {
     try {
+      // 1. Fetch from 0G Storage
+      const receipt = await storageService.retrieveData(cid);
+      
+      // 2. Compute Local Hash
       const computedHash = await this.computeHash(receipt);
       const isValid = computedHash.toLowerCase() === onChainHash.toLowerCase();
       
@@ -47,7 +51,7 @@ export class Verifier {
         isValid: false,
         computedHash: '',
         onChainHash,
-        error: err.message
+        error: `0G Retrieval Failed: ${err.message}`
       };
     }
   }

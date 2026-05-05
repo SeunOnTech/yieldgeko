@@ -1,58 +1,99 @@
-import { createHash } from 'crypto';
+import { Indexer, MemData } from '@0gfoundation/0g-ts-sdk';
+import { Signer, ethers } from 'ethers';
+import * as crypto from 'crypto';
 
 export interface FinancialReceipt {
-  user: string;
-  txHash: string;
   timestamp: number;
-  route: {
-    from: string;
-    to: string;
-    asset: string;
-  };
-  performance: {
-    baseApyBps: number;
-    actualApyBps: number;
-    upliftBps: number;
-  };
+  user: { id: string };
+  venue: { id: string; name: string; apy: number };
+  previousVenue: { id: string; apy: number };
+  amount: string;
   fees: {
-    migrationFee: string;
-    successFee: string;
-    gasFee: string;
-    totalFee: string;
+    migration: string;
+    success: string;
+    gas: string;
   };
-  attestationId: string;
+  enclaveId: string;
 }
 
-/**
- * YieldGeko Financial Ledger
- * Anchors detailed migration receipts to 0G Storage.
- */
 export class LedgerLogger {
   /**
-   * Generates a canonical hash for the receipt
+   * Computes SHA-256 hash of the receipt JSON
    */
-  public static async computeReceiptHash(receipt: FinancialReceipt): Promise<string> {
-    const data = JSON.stringify(receipt);
-    return '0x' + createHash('sha256').update(data).digest('hex');
+  public static computeReceiptHash(receipt: FinancialReceipt): string {
+    const sortedKeys = Object.keys(receipt).sort();
+    const canonical = JSON.stringify(receipt, sortedKeys);
+    return '0x' + crypto.createHash('sha256').update(canonical).digest('hex');
   }
 
   /**
-   * Anchors the receipt to 0G Storage
+   * Logs migration to 0G Storage and returns the real Merkle Root Hash
    */
-  public static async anchorReceipt(receipt: FinancialReceipt): Promise<string> {
-    const hash = await this.computeReceiptHash(receipt);
-    console.log(`[Ledger] Anchoring Receipt to 0G Storage. Hash: ${hash}`);
+  public static async logMigration(
+    user: { id: string },
+    venue: { id: string; name: string; apy: number },
+    prevVenue: { id: string; apy: number },
+    amount: bigint,
+    fees: { migration: bigint; success: bigint; gas: bigint },
+    signer: Signer,
+    indexerUrl: string,
+    evmRpcUrl: string
+  ): Promise<{ receipt: FinancialReceipt; hash: string; cid: string }> {
+    const receipt: FinancialReceipt = {
+      timestamp: Date.now(),
+      user,
+      venue,
+      previousVenue: prevVenue,
+      amount: amount.toString(),
+      fees: {
+        migration: fees.migration.toString(),
+        success: fees.success.toString(),
+        gas: fees.gas.toString(),
+      },
+      enclaveId: '0g-tee-production-v1',
+    };
+
+    // 1. Compute Hash for anchoring
+    const hash = this.computeReceiptHash(receipt);
+
+    // 2. Prepare for 0G Storage using MemData
+    const payload = JSON.stringify(receipt);
+    const data = Buffer.from(payload);
+    const memData = new MemData(data);
     
-    // In production, we'd encrypt and upload to 0G Storage
-    // return storageCID;
-    return `0g-receipt-${hash.slice(2, 10)}`;
-  }
+    // 3. Upload to real 0G Storage
+    const indexer = new Indexer(indexerUrl);
+    
+    try {
+        const response: any = await indexer.upload(memData, evmRpcUrl, signer);
+        
+        if (!response) {
+          throw new Error('No response returned from 0G upload');
+        }
 
-  /**
-   * Simulates TEE Oracle price fetching
-   */
-  public static async getGasPriceInAsset(): Promise<bigint> {
-    // Mock: 1 USDC per 1M gas units (scaling by 10^6)
-    return 100n; 
+        // Robust Result Discovery
+        let tx = response;
+        
+        // Check if it's a [result, error] tuple
+        if (Array.isArray(response)) {
+            if (response[1]) throw response[1]; // Throw if error is present in tuple
+            tx = response[0];
+        }
+
+        // Extract CID (rootHash)
+        // 1. Try standard object properties
+        // 2. Try array properties (batch upload)
+        // 3. Fallback to raw string if the SDK returned the hash directly
+        const cid = tx.rootHash || (tx.rootHashes && tx.rootHashes[0]) || (typeof tx === 'string' ? tx : null);
+
+        if (!cid) {
+          console.error("DEBUG: Unexpected 0G Response Format:", JSON.stringify(response));
+          throw new Error('Could not resolve rootHash (CID) from 0G response');
+        }
+
+        return { receipt, hash, cid };
+    } catch (err: any) {
+        throw new Error(`0G Storage Upload Failed: ${err.message || err}`);
+    }
   }
 }

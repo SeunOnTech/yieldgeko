@@ -7,15 +7,22 @@ import { RouteBuilder } from './engine/route-builder';
 import { FailureLogger } from './storage/failure-logger';
 import { getAddress } from 'viem';
 
+import { AgentIDManager } from './tee/agent-id';
+import { TEESigner } from './tee/signer';
+import { PrivateSubmitter } from './rpc/submitter';
+
 async function main() {
-  console.log("🦎 YieldGeko Agent: Day 5 Autonomous Safety Validation...");
+  console.log("🦎 YieldGeko Agent: Day 6 Final Integration Validation...");
 
   try {
-    // 1. Initialize TEE
+    // 1. Initialize TEE & Agent ID
     await TEERuntime.initialize();
+    const agentAddress = await AgentIDManager.initializeAgentID();
+    const attestation = await AgentIDManager.generateAttestationReport();
+    console.log(`[TEE] Enclave Verified. Agent ID: ${agentAddress}`);
 
     // 2. Fetch Live State (Senses)
-    console.log("[1/5] Fetching Live State from Arbitrum...");
+    console.log("[1/6] Fetching Live State from Arbitrum...");
     const aaveData = await fetchAaveUSDCSupplyAPY();
     const pendleData = await fetchPendleMarketYield();
 
@@ -23,7 +30,7 @@ async function main() {
       {
         venue: "aave-v3-arbitrum-usdc",
         chainId: 42161,
-        contractAddress: "0x794a61358D6845594F94dc1DB02A252b5b4814aD",
+        contractAddress: getAddress("0x794a61358D6845594F94dc1DB02A252b5b4814aD"),
         apyBps: aaveData.apyBps,
         liquidityUsd: aaveData.liquidity,
         utilizationBps: aaveData.utilization,
@@ -34,7 +41,7 @@ async function main() {
       {
         venue: "pendle-market-weeth",
         chainId: 42161,
-        contractAddress: "0x46d62a8dede1bf2d0de04f2ed863245cbba5e538",
+        contractAddress: getAddress("0x46d62a8dede1bf2d0de04f2ed863245cbba5e538"),
         apyBps: pendleData.impliedApyBps,
         liquidityUsd: pendleData.liquidity,
         utilizationBps: 0n,
@@ -45,7 +52,7 @@ async function main() {
     ];
 
     // 3. TEE Intelligence (Brain)
-    console.log("[2/5] Sealed Intelligence: Scoring & Ranking...");
+    console.log("[2/6] Sealed Intelligence: Scoring & Ranking...");
     const ranked = await IntentProcessor.processIntent(
       { iv: 'mock', encrypted: 'mock' }, 
       'mock-key', 
@@ -54,60 +61,72 @@ async function main() {
     const topChoice = ranked[0];
     console.log(` - Top Recommendation: ${topChoice.venue} (${(Number(topChoice.apyBps)/100).toFixed(2)}% APY)`);
 
-    // 4. Route Construction
-    console.log("[3/5] Constructing Execution Route...");
-    const calldata = RouteBuilder.generateMigrationCalldata({
-      intent: { 
-        user: getAddress('0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045'), 
-        minAPY: 200n, 
-        maxSlippage: 100n, 
-        nonce: 0n, 
-        deadline: BigInt(Math.floor(Date.now()/1000) + 3600) 
-      },
-      signature: '0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
-      fromStrategy: getAddress('0x0000000000000000000000000000000000000000'),
-      toStrategy: getAddress(topChoice.contractAddress),
-      asset: getAddress('0xaf88d065e77c8cC2239327C5EDB3A432268e5831'), // USDC
-      amount: 1000n * 10n**6n, // $1000
-      actualSlippageBps: 50n,
-      actualAPY: topChoice.apyBps
-    });
-
-    // 5. Pre-Verification Safety Gate (Crucial Day 5 step)
-    console.log("[4/5] Pre-Execution Safety Verification...");
-    
-    // SIMULATION: We force an APY drift to test the abort logic
-    const SIMULATE_DRIFT = true;
-    const scoredApy = SIMULATE_DRIFT ? topChoice.apyBps + 100n : topChoice.apyBps; // Simulate that scored was 1% higher
-    
+    // 4. Pre-Verification Safety Gate
+    console.log("[3/6] Pre-Execution Safety Verification...");
     const verification = await VerificationGate.verifySafety(
       topChoice.venue,
-      scoredApy,
+      topChoice.apyBps,
       1000n * 10n**6n
     );
 
     if (verification.status !== SafetyStatus.VERIFIED) {
-      console.log(`⚠️ HARD ABORT: ${verification.status} detected!`);
-      const logCid = await FailureLogger.logAbort({
+      await FailureLogger.logAbort({
         userHash: '0x123',
         reason: verification.status,
-        expectedApy: scoredApy,
+        expectedApy: topChoice.apyBps,
         actualApy: verification.liveApyBps
       });
-      console.log(` - Failure Logged to 0G Storage: ${logCid}`);
-      console.log(" - Execution Halted. Capital Protected.");
-    } else {
-      console.log("✅ Safety Checks Passed. Proceeding to Signing...");
-      const signature = await TEERuntime.signOutput({ calldata, verification });
-      console.log(` - Route Signed: ${signature.slice(0, 20)}...`);
+      return;
     }
 
-    // 6. Cleanup
-    await TEERuntime.wipeMemory([ranked, venues, calldata]);
-    console.log("\n✅ Day 5 Validation Complete.");
+    // 5. TEE Signing & Route Construction
+    console.log("[4/6] Generating Hardware-Bound Signature...");
+    const intent = { 
+      user: getAddress('0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045'), 
+      minAPY: 200n, 
+      maxSlippage: 100n, 
+      nonce: 0n, 
+      deadline: BigInt(Math.floor(Date.now()/1000) + 3600) 
+    };
+
+    const agentSignature = await TEESigner.signMigration({
+      intent,
+      fromStrategy: getAddress('0x0000000000000000000000000000000000000000'),
+      toStrategy: getAddress(topChoice.contractAddress),
+      asset: getAddress('0xaf88d065e77c8cC2239327C5EDB3A432268e5831'),
+      amount: 1000n * 10n**6n,
+      actualSlippageBps: 50n,
+      actualAPY: topChoice.apyBps
+    });
+
+    const calldata = RouteBuilder.generateMigrationCalldata({
+      intent,
+      signature: agentSignature, // Hardware signature
+      fromStrategy: getAddress('0x0000000000000000000000000000000000000000'),
+      toStrategy: getAddress(topChoice.contractAddress),
+      asset: getAddress('0xaf88d065e77c8cC2239327C5EDB3A432268e5831'),
+      amount: 1000n * 10n**6n,
+      actualSlippageBps: 50n,
+      actualAPY: topChoice.apyBps
+    });
+
+    // 6. Private Submission
+    console.log("[5/6] Submitting via Private 0G Compute RPC...");
+    const txHash = await PrivateSubmitter.submitPrivately({
+      to: getAddress('0x65a085d7F6e65a085D7F6E65A085d7f6E65a085D'), // Router Address
+      data: calldata,
+      gasLimit: 500000n
+    });
+    console.log(`✅ Migration Executed Successfully! TX: ${txHash}`);
+
+    // 7. Cleanup & Wipe
+    console.log("[6/6] Zeroizing Enclave Memory & Emitting Wipe Proof...");
+    await TEERuntime.wipeMemory([ranked, venues, calldata, agentSignature]);
+    
+    console.log("\n🦎 Day 6 Final Integration COMPLETE.");
 
   } catch (error) {
-    console.error("❌ Day 5 Validation Failed:", error);
+    console.error("❌ Day 6 Validation Failed:", error);
   }
 }
 

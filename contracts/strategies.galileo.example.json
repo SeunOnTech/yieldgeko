@@ -1,0 +1,13 @@
+{
+  "registry": "0x1414F53fa0c67ec5BDb2d57747119f0185EE38A0",
+  "strategies": [
+    {
+      "strategy": "0x1111111111111111111111111111111111111111",
+      "adapter": "0x2222222222222222222222222222222222222222",
+      "name": "Example High Yield Strategy",
+      "chainId": 42161,
+      "minLiquidity": "500000000000",
+      "isAudited": true
+    }
+  ]
+}

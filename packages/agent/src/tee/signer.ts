@@ -1,5 +1,6 @@
 import { AgentIDManager } from './agent-id';
 import { EIP712_DOMAIN } from '@yieldgeko/core';
+import { Hex } from 'viem';
 
 /**
  * TEE Payload Signer
@@ -39,10 +40,10 @@ export class TEESigner {
       },
       primaryType: 'Migration',
       message: {
-        user: params.intent.user,
-        fromStrategy: params.fromStrategy,
-        toStrategy: params.toStrategy,
-        asset: params.asset,
+        user: params.intent.user as Hex,
+        fromStrategy: params.fromStrategy as Hex,
+        toStrategy: params.toStrategy as Hex,
+        asset: params.asset as Hex,
         amount: params.amount,
         actualSlippageBps: params.actualSlippageBps,
         actualAPY: params.actualAPY

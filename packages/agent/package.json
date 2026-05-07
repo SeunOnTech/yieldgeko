@@ -4,9 +4,17 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "node --require ts-node/register --test --test-force-exit ./src/storage/persist.test.ts && node --require ts-node/register --test --test-force-exit ./src/storage/agent-state.test.ts && node --require ts-node/register --test --test-force-exit ./src/engine/queue.test.ts && node --require ts-node/register --test --test-force-exit ./src/tee/agent-id.test.ts && node --require ts-node/register --test --test-force-exit ./src/rpc/submitter.test.ts",
     "start": "ts-node src/index.ts",
-    "dev": "ts-node src/index.ts"
+    "dev": "ts-node src/orchestrator/index.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "scout:opportunities": "ts-node src/discovery/opportunity-scout.ts",
+    "scout:ethena": "ts-node scripts/scout-ethena.ts",
+    "scout:aggressive": "ts-node scripts/scout-aggressive-yields.ts",
+    "scout:advanced": "ts-node scripts/scout-advanced-venues.ts",
+    "scout:uniswap": "ts-node scripts/scout-uniswap-yields.ts",
+    "orchestrator": "ts-node src/orchestrator/index.ts",
+    "test:0g": "ts-node scripts/test-0g-persistence.ts"
   },
   "keywords": [],
   "author": "",

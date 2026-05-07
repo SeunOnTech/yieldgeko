@@ -1,4 +1,4 @@
-import { useWriteContract, useAccount, useReadContract } from 'wagmi';
+import { useWriteContract, useAccount } from 'wagmi';
 import { ADDRESSES } from '@yieldgeko/core';
 import { parseUnits } from 'viem';
 import { useReadYieldGekoRouterUserBalances } from '../src/generated';

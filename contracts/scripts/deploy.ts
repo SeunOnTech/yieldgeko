@@ -1,29 +1,67 @@
-import { getAddress, parseEther } from "viem";
-import hre from "hardhat";
+import { getAddress, isAddress } from "viem";
+import { network } from "hardhat";
+import { loadContractEnv } from "./lib/load-env.js";
+
+loadContractEnv();
+
+function requireAddressEnv(name: string): `0x${string}` {
+  const value = process.env[name];
+  if (!value || value.trim().length === 0) {
+    throw new Error(`${name} is required`);
+  }
+
+  if (!isAddress(value)) {
+    throw new Error(`${name} must be a valid EVM address`);
+  }
+
+  return getAddress(value);
+}
+
+function optionalAddressEnv(name: string): `0x${string}` | null {
+  const value = process.env[name];
+  if (!value || value.trim().length === 0) {
+    return null;
+  }
+
+  if (!isAddress(value)) {
+    throw new Error(`${name} must be a valid EVM address when provided`);
+  }
+
+  return getAddress(value);
+}
 
 async function main() {
   console.log("Starting deployment on 0G Galileo Testnet...");
+  const { viem } = await network.connect();
 
-  // 1. Deploy StrategyRegistry
-  const registry = await hre.viem.deployContract("StrategyRegistry");
-  console.log(`StrategyRegistry deployed to: ${registry.address}`);
+  const treasuryAddr = requireAddressEnv("TREASURY_ADDR");
+  const agentAddr = requireAddressEnv("AGENT_ADDR");
+  const existingRegistryAddr = optionalAddressEnv("STRATEGY_REGISTRY_ADDR");
 
-  // 2. Setup addresses (placeholders for now, should be provided by USER or set in .env)
-  const treasuryAddr = getAddress("0x0000000000000000000000000000000000000000"); // Update after deploy
-  const agentAddr = getAddress("0x0000000000000000000000000000000000000000"); // Update after deploy
+  let registryAddress: `0x${string}`;
+  if (existingRegistryAddr) {
+    registryAddress = existingRegistryAddr;
+    console.log(`Reusing StrategyRegistry from STRATEGY_REGISTRY_ADDR: ${registryAddress}`);
+  } else {
+    const registry = await viem.deployContract("StrategyRegistry");
+    registryAddress = getAddress(registry.address);
+    console.log(`StrategyRegistry deployed to: ${registryAddress}`);
+  }
 
-  // 3. Deploy YieldGekoRouter
-  const router = await hre.viem.deployContract("YieldGekoRouter", [
-    registry.address,
+  const router = await viem.deployContract("YieldGekoRouter", [
+    registryAddress,
     agentAddr,
     treasuryAddr
   ]);
-  console.log(`YieldGekoRouter deployed to: ${router.address}`);
+  const routerAddress = getAddress(router.address);
+  console.log(`YieldGekoRouter deployed to: ${routerAddress}`);
 
   console.log("\nDeployment Complete!");
   console.log("-------------------");
-  console.log(`Registry: ${registry.address}`);
-  console.log(`Router:   ${router.address}`);
+  console.log(`Registry: ${registryAddress}`);
+  console.log(`Router:   ${routerAddress}`);
+  console.log(`Agent:    ${agentAddr}`);
+  console.log(`Treasury: ${treasuryAddr}`);
 }
 
 main().catch((error) => {

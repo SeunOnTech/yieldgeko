@@ -1,16 +1,13 @@
 {
-  "updatedAt": 1778009265628,
+  "updatedAt": 1778104756455,
   "venues": [
     {
-      "id": "pendle",
-      "name": "Pendle weETH",
-      "apy": 2.95,
-      "type": "boost"
-    },
-    {
-      "id": "aave",
-      "name": "Aave USDC",
-      "apy": 3.17,
+      "id": "uniswap v3-0",
+      "name": "sUSDe",
+      "apy": 0,
+      "protocol": "Uniswap V3",
+      "score": 0,
+      "stability": 0,
       "type": "safe"
     }
   ]

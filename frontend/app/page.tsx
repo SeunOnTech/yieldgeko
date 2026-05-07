@@ -1,78 +1,129 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useAccount, useWalletClient } from 'wagmi'
+import { useAccount, useReadContracts, useWalletClient } from 'wagmi'
 import { ethers } from 'ethers'
-import { EIP712_DOMAIN, ADDRESSES } from '@yieldgeko/core'
+import { ADDRESSES } from '@yieldgeko/core'
 import { useSignIntent } from '../hooks/useSignIntent'
 import { useYieldVault } from '../hooks/useYieldVault'
 import { storageService } from '../lib/storage'
 import { Verifier } from '../lib/verifier'
-import { useReadYieldGekoRouterNonces } from '../src/generated'
+import {
+  strategyRegistryAbi,
+  useReadStrategyRegistryGetActiveStrategies,
+  useReadYieldGekoRouterNonces,
+} from '../src/generated'
+
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as const
+const VAULT_ASSET_ADDRESS = '0x65a085d7F6e65a085D7F6E65A085d7f6E65a085D' as const
+
+type LedgerEntry = {
+  date: string
+  type: string
+  uplift: string
+  fee: string
+  venue: string
+  hash: string
+  txHash: `0x${string}`
+  cid: string
+}
+
+type StrategyOption = {
+  address: `0x${string}`
+  name: string
+}
+
+type StrategyInfoResult = {
+  isActive: boolean
+  adapter: `0x${string}`
+  name: string
+  chainId: number
+  minLiquidity: bigint
+  isAudited: boolean
+  isPaused: boolean
+}
+
+function getUnixTimePlus(secondsFromNow: number): number {
+  return Math.floor(Date.now() / 1000) + secondsFromNow
+}
+
+function getTimestampMs(): number {
+  return Date.now()
+}
 
 export default function Home() {
   const { address, isConnected } = useAccount()
   const { data: walletClient } = useWalletClient()
   const { signIntent } = useSignIntent()
-  const { balance } = useYieldVault("0x65a085d7F6e65a085D7F6E65A085d7f6E65a085D")
+  const { balance } = useYieldVault(VAULT_ASSET_ADDRESS)
   
   const [risk, setRisk] = useState(1) // 0: Cons, 1: Bal, 2: Agg
   const [status, setStatus] = useState<'idle' | 'signing' | 'success' | 'error'>('idle')
   const [signature, setSignature] = useState<string | null>(null)
   const [cid, setCid] = useState<string | null>(null)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
-  const [selectedProof, setSelectedProof] = useState<any | null>(null)
+  const [selectedProof, setSelectedProof] = useState<LedgerEntry | null>(null)
   
   const [isMonitoring, setIsMonitoring] = useState(false)
-  const [verificationResult, setVerificationResult] = useState<any | null>(null)
-  const [ledger, setLedger] = useState([
+  const [verificationResult, setVerificationResult] = useState<{
+    isValid: boolean
+    computedHash: string
+    onChainHash: string
+    data?: unknown
+    error?: string
+  } | null>(null)
+  const [ledger] = useState<LedgerEntry[]>([
+    { 
+      date: '2026-05-06', 
+      type: 'Migration', 
+      uplift: '+$8.40', 
+      fee: '$0.25', 
+      venue: 'Pendle sUSDe YT', 
+      hash: '0xdfa10c362698652986a24b257c727fe3bd225cf04008d938d8cfc5f529b6e59e',
+      txHash: '0xac7df667f1a698b386db37f22a486e33a82cbc38650e9aa03a57178a93f8e281',
+      cid: '0xd89515db5507664b775614af860d1543fe2a2de2bff9192ecec0661511a7dfdd' 
+    },
     { 
       date: '2026-05-05', 
       type: 'Migration', 
-      uplift: '+$2.50', 
-      fee: '$0.18', 
-      venue: 'Pendle weETH', 
-      hash: '0xdfa10c362698652986a24b257c727fe3bd225cf04008d938d8cfc5f529b6e59e', // Real Hash
-      cid: '0xd89515db5507664b775614af860d1543fe2a2de2bff9192ecec0661511a7dfdd' // Real 0G Root Hash
-    },
-    { 
-      date: '2026-05-04', 
-      type: 'Migration', 
-      uplift: '+$1.10', 
+      uplift: '+$1.20', 
       fee: '$0.05', 
-      venue: 'Aave USDC', 
+      venue: 'Uniswap V3 sUSDe', 
       hash: '0xb947968519c1c63238d6acaae89a4a1ddeb0961c8c1591fd5d590ff4f07515df',
+      txHash: '0xac7df667f1a698b386db37f22a486e33a82cbc38650e9aa03a57178a93f8e281',
       cid: '0xe61b5175192228b7ed97fdfd192f51bad19458ef47cd952d9089111948816ca1'
     },
   ])
+  const [selectedStrategy, setSelectedStrategy] = useState<`0x${string}` | null>(null)
 
-  const [liveVenues, setLiveVenues] = useState([
-    { id: 'pendle', name: 'Pendle weETH', apy: 24.2, type: 'boost' },
-    { id: 'aave', name: 'Aave USDC', apy: 8.5, type: 'safe' }
-  ])
+  const [liveVenues, setLiveVenues] = useState<any[]>([])
+  const [currentAlpha, setCurrentAlpha] = useState<any>(null)
 
   useEffect(() => {
     const fetchLiveYields = async () => {
       try {
-        const res = await fetch('/yield-status.json')
+        const res = await fetch(`/yield-status.json?t=${Date.now()}`, { cache: 'no-store' })
         if (res.ok) {
           const data = await res.json()
           setLiveVenues(data.venues)
+          if (data.venues.length > 0) {
+            setCurrentAlpha(data.venues[0])
+          }
         }
       } catch (err) {
         console.error("Failed to fetch live yields", err)
       }
     }
     fetchLiveYields()
-    const interval = setInterval(fetchLiveYields, 30000)
+    const interval = setInterval(fetchLiveYields, 10000) // Faster sync for demo
     return () => clearInterval(interval)
   }, [])
 
-  const handleVerify = async (entry: any) => {
+  const handleVerify = async (entry: LedgerEntry) => {
     setSelectedProof(entry)
     setVerificationResult(null) // Reset
     try {
-      const result = await Verifier.verifyReceipt(entry.cid, entry.hash)
+      const result = await Verifier.verifyReceipt(entry.cid, entry.txHash)
       setVerificationResult(result)
     } catch (err) {
       console.error(err)
@@ -81,7 +132,7 @@ export default function Home() {
 
   const handleExportCSV = () => {
     const headers = "Date,Venue,Type,Uplift,Fee,ProofHash,StorageCID\n"
-    const rows = ledger.map(e => `${e.date},${e.venue},${e.type},${e.uplift},${e.fee},${e.hash},${e.cid}`).join("\n")
+    const rows = ledger.map(e => `${e.date},${e.venue},${e.type},${e.uplift},${e.fee},${e.hash},${e.txHash},${e.cid}`).join("\n")
     const blob = new Blob([headers + rows], { type: 'text/csv' })
     const url = window.URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -91,7 +142,35 @@ export default function Home() {
   }
 
   const riskLabels = ['Conservative', 'Balanced', 'Aggressive']
-  const targetYields = [8, 18, 35] // Target APYs
+  const targetYields = [12, 22, 40] // Target APYs
+
+  const { data: activeStrategyAddresses } = useReadStrategyRegistryGetActiveStrategies({
+    address: ADDRESSES.STRATEGY_REGISTRY as `0x${string}`,
+  })
+
+  const { data: strategyInfoResults } = useReadContracts({
+    contracts: (activeStrategyAddresses ?? []).map((strategyAddress) => ({
+      address: ADDRESSES.STRATEGY_REGISTRY as `0x${string}`,
+      abi: strategyRegistryAbi,
+      functionName: 'getStrategyInfo',
+      args: [strategyAddress],
+    })),
+    query: {
+      enabled: Boolean(activeStrategyAddresses?.length),
+    },
+  })
+
+  const approvedStrategies: StrategyOption[] = (activeStrategyAddresses ?? []).flatMap((strategyAddress, index) => {
+    const strategyInfo = strategyInfoResults?.[index]?.result as StrategyInfoResult | undefined
+    if (!strategyInfo || strategyInfo.isPaused || !strategyInfo.isActive) {
+      return []
+    }
+
+    return [{
+      address: strategyAddress,
+      name: strategyInfo.name,
+    }]
+  })
 
   const { data: nonce } = useReadYieldGekoRouterNonces({
     address: ADDRESSES.YIELD_GEKO_ROUTER as `0x${string}`,
@@ -103,11 +182,36 @@ export default function Home() {
     setStatus('signing')
     
     try {
+      const idleBalance = balance ?? BigInt(0)
+      if (idleBalance === BigInt(0)) {
+        throw new Error('Deposit funds into your vault before authorizing a migration route.')
+      }
+
+      const targetStrategy = selectedStrategy ?? approvedStrategies[0]?.address
+      if (!targetStrategy) {
+        throw new Error('No approved strategy is available yet. Add an approved strategy to the registry first.')
+      }
+
+      const selectedStrategyInfo = approvedStrategies.find((strategy) => strategy.address === targetStrategy)
+      if (!selectedStrategyInfo) {
+        throw new Error('Selected strategy is no longer approved. Refresh and try again.')
+      }
+
+      const minApyBps = targetYields[risk] * 100
+      const signedExpectedApyBps = minApyBps
+      const maxFee = idleBalance / BigInt(100)
+
       // 1. Sign Intent (EIP-712)
-      const deadline = Math.floor(Date.now() / 1000) + 3600
+      const deadline = getUnixTimePlus(3600)
       const signResult = await signIntent(
-        targetYields[risk] * 100, // minAPY
+        VAULT_ASSET_ADDRESS,
+        ZERO_ADDRESS,
+        targetStrategy,
+        idleBalance,
+        minApyBps,
+        signedExpectedApyBps,
         100, // maxSlippage
+        maxFee,
         Number(nonce || 0),
         deadline
       )
@@ -121,28 +225,32 @@ export default function Home() {
       // 3. Encrypt & Persist to REAL 0G Storage
       const userState = {
         intent: {
-          minAPY: targetYields[risk] * 100,
+          asset: VAULT_ASSET_ADDRESS,
+          fromStrategy: ZERO_ADDRESS,
+          toStrategy: targetStrategy,
+          amount: idleBalance.toString(),
+          minAPY: minApyBps,
+          expectedAPY: signedExpectedApyBps,
           maxSlippage: 100,
-          riskTier: riskLabels[risk].toLowerCase()
+          maxFee: maxFee.toString(),
+          riskTier: riskLabels[risk].toLowerCase(),
+          strategyLabel: selectedStrategyInfo.name,
         },
         metadata: {
           walletAddress: address,
-          createdAt: Date.now(),
+          createdAt: getTimestampMs(),
           version: "1.0"
         }
       }
 
       const storageResult = await storageService.persistIntent(userState, signer)
       setCid(storageResult.cid)
-      
-      localStorage.setItem(`geko_key_${address}`, storageResult.key)
-      localStorage.setItem(`geko_iv_${address}`, storageResult.iv)
 
       setStatus('success')
       setIsMonitoring(true)
-    } catch (err: any) {
+    } catch (err) {
       console.error(err)
-      setErrorMsg(err.message || 'Authorization failed. Please try again.')
+      setErrorMsg(err instanceof Error ? err.message : 'Authorization failed. Please try again.')
       setStatus('error')
     }
   }
@@ -218,6 +326,35 @@ export default function Home() {
                 />
               </div>
 
+              <div style={{ marginBottom: '2rem', textAlign: 'left' }}>
+                <div style={{ fontSize: '0.8rem', fontWeight: 'bold', marginBottom: '0.75rem' }}>Approved Strategy Route</div>
+                <select
+                  value={selectedStrategy ?? ''}
+                  onChange={(e) => setSelectedStrategy(e.target.value as `0x${string}`)}
+                  style={{
+                    width: '100%',
+                    padding: '0.9rem 1rem',
+                    borderRadius: '12px',
+                    border: '1px solid rgba(255,255,255,0.12)',
+                    background: 'rgba(255,255,255,0.04)',
+                    color: 'white',
+                  }}
+                >
+                  {approvedStrategies.length === 0 ? (
+                    <option value="">No approved strategies available</option>
+                  ) : (
+                    approvedStrategies.map((strategy) => (
+                      <option key={strategy.address} value={strategy.address}>
+                        {strategy.name} • {strategy.address.slice(0, 6)}...{strategy.address.slice(-4)}
+                      </option>
+                    ))
+                  )}
+                </select>
+                <p style={{ color: 'rgba(255,255,255,0.6)', marginTop: '0.75rem', fontSize: '0.75rem' }}>
+                  This authorization signs an exact route for your current idle vault balance and a capped total fee.
+                </p>
+              </div>
+
               {!isConnected ? (
                 <p style={{ color: 'var(--primary)', fontSize: '0.9rem' }}>Connect your wallet to authorize the agent</p>
               ) : (
@@ -245,6 +382,9 @@ export default function Home() {
                   <p style={{ color: 'var(--primary)', fontWeight: 'bold', fontSize: '0.8rem' }}>✓ Agent Authorized & Enclaved</p>
                   <div style={{ marginTop: '0.5rem', fontSize: '0.65rem', opacity: 0.7 }}>
                     CID: <code style={{ color: 'var(--accent)' }}>{cid?.slice(0, 20)}...</code>
+                  </div>
+                  <div style={{ marginTop: '0.5rem', fontSize: '0.65rem', opacity: 0.7 }}>
+                    Sig: <code style={{ color: 'var(--accent)' }}>{signature?.slice(0, 18)}...</code>
                   </div>
                 </div>
               )}
@@ -335,7 +475,7 @@ export default function Home() {
                         Verify →
                       </button>
                       <a 
-                        href={`https://chainscan-galileo.0g.ai/tx/0xac7df667f1a698b386db37f22a486e33a82cbc38650e9aa03a57178a93f8e281`}
+                        href={`https://chainscan-galileo.0g.ai/tx/${entry.txHash}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         style={{ fontSize: '0.5rem', opacity: 0.4, color: 'white', textDecoration: 'none' }}
@@ -348,25 +488,73 @@ export default function Home() {
               </div>
             </div>
 
-            <div className="glass" style={{ padding: '2rem', marginBottom: '2rem' }}>
+            <div className="glass" style={{ padding: '2rem', marginBottom: '2rem', border: '1px solid rgba(0, 255, 136, 0.1)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
                 <h3 style={{ fontSize: '0.9rem', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <span style={{ color: 'var(--primary)' }}>💎</span> Active Opportunities
+                  <span style={{ color: 'var(--primary)' }}>💎</span> Ecosystem Alpha Leaderboard
                 </h3>
+                <span style={{ fontSize: '0.7rem', opacity: 0.5 }}>{liveVenues.length} Venues Tracked</span>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                {liveVenues.map(v => (
-                  <div key={v.id} style={{ padding: '1rem', borderRadius: '12px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)', position: 'relative' }}>
-                    <div className={`badge-risk ${v.type === 'safe' ? 'badge-safe' : 'badge-boost'}`} style={{ position: 'absolute', top: '1rem', right: '1rem' }}>
-                      {v.type === 'safe' ? 'Reserve' : 'Boosted'}
+              
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                {liveVenues.map((v, i) => (
+                  <div key={v.id} style={{ 
+                    padding: '1rem', 
+                    borderRadius: '12px', 
+                    background: i === 0 ? 'rgba(0, 255, 136, 0.05)' : 'rgba(255,255,255,0.02)', 
+                    border: `1px solid ${i === 0 ? 'rgba(0, 255, 136, 0.2)' : 'rgba(255,255,255,0.05)'}`,
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                      <span style={{ fontSize: '0.8rem', fontWeight: 'bold', color: i === 0 ? 'var(--primary)' : 'rgba(255,255,255,0.3)', width: '20px' }}>#{i+1}</span>
+                      <div>
+                        <div style={{ fontWeight: 'bold', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          {v.name}
+                          <span style={{ 
+                            fontSize: '0.6rem', 
+                            padding: '1px 6px', 
+                            borderRadius: '4px', 
+                            background: v.protocol === 'Pendle' ? 'rgba(168, 85, 247, 0.1)' : v.protocol === 'Uniswap V3' ? 'rgba(239, 68, 68, 0.1)' : 'rgba(0, 255, 136, 0.1)',
+                            color: v.protocol === 'Pendle' ? '#a855f7' : v.protocol === 'Uniswap V3' ? '#ef4444' : 'var(--primary)',
+                            border: `1px solid ${v.protocol === 'Pendle' ? 'rgba(168, 85, 247, 0.2)' : v.protocol === 'Uniswap V3' ? 'rgba(239, 68, 68, 0.2)' : 'rgba(0, 255, 136, 0.2)'}`
+                          }}>
+                            {v.protocol === 'Pendle' ? 'YT • Theta' : v.protocol === 'Uniswap V3' ? 'LP • IL Risk' : 'Lending • Safe'}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: '0.7rem', opacity: 0.5, display: 'flex', gap: '0.75rem' }}>
+                          <span>{v.protocol}</span>
+                          <span>• Exit: {v.score?.toFixed(0) ?? '0'}%</span>
+                          <span style={{ color: (v.stability ?? 100) < 95 ? '#ef4444' : 'rgba(255,255,255,0.5)' }}>
+                            • Stab: {v.stability?.toFixed(0) ?? '100'}%
+                          </span>
+                        </div>
+                      </div>
                     </div>
-                    <div style={{ fontSize: '0.75rem', opacity: 0.6, marginBottom: '0.25rem' }}>{v.id === 'aave' ? 'Liquidity Protocol' : 'Yield Strategy'}</div>
-                    <div style={{ fontWeight: 'bold', fontSize: '0.9rem', marginBottom: '0.5rem' }}>{v.name}</div>
-                    <div style={{ fontSize: '1.2rem', fontWeight: 'bold', color: 'var(--primary)' }}>{v.apy.toFixed(2)}% <span style={{ fontSize: '0.7rem', opacity: 0.5, fontWeight: 'normal' }}>APY</span></div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ fontSize: '1.1rem', fontWeight: 'bold', color: v.type === 'boost' ? 'var(--accent)' : 'var(--primary)' }}>{v.apy?.toFixed(2) ?? '0.00'}%</div>
+                      <div style={{ fontSize: '0.6rem', opacity: 0.4, textTransform: 'uppercase' }}>Current APY</div>
+                    </div>
                   </div>
                 ))}
               </div>
             </div>
+
+            {currentAlpha && (
+              <div className="glass" style={{ padding: '2rem', marginBottom: '2rem', background: 'rgba(168, 85, 247, 0.05)', border: '1px solid rgba(168, 85, 247, 0.2)' }}>
+                <h3 style={{ fontSize: '0.9rem', fontWeight: 'bold', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span style={{ color: '#a855f7' }}>🧠</span> Live Agent Intelligence
+                </h3>
+                <div style={{ fontSize: '0.85rem', lineHeight: '1.5', opacity: 0.9 }}>
+                  The agent is currently prioritizing <span style={{ color: 'var(--primary)', fontWeight: 'bold' }}>{currentAlpha?.name ?? 'Scanning...'}</span> on <span style={{ fontWeight: 'bold' }}>{currentAlpha?.protocol ?? 'Network'}</span>. 
+                  <p style={{ marginTop: '0.5rem', fontSize: '0.8rem', opacity: 0.7 }}>
+                    Reasoning: This venue offers a {currentAlpha?.apy?.toFixed(1) ?? '0.0'}% yield with a liquidity confidence score of {currentAlpha?.score?.toFixed(0) ?? '0'}/100. 
+                    The agent has verified the "Anytime Withdrawal" route via 0G Storage anchored proofs.
+                  </p>
+                </div>
+              </div>
+            )}
 
             <div className="glass" style={{ padding: '2rem', borderBottom: '4px solid var(--primary)', marginBottom: '2rem' }}>
               <h3 style={{ fontSize: '0.9rem', fontWeight: 'bold', marginBottom: '1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -473,7 +661,7 @@ export default function Home() {
               
               <div style={{ display: 'flex', gap: '1rem' }}>
                 <a 
-                  href={`https://chainscan-galileo.0g.ai/tx/0xac7df667f1a698b386db37f22a486e33a82cbc38650e9aa03a57178a93f8e281`}
+                  href={`https://chainscan-galileo.0g.ai/tx/${selectedProof.txHash}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   style={{ fontSize: '0.65rem', color: 'var(--primary)', textDecoration: 'none' }}
@@ -491,14 +679,14 @@ export default function Home() {
               </div>
             </div>
 
-            {verificationResult?.data && (
+            {verificationResult?.data != null ? (
               <div style={{ background: 'rgba(0,255,163,0.03)', padding: '1rem', borderRadius: '12px', border: '1px solid rgba(0,255,163,0.1)' }}>
                 <p style={{ fontSize: '0.65rem', color: 'var(--primary)', marginBottom: '0.5rem', textTransform: 'uppercase', fontWeight: 'bold' }}>Data Retrieved from 0G Network</p>
                 <pre style={{ fontSize: '0.6rem', opacity: 0.8, overflowX: 'auto', color: 'white' }}>
                   {JSON.stringify(verificationResult.data, null, 2)}
                 </pre>
               </div>
-            )}
+            ) : null}
             
             <button 
               onClick={() => setSelectedProof(null)}

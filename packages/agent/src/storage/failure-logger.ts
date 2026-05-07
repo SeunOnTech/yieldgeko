@@ -1,4 +1,5 @@
-import { persistNormalizedYield } from './persist'; // We can adapt the existing persist logic
+import { Signer } from 'ethers';
+import { persistJsonArtifact, PersistedArtifact } from './persist';
 
 /**
  * 0G Storage Failure Logger
@@ -14,21 +15,27 @@ export class FailureLogger {
     expectedApy: bigint;
     actualApy: bigint;
     calldataHash?: string;
-  }): Promise<string> {
+    signer: Signer;
+    indexerUrl: string;
+    evmRpcUrl: string;
+  }): Promise<PersistedArtifact> {
     const logBlob = {
-      ...params,
+      userHash: params.userHash,
+      reason: params.reason,
+      expectedApy: params.expectedApy.toString(),
+      actualApy: params.actualApy.toString(),
+      calldataHash: params.calldataHash,
       timestamp: Date.now(),
       status: 'ABORTED',
-      type: 'SAFETY_GATE_TRIGGER'
+      type: 'SAFETY_GATE_TRIGGER',
     };
 
     console.log(`[FailureLogger] Anchoring Abort Proof to 0G Storage: ${params.reason}`);
-    
-    // For the demo, we reuse our JSON persistence logic
-    // In production, this targets the Log Layer specifically
-    // We mock the CID return for validation
-    const mockCid = `0g-abort-${Buffer.from(params.reason).toString('hex').slice(0, 8)}`;
-    
-    return mockCid;
+
+    return persistJsonArtifact(logBlob, {
+      signer: params.signer,
+      indexerUrl: params.indexerUrl,
+      evmRpcUrl: params.evmRpcUrl,
+    });
   }
 }

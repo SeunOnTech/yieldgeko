@@ -38,3 +38,9 @@ yarn-debug.log*
 yarn-error.log*
 deploy_*.log
 *.log
+
+# Local runtime state
+.state/
+
+# Provider metadata
+.provider-metadata.json

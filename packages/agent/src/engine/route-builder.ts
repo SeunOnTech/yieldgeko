@@ -1,4 +1,4 @@
-import { encodeFunctionData, parseAbi } from 'viem';
+import { encodeFunctionData, Hex, parseAbi } from 'viem';
 
 /**
  * Route Builder for YieldGeko
@@ -6,7 +6,7 @@ import { encodeFunctionData, parseAbi } from 'viem';
  */
 export class RouteBuilder {
   private static readonly ROUTER_ABI = parseAbi([
-    'function executeMigration((address user, uint256 minAPY, uint256 maxSlippage, uint256 nonce, uint256 deadline) intent, bytes signature, address fromStrategy, address toStrategy, address asset, uint256 amount, uint256 actualSlippageBps, uint256 actualAPY) external'
+    'function executeMigration((address user, address asset, address fromStrategy, address toStrategy, uint256 amount, uint256 minAPY, uint256 expectedAPY, uint256 maxSlippage, uint256 maxFee, uint256 nonce, uint256 deadline) intent, bytes signature, uint256 actualSlippageBps, bytes32 receiptHash, uint256 gasFeeInAsset) external'
   ]);
 
   /**
@@ -15,31 +15,43 @@ export class RouteBuilder {
   public static generateMigrationCalldata(params: {
     intent: {
       user: string;
+      asset: string;
+      fromStrategy: string;
+      toStrategy: string;
+      amount: bigint;
       minAPY: bigint;
+      expectedAPY: bigint;
       maxSlippage: bigint;
+      maxFee: bigint;
       nonce: bigint;
       deadline: bigint;
     };
     signature: string;
-    fromStrategy: string;
-    toStrategy: string;
-    asset: string;
-    amount: bigint;
     actualSlippageBps: bigint;
-    actualAPY: bigint;
+    receiptHash: string;
+    gasFeeInAsset: bigint;
   }): string {
     return encodeFunctionData({
       abi: this.ROUTER_ABI,
       functionName: 'executeMigration',
       args: [
-        { ...params.intent, user: params.intent.user as `0x${string}` },
-        params.signature as `0x${string}`,
-        params.fromStrategy as `0x${string}`,
-        params.toStrategy as `0x${string}`,
-        params.asset as `0x${string}`,
-        params.amount,
+        {
+          user: params.intent.user as Hex,
+          asset: params.intent.asset as Hex,
+          fromStrategy: params.intent.fromStrategy as Hex,
+          toStrategy: params.intent.toStrategy as Hex,
+          amount: params.intent.amount,
+          minAPY: params.intent.minAPY,
+          expectedAPY: params.intent.expectedAPY,
+          maxSlippage: params.intent.maxSlippage,
+          maxFee: params.intent.maxFee,
+          nonce: params.intent.nonce,
+          deadline: params.intent.deadline,
+        },
+        params.signature as Hex,
         params.actualSlippageBps,
-        params.actualAPY
+        params.receiptHash as Hex,
+        params.gasFeeInAsset
       ]
     });
   }

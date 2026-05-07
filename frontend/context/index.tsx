@@ -1,9 +1,8 @@
 'use client'
 
 import { createAppKit } from '@reown/appkit/react'
-import { WagmiAdapter } from '@reown/appkit-adapter-wagmi'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { ReactNode, useState } from 'react'
+import { ReactNode } from 'react'
 import { config, projectId, networks, wagmiAdapter } from '@/config'
 import { WagmiProvider } from 'wagmi'
 
@@ -16,7 +15,7 @@ if (!projectId) {
 // Create the modal
 createAppKit({
   adapters: [wagmiAdapter],
-  networks: networks as any,
+  networks,
   projectId,
   features: {
     analytics: true

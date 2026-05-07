@@ -1,9 +1,41 @@
 import {
-  createUseReadContract,
   createUseWriteContract,
   createUseSimulateContract,
+  createUseReadContract,
   createUseWatchContractEvent,
 } from 'wagmi/codegen'
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// IStrategyAdapter
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const iStrategyAdapterAbi = [
+  {
+    type: 'function',
+    inputs: [
+      { name: 'asset', internalType: 'address', type: 'address' },
+      { name: 'amount', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'deposit',
+    outputs: [
+      { name: 'depositedAmount', internalType: 'uint256', type: 'uint256' },
+    ],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'asset', internalType: 'address', type: 'address' },
+      { name: 'amount', internalType: 'uint256', type: 'uint256' },
+      { name: 'recipient', internalType: 'address', type: 'address' },
+    ],
+    name: 'withdraw',
+    outputs: [
+      { name: 'withdrawnAmount', internalType: 'uint256', type: 'uint256' },
+    ],
+    stateMutability: 'nonpayable',
+  },
+] as const
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // StrategyRegistry
@@ -17,7 +49,7 @@ export const strategyRegistryAbi = [
       { name: '_strategy', internalType: 'address', type: 'address' },
       { name: '_adapter', internalType: 'address', type: 'address' },
       { name: '_name', internalType: 'string', type: 'string' },
-      { name: '_chainId', internalType: 'uint8', type: 'uint8' },
+      { name: '_chainId', internalType: 'uint64', type: 'uint64' },
       { name: '_minLiquidity', internalType: 'uint256', type: 'uint256' },
       { name: '_isAudited', internalType: 'bool', type: 'bool' },
     ],
@@ -45,7 +77,7 @@ export const strategyRegistryAbi = [
           { name: 'isActive', internalType: 'bool', type: 'bool' },
           { name: 'adapter', internalType: 'address', type: 'address' },
           { name: 'name', internalType: 'string', type: 'string' },
-          { name: 'chainId', internalType: 'uint8', type: 'uint8' },
+          { name: 'chainId', internalType: 'uint64', type: 'uint64' },
           { name: 'minLiquidity', internalType: 'uint256', type: 'uint256' },
           { name: 'isAudited', internalType: 'bool', type: 'bool' },
           { name: 'isPaused', internalType: 'bool', type: 'bool' },
@@ -100,7 +132,7 @@ export const strategyRegistryAbi = [
       { name: 'isActive', internalType: 'bool', type: 'bool' },
       { name: 'adapter', internalType: 'address', type: 'address' },
       { name: 'name', internalType: 'string', type: 'string' },
-      { name: 'chainId', internalType: 'uint8', type: 'uint8' },
+      { name: 'chainId', internalType: 'uint64', type: 'uint64' },
       { name: 'minLiquidity', internalType: 'uint256', type: 'uint256' },
       { name: 'isAudited', internalType: 'bool', type: 'bool' },
       { name: 'isPaused', internalType: 'bool', type: 'bool' },
@@ -150,7 +182,12 @@ export const strategyRegistryAbi = [
         indexed: false,
       },
       { name: 'name', internalType: 'string', type: 'string', indexed: false },
-      { name: 'chainId', internalType: 'uint8', type: 'uint8', indexed: false },
+      {
+        name: 'chainId',
+        internalType: 'uint64',
+        type: 'uint64',
+        indexed: false,
+      },
     ],
     name: 'StrategyAdded',
   },
@@ -293,25 +330,30 @@ export const yieldGekoRouterAbi = [
             type: 'tuple',
             components: [
               { name: 'user', internalType: 'address', type: 'address' },
+              { name: 'asset', internalType: 'address', type: 'address' },
+              {
+                name: 'fromStrategy',
+                internalType: 'address',
+                type: 'address',
+              },
+              { name: 'toStrategy', internalType: 'address', type: 'address' },
+              { name: 'amount', internalType: 'uint256', type: 'uint256' },
               { name: 'minAPY', internalType: 'uint256', type: 'uint256' },
+              { name: 'expectedAPY', internalType: 'uint256', type: 'uint256' },
               { name: 'maxSlippage', internalType: 'uint256', type: 'uint256' },
+              { name: 'maxFee', internalType: 'uint256', type: 'uint256' },
               { name: 'nonce', internalType: 'uint256', type: 'uint256' },
               { name: 'deadline', internalType: 'uint256', type: 'uint256' },
             ],
           },
           { name: 'signature', internalType: 'bytes', type: 'bytes' },
-          { name: 'fromStrategy', internalType: 'address', type: 'address' },
-          { name: 'toStrategy', internalType: 'address', type: 'address' },
-          { name: 'asset', internalType: 'address', type: 'address' },
-          { name: 'amount', internalType: 'uint256', type: 'uint256' },
           {
             name: 'actualSlippageBps',
             internalType: 'uint256',
             type: 'uint256',
           },
-          { name: 'actualAPY', internalType: 'uint256', type: 'uint256' },
           { name: 'receiptHash', internalType: 'bytes32', type: 'bytes32' },
-          { name: 'gasPriceInAsset', internalType: 'uint256', type: 'uint256' },
+          { name: 'gasFeeInAsset', internalType: 'uint256', type: 'uint256' },
         ],
       },
     ],
@@ -328,21 +370,22 @@ export const yieldGekoRouterAbi = [
         type: 'tuple',
         components: [
           { name: 'user', internalType: 'address', type: 'address' },
+          { name: 'asset', internalType: 'address', type: 'address' },
+          { name: 'fromStrategy', internalType: 'address', type: 'address' },
+          { name: 'toStrategy', internalType: 'address', type: 'address' },
+          { name: 'amount', internalType: 'uint256', type: 'uint256' },
           { name: 'minAPY', internalType: 'uint256', type: 'uint256' },
+          { name: 'expectedAPY', internalType: 'uint256', type: 'uint256' },
           { name: 'maxSlippage', internalType: 'uint256', type: 'uint256' },
+          { name: 'maxFee', internalType: 'uint256', type: 'uint256' },
           { name: 'nonce', internalType: 'uint256', type: 'uint256' },
           { name: 'deadline', internalType: 'uint256', type: 'uint256' },
         ],
       },
       { name: '_signature', internalType: 'bytes', type: 'bytes' },
-      { name: '_fromStrategy', internalType: 'address', type: 'address' },
-      { name: '_toStrategy', internalType: 'address', type: 'address' },
-      { name: '_asset', internalType: 'address', type: 'address' },
-      { name: '_amount', internalType: 'uint256', type: 'uint256' },
       { name: '_actualSlippageBps', internalType: 'uint256', type: 'uint256' },
-      { name: '_actualAPY', internalType: 'uint256', type: 'uint256' },
       { name: '_receiptHash', internalType: 'bytes32', type: 'bytes32' },
-      { name: '_gasPriceInAsset', internalType: 'uint256', type: 'uint256' },
+      { name: '_gasFeeInAsset', internalType: 'uint256', type: 'uint256' },
     ],
     name: 'executeMigration',
     outputs: [],
@@ -357,21 +400,22 @@ export const yieldGekoRouterAbi = [
         type: 'tuple',
         components: [
           { name: 'user', internalType: 'address', type: 'address' },
+          { name: 'asset', internalType: 'address', type: 'address' },
+          { name: 'fromStrategy', internalType: 'address', type: 'address' },
+          { name: 'toStrategy', internalType: 'address', type: 'address' },
+          { name: 'amount', internalType: 'uint256', type: 'uint256' },
           { name: 'minAPY', internalType: 'uint256', type: 'uint256' },
+          { name: 'expectedAPY', internalType: 'uint256', type: 'uint256' },
           { name: 'maxSlippage', internalType: 'uint256', type: 'uint256' },
+          { name: 'maxFee', internalType: 'uint256', type: 'uint256' },
           { name: 'nonce', internalType: 'uint256', type: 'uint256' },
           { name: 'deadline', internalType: 'uint256', type: 'uint256' },
         ],
       },
       { name: '_signature', internalType: 'bytes', type: 'bytes' },
-      { name: '_fromStrategy', internalType: 'address', type: 'address' },
-      { name: '_toStrategy', internalType: 'address', type: 'address' },
-      { name: '_asset', internalType: 'address', type: 'address' },
-      { name: '_amount', internalType: 'uint256', type: 'uint256' },
       { name: '_actualSlippageBps', internalType: 'uint256', type: 'uint256' },
-      { name: '_actualAPY', internalType: 'uint256', type: 'uint256' },
       { name: '_receiptHash', internalType: 'bytes32', type: 'bytes32' },
-      { name: '_gasPriceInAsset', internalType: 'uint256', type: 'uint256' },
+      { name: '_gasFeeInAsset', internalType: 'uint256', type: 'uint256' },
     ],
     name: 'executeMigrationExternal',
     outputs: [],
@@ -434,6 +478,17 @@ export const yieldGekoRouterAbi = [
     name: 'setTreasury',
     outputs: [],
     stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '', internalType: 'address', type: 'address' },
+      { name: '', internalType: 'address', type: 'address' },
+      { name: '', internalType: 'address', type: 'address' },
+    ],
+    name: 'strategyPositions',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
   },
   {
     type: 'function',
@@ -624,6 +679,32 @@ export const yieldGekoRouterAbi = [
     type: 'event',
     anonymous: false,
     inputs: [
+      { name: 'user', internalType: 'address', type: 'address', indexed: true },
+      {
+        name: 'asset',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'strategy',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'positionAmount',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'StrategyPositionUpdated',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
       {
         name: 'newTreasury',
         internalType: 'address',
@@ -706,6 +787,55 @@ export const yieldGekoRouterAbi = [
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // React
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link iStrategyAdapterAbi}__
+ */
+export const useWriteIStrategyAdapter = /*#__PURE__*/ createUseWriteContract({
+  abi: iStrategyAdapterAbi,
+})
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link iStrategyAdapterAbi}__ and `functionName` set to `"deposit"`
+ */
+export const useWriteIStrategyAdapterDeposit =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: iStrategyAdapterAbi,
+    functionName: 'deposit',
+  })
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link iStrategyAdapterAbi}__ and `functionName` set to `"withdraw"`
+ */
+export const useWriteIStrategyAdapterWithdraw =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: iStrategyAdapterAbi,
+    functionName: 'withdraw',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link iStrategyAdapterAbi}__
+ */
+export const useSimulateIStrategyAdapter =
+  /*#__PURE__*/ createUseSimulateContract({ abi: iStrategyAdapterAbi })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link iStrategyAdapterAbi}__ and `functionName` set to `"deposit"`
+ */
+export const useSimulateIStrategyAdapterDeposit =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: iStrategyAdapterAbi,
+    functionName: 'deposit',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link iStrategyAdapterAbi}__ and `functionName` set to `"withdraw"`
+ */
+export const useSimulateIStrategyAdapterWithdraw =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: iStrategyAdapterAbi,
+    functionName: 'withdraw',
+  })
 
 /**
  * Wraps __{@link useReadContract}__ with `abi` set to __{@link strategyRegistryAbi}__
@@ -1001,6 +1131,15 @@ export const useReadYieldGekoRouterRegistry =
   /*#__PURE__*/ createUseReadContract({
     abi: yieldGekoRouterAbi,
     functionName: 'registry',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `functionName` set to `"strategyPositions"`
+ */
+export const useReadYieldGekoRouterStrategyPositions =
+  /*#__PURE__*/ createUseReadContract({
+    abi: yieldGekoRouterAbi,
+    functionName: 'strategyPositions',
   })
 
 /**
@@ -1308,6 +1447,15 @@ export const useWatchYieldGekoRouterPausedEvent =
   /*#__PURE__*/ createUseWatchContractEvent({
     abi: yieldGekoRouterAbi,
     eventName: 'Paused',
+  })
+
+/**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `eventName` set to `"StrategyPositionUpdated"`
+ */
+export const useWatchYieldGekoRouterStrategyPositionUpdatedEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({
+    abi: yieldGekoRouterAbi,
+    eventName: 'StrategyPositionUpdated',
   })
 
 /**

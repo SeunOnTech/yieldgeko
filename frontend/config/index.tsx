@@ -22,7 +22,7 @@ if (!projectId) {
   throw new Error('Project ID is not defined')
 }
 
-export const networks = [zeroGGaleleo]
+export const networks: [typeof zeroGGaleleo] = [zeroGGaleleo]
 
 export const wagmiAdapter = new WagmiAdapter({
   storage: createStorage({
@@ -30,7 +30,7 @@ export const wagmiAdapter = new WagmiAdapter({
   }),
   ssr: true,
   projectId,
-  networks: networks as any
+  networks
 })
 
 export const config = wagmiAdapter.wagmiConfig

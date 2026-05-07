@@ -1,4 +1,4 @@
-import { decryptPayload, importKeyBase64 } from '../../../core/src/utils/encryption';
+import { decryptPayload, importKeyBase64 } from '@yieldgeko/core';
 import { NormalizedYield } from '../types/normalized-yield';
 import { ScoringEngine } from '../engine/scorer';
 

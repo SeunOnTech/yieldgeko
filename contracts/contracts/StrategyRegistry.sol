@@ -12,7 +12,7 @@ contract StrategyRegistry is Ownable {
         bool isActive;
         address adapter;
         string name;
-        uint8 chainId;
+        uint64 chainId;
         uint256 minLiquidity;
         bool isAudited;
         bool isPaused;
@@ -22,7 +22,7 @@ contract StrategyRegistry is Ownable {
     mapping(address => uint256) private _strategyIndex;
     address[] private _activeStrategies;
 
-    event StrategyAdded(address indexed strategy, address adapter, string name, uint8 chainId);
+    event StrategyAdded(address indexed strategy, address adapter, string name, uint64 chainId);
     event StrategyRemoved(address indexed strategy);
     event StrategyPaused(address indexed strategy);
     event StrategyUnpaused(address indexed strategy);
@@ -33,7 +33,7 @@ contract StrategyRegistry is Ownable {
         address _strategy,
         address _adapter,
         string calldata _name,
-        uint8 _chainId,
+        uint64 _chainId,
         uint256 _minLiquidity,
         bool _isAudited
     ) external onlyOwner {

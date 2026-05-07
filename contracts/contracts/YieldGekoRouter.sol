@@ -10,6 +10,11 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
 import "./StrategyRegistry.sol";
 
+interface IStrategyAdapter {
+    function deposit(address asset, uint256 amount) external returns (uint256 depositedAmount);
+    function withdraw(address asset, uint256 amount, address recipient) external returns (uint256 withdrawnAmount);
+}
+
 /**
  * @title YieldGekoRouter
  * @dev Audited core settlement contract for YieldGeko.
@@ -20,14 +25,21 @@ contract YieldGekoRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
 
     struct Intent {
         address user;
+        address asset;
+        address fromStrategy;
+        address toStrategy;
+        uint256 amount;
         uint256 minAPY;
+        uint256 expectedAPY;
         uint256 maxSlippage;
+        uint256 maxFee;
         uint256 nonce;
         uint256 deadline;
     }
 
-    bytes32 public constant INTENT_TYPEHASH =
-        keccak256("Intent(address user,uint256 minAPY,uint256 maxSlippage,uint256 nonce,uint256 deadline)");
+    bytes32 public constant INTENT_TYPEHASH = keccak256(
+        "Intent(address user,address asset,address fromStrategy,address toStrategy,uint256 amount,uint256 minAPY,uint256 expectedAPY,uint256 maxSlippage,uint256 maxFee,uint256 nonce,uint256 deadline)"
+    );
 
     uint256 public constant MIGRATION_FEE_BPS = 10; // 0.10%
     uint256 public constant SUCCESS_FEE_BPS = 25; // 0.25%
@@ -36,7 +48,10 @@ contract YieldGekoRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
     address public authorizedAgent; // Set to 0G Agent ID
     address public treasury;
 
+    // Idle assets held directly by the router for a user.
     mapping(address => mapping(address => uint256)) public userBalances;
+    // Strategy-managed asset balances per user.
+    mapping(address => mapping(address => mapping(address => uint256))) public strategyPositions;
     mapping(address => uint256) public nonces;
 
     event Deposited(address indexed user, address indexed asset, uint256 amount);
@@ -46,6 +61,9 @@ contract YieldGekoRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
     );
     event AgentUpdated(address indexed newAgent);
     event TreasuryUpdated(address indexed newTreasury);
+    event StrategyPositionUpdated(
+        address indexed user, address indexed asset, address indexed strategy, uint256 positionAmount
+    );
 
     modifier onlyAuthorizedAgent() {
         require(msg.sender == authorizedAgent, "Caller not authorized");
@@ -101,14 +119,9 @@ contract YieldGekoRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
     struct BatchMigrationParams {
         Intent intent;
         bytes signature;
-        address fromStrategy;
-        address toStrategy;
-        address asset;
-        uint256 amount;
         uint256 actualSlippageBps;
-        uint256 actualAPY;
         bytes32 receiptHash; // SHA-256 of off-chain audit JSON
-        uint256 gasPriceInAsset; // TEE-verified conversion (e.g. 1 USDC per 1M gas)
+        uint256 gasFeeInAsset; // Realized gas recovery denominated in the vault asset
     }
 
     event MigrationFailed(address indexed user, string reason);
@@ -116,27 +129,11 @@ contract YieldGekoRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
     function executeMigration(
         Intent calldata _intent,
         bytes calldata _signature,
-        address _fromStrategy,
-        address _toStrategy,
-        address _asset,
-        uint256 _amount,
         uint256 _actualSlippageBps,
-        uint256 _actualAPY,
         bytes32 _receiptHash,
-        uint256 _gasPriceInAsset
+        uint256 _gasFeeInAsset
     ) external onlyAuthorizedAgent whenNotPaused nonReentrant {
-        _executeMigration(
-            _intent,
-            _signature,
-            _fromStrategy,
-            _toStrategy,
-            _asset,
-            _amount,
-            _actualSlippageBps,
-            _actualAPY,
-            _receiptHash,
-            _gasPriceInAsset
-        );
+        _executeMigration(_intent, _signature, _actualSlippageBps, _receiptHash, _gasFeeInAsset);
     }
 
     function executeBatchMigration(BatchMigrationParams[] calldata _params)
@@ -149,14 +146,9 @@ contract YieldGekoRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
             try this.executeMigrationExternal(
                 _params[i].intent,
                 _params[i].signature,
-                _params[i].fromStrategy,
-                _params[i].toStrategy,
-                _params[i].asset,
-                _params[i].amount,
                 _params[i].actualSlippageBps,
-                _params[i].actualAPY,
                 _params[i].receiptHash,
-                _params[i].gasPriceInAsset
+                _params[i].gasFeeInAsset
             ) {
             // Success
             }
@@ -170,89 +162,118 @@ contract YieldGekoRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
     function executeMigrationExternal(
         Intent calldata _intent,
         bytes calldata _signature,
-        address _fromStrategy,
-        address _toStrategy,
-        address _asset,
-        uint256 _amount,
         uint256 _actualSlippageBps,
-        uint256 _actualAPY,
         bytes32 _receiptHash,
-        uint256 _gasPriceInAsset
+        uint256 _gasFeeInAsset
     ) external {
         require(msg.sender == address(this), "Only internal batching");
-        _executeMigration(
-            _intent,
-            _signature,
-            _fromStrategy,
-            _toStrategy,
-            _asset,
-            _amount,
-            _actualSlippageBps,
-            _actualAPY,
-            _receiptHash,
-            _gasPriceInAsset
-        );
+        _executeMigration(_intent, _signature, _actualSlippageBps, _receiptHash, _gasFeeInAsset);
     }
 
     function _executeMigration(
         Intent calldata _intent,
         bytes calldata _signature,
-        address _fromStrategy,
-        address _toStrategy,
-        address _asset,
-        uint256 _amount,
         uint256 _actualSlippageBps,
-        uint256 _actualAPY,
         bytes32 _receiptHash,
-        uint256 _gasPriceInAsset
+        uint256 _gasFeeInAsset
     ) internal {
-        uint256 startGas = gasleft();
-
         require(block.timestamp <= _intent.deadline, "Intent expired");
         require(_intent.nonce == nonces[_intent.user], "Invalid nonce");
-        require(registry.isStrategyApproved(_toStrategy), "Target not approved");
-        require(userBalances[_intent.user][_asset] >= _amount, "Insufficient balance");
+        require(_intent.user != address(0), "Invalid user");
+        require(_intent.asset != address(0), "Invalid asset");
+        require(_intent.amount > 0, "Amount must be > 0");
+        require(_intent.expectedAPY >= _intent.minAPY, "Expected APY below floor");
+        require(_intent.toStrategy != address(0), "Target strategy required");
+        require(registry.isStrategyApproved(_intent.toStrategy), "Target not approved");
 
         // Bounds enforcement (contract-level safety net)
         require(_actualSlippageBps <= _intent.maxSlippage, "Slippage exceeds bound");
-        require(_actualAPY >= _intent.minAPY, "APY below minimum");
 
         // Verify EIP-712 Signature
         bytes32 structHash = keccak256(
             abi.encode(
-                INTENT_TYPEHASH, _intent.user, _intent.minAPY, _intent.maxSlippage, _intent.nonce, _intent.deadline
+                INTENT_TYPEHASH,
+                _intent.user,
+                _intent.asset,
+                _intent.fromStrategy,
+                _intent.toStrategy,
+                _intent.amount,
+                _intent.minAPY,
+                _intent.expectedAPY,
+                _intent.maxSlippage,
+                _intent.maxFee,
+                _intent.nonce,
+                _intent.deadline
             )
         );
         bytes32 hash = _hashTypedDataV4(structHash);
         address signer = ECDSA.recover(hash, _signature);
         require(signer == _intent.user, "Invalid signature");
 
-        // --- PRECISION FEE CALCULATION ---
+        uint256 grossAmount = _pullFundsForMigration(_intent.user, _intent.asset, _intent.fromStrategy, _intent.amount);
 
-        // 1. Migration Fee (10 BPS = 0.10%)
-        uint256 migrationFee = (_amount * MIGRATION_FEE_BPS) / 10000;
+        // --- FEE CALCULATION ---
 
-        // 2. Success Fee (25 BPS on Uplift)
-        uint256 upliftBps = _actualAPY > _intent.minAPY ? _actualAPY - _intent.minAPY : 0;
-        uint256 successFee = (_amount * upliftBps * SUCCESS_FEE_BPS) / 100000000;
+        uint256 migrationFee = (grossAmount * MIGRATION_FEE_BPS) / 10000;
 
-        // 3. Gas Recovery (Dynamic with TEE-verified conversion)
-        uint256 gasUsed = startGas - gasleft() + 60000; // +60k for remaining steps
-        uint256 gasFee = (gasUsed * _gasPriceInAsset) / 1000000;
+        uint256 upliftBps = _intent.expectedAPY - _intent.minAPY;
+        uint256 successFee = (grossAmount * upliftBps * SUCCESS_FEE_BPS) / 100000000;
+
+        uint256 gasFee = _gasFeeInAsset;
 
         uint256 totalFee = migrationFee + successFee + gasFee;
-        require(_amount > totalFee, "Amount too small for fees");
+        require(totalFee <= _intent.maxFee, "Fee exceeds signed limit");
+        require(grossAmount > totalFee, "Amount too small for fees");
 
-        // Deduct balance and route fees to Treasury
-        userBalances[_intent.user][_asset] -= _amount;
+        uint256 netAmount = grossAmount - totalFee;
         if (totalFee > 0) {
-            IERC20(_asset).safeTransfer(treasury, totalFee);
+            IERC20(_intent.asset).safeTransfer(treasury, totalFee);
         }
+
+        _pushFundsToStrategy(_intent.user, _intent.asset, _intent.toStrategy, netAmount);
 
         // Increment nonce AFTER successful execution
         nonces[_intent.user]++;
 
-        emit MigrationExecuted(_intent.user, _fromStrategy, _toStrategy, _amount - totalFee, totalFee);
+        emit MigrationExecuted(_intent.user, _intent.fromStrategy, _intent.toStrategy, netAmount, totalFee);
         emit FeeSettled(_intent.user, migrationFee, successFee, gasFee, _receiptHash);
+    }
+
+    function _pullFundsForMigration(address user, address asset, address fromStrategy, uint256 amount)
+        internal
+        returns (uint256)
+    {
+        if (fromStrategy == address(0)) {
+            require(userBalances[user][asset] >= amount, "Insufficient idle balance");
+            userBalances[user][asset] -= amount;
+            return amount;
+        }
+
+        require(strategyPositions[user][asset][fromStrategy] >= amount, "Insufficient strategy balance");
+
+        StrategyRegistry.StrategyInfo memory info = registry.getStrategyInfo(fromStrategy);
+        require(info.adapter != address(0), "Strategy adapter missing");
+
+        strategyPositions[user][asset][fromStrategy] -= amount;
+        emit StrategyPositionUpdated(user, asset, fromStrategy, strategyPositions[user][asset][fromStrategy]);
+
+        uint256 withdrawnAmount = IStrategyAdapter(info.adapter).withdraw(asset, amount, address(this));
+        require(withdrawnAmount >= amount, "Adapter under-delivered");
+
+        return withdrawnAmount;
+    }
+
+    function _pushFundsToStrategy(address user, address asset, address toStrategy, uint256 amount) internal {
+        StrategyRegistry.StrategyInfo memory info = registry.getStrategyInfo(toStrategy);
+        require(info.adapter != address(0), "Strategy adapter missing");
+
+        IERC20(asset).forceApprove(info.adapter, 0);
+        IERC20(asset).forceApprove(info.adapter, amount);
+
+        uint256 depositedAmount = IStrategyAdapter(info.adapter).deposit(asset, amount);
+        require(depositedAmount == amount, "Adapter deposit mismatch");
+
+        strategyPositions[user][asset][toStrategy] += depositedAmount;
+        emit StrategyPositionUpdated(user, asset, toStrategy, strategyPositions[user][asset][toStrategy]);
     }
 }

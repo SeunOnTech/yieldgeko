@@ -1,0 +1,23 @@
+# 0G Serving Broker configuration — production only
+# Copy to 0g-broker.config.yaml and fill in your values
+# Docs: https://github.com/0glabs/0g-serving-broker
+
+# Public URL where the broker will be reachable by 0G clients
+servingUrl: "https://your-server.example.com"
+
+# Your 0G wallet private key — used for on-chain provider registration and settlement
+privateKeys:
+  - "0xYOUR_0G_WALLET_PRIVATE_KEY"
+
+# Internal URL of your YieldGeko provider service (running on the same server)
+targetUrl: "http://localhost:8080"
+
+# Must match PROVIDER_MODEL_ID in your provider .env
+model: "yieldgeko-agent-v1"
+
+# TeeTLS — no TEE hardware required; broker handles TLS-based verification
+verifiability: "TeeTLS"
+
+# Pricing in 0G token units (per token)
+inputPrice: 1
+outputPrice: 1

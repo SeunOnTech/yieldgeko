@@ -26,7 +26,19 @@ export default defineConfig({
     },
   },
   networks: {
-    zeroGGaleleo: {
+    arbitrum: {
+      type: "http",
+      url: configVariable("ARB_RPC_URL"),
+      chainId: 42161,
+      accounts: configVariable("PRIVATE_KEY") ? [configVariable("PRIVATE_KEY")] : [],
+    },
+    zeroGMainnet: {
+      type: "http",
+      url: "https://evmrpc.0g.ai",
+      chainId: 16661,
+      accounts: configVariable("PRIVATE_KEY") ? [configVariable("PRIVATE_KEY")] : [],
+    },
+    zeroGGalileo: {
       type: "http",
       url: "https://evmrpc-testnet.0g.ai",
       chainId: 16602,

@@ -51,7 +51,7 @@ export function createUserState(policy: UserPolicy): UserState {
     userId:     policy.id,
     policy,
     phase:      'INITIALIZING',
-    position:   null,
+    portfolio:  null,
     breakers:   [],
     pnlHistory: [],
     executions: [],
@@ -74,10 +74,23 @@ export function createUserState(policy: UserPolicy): UserState {
 export class UserRegistry {
   private users = new Map<string, UserState>();
 
-  // Register a user (creates fresh state)
+  // Register a demo or pre-configured user
   register(policy: UserPolicy): UserState {
     const state = createUserState(policy);
     this.users.set(policy.id, state);
+    return state;
+  }
+
+  // Register a real user who has signed an EIP-712 policy on the frontend.
+  // Marks isReal=true so the orchestrator uses on-chain execution, not simulation.
+  // Demo users (Alice/Bob/Carol) keep running — this only adds new real users.
+  registerReal(policy: UserPolicy): UserState {
+    if (this.users.has(policy.id)) {
+      return this.users.get(policy.id)!;  // already registered — idempotent
+    }
+    const realPolicy: UserPolicy = { ...policy, isReal: true };
+    const state = createUserState(realPolicy);
+    this.users.set(realPolicy.id, state);
     return state;
   }
 

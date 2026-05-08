@@ -3,8 +3,8 @@
 import { useState } from 'react';
 import { useAgentStream } from './useAgentStream';
 import type {
-  Opportunity, UserState, CircuitBreaker, LogEntry,
-  PnLPoint, ExecutionRecord, Phase, CBStatus, StrategyType,
+  Opportunity, UserState, Portfolio, PortfolioPosition, CircuitBreaker, LogEntry,
+  PnLPoint, ExecutionRecord, Phase, CBStatus, StrategyType, ILCategory,
 } from './useAgentStream';
 
 // ── Formatting helpers ────────────────────────────────────────────────────────
@@ -39,15 +39,25 @@ function fTime(ts: number): string {
 // ── Colours ───────────────────────────────────────────────────────────────────
 
 const STRAT_COLOR: Record<StrategyType, string> = {
-  GMX_REAL_YIELD: '#f97316',
-  DELTA_NEUTRAL:  '#a855f7',
-  AAVE_LENDING:   '#3b82f6',
+  GMX_REAL_YIELD:  '#f97316',
+  DELTA_NEUTRAL:   '#a855f7',
+  AAVE_LENDING:    '#3b82f6',
+  MORPHO_LENDING:  '#06b6d4',
+  PENDLE_PT:       '#22c55e',
+  PENDLE_LP:       '#84cc16',
+  PENDLE_YT:       '#eab308',
+  LEVERAGED_LOOP:  '#ef4444',
 };
 
 const STRAT_LABEL: Record<StrategyType, string> = {
-  GMX_REAL_YIELD: 'GMX',
-  DELTA_NEUTRAL:  'ΔNEU',
-  AAVE_LENDING:   'LEND',
+  GMX_REAL_YIELD:  'GMX',
+  DELTA_NEUTRAL:   'ΔNEU',
+  AAVE_LENDING:    'LEND',
+  MORPHO_LENDING:  'MRPH',
+  PENDLE_PT:       'PT',
+  PENDLE_LP:       'PLP',
+  PENDLE_YT:       'YT',
+  LEVERAGED_LOOP:  'LEV',
 };
 
 const CB_COLOR: Record<CBStatus, string> = {
@@ -75,7 +85,7 @@ const PHASE_COLOR: Record<Phase, string> = {
 
 // ── SVG P&L Chart ─────────────────────────────────────────────────────────────
 
-function PnLChart({ history, entryUSD }: { history: PnLPoint[]; entryUSD: number }) {
+function PnLChart({ history, entryUSD }: { history: PnLPoint[]; entryUSD: number; }) {
   const W = 600; const H = 120; const PAD = 6;
 
   // With a single point, draw a flat baseline at entry value
@@ -200,6 +210,14 @@ function OppRow({ opp, rank, isActive }: { opp: Opportunity; rank: number; isAct
         <div style={{ color: trendColor, fontSize: 12 }}>{trendIcon} {fAPY(opp.history.apy30d)}</div>
         <div style={{ color: '#334155', fontSize: 10 }}>30d</div>
       </div>
+
+      {/* GeckoScore */}
+      <div style={{ textAlign: 'right', flexShrink: 0, width: 40 }}>
+        <div style={{ color: (opp.geckoScore ?? 0) > 40 ? '#22c55e' : (opp.geckoScore ?? 0) > 20 ? '#eab308' : '#64748b', fontSize: 11, fontWeight: 700 }}>
+          {(opp.geckoScore ?? 0).toFixed(0)}
+        </div>
+        <div style={{ color: '#334155', fontSize: 9 }}>gecko</div>
+      </div>
     </div>
   );
 }
@@ -317,7 +335,7 @@ function UserTab({
   user, isActive, onClick,
 }: { user: UserState; isActive: boolean; onClick: () => void }) {
   const phaseColor = PHASE_COLOR[user.phase] ?? '#64748b';
-  const ret        = user.position?.totalReturnPct ?? null;
+  const ret        = user.portfolio?.metrics.totalReturnPct ?? null;
   return (
     <button onClick={onClick} style={{
       padding: '8px 16px', borderRadius: 8, cursor: 'pointer',
@@ -354,15 +372,17 @@ export default function AgentDashboard() {
   const activeId  = selectedUserId ?? userIds[0] ?? null;
   const activeUser: UserState | null = activeId && agent?.users[activeId] ? agent.users[activeId] : null;
 
-  const pos   = activeUser?.position ?? null;
-  const opps  = agent?.opportunities ?? [];
-  const brks  = activeUser?.breakers ?? [];
-  const logs  = activeUser?.log ?? [];
-  const glog  = agent?.globalLog ?? [];
-  const pnl   = activeUser?.pnlHistory ?? [];
-  const execs = activeUser?.executions ?? [];
+  const portfolio = activeUser?.portfolio ?? null;
+  const pos       = portfolio?.positions[0] ?? null;   // primary position for legacy displays
+  const opps      = agent?.opportunities ?? [];
+  const brks      = activeUser?.breakers ?? [];
+  const logs      = activeUser?.log ?? [];
+  const glog      = agent?.globalLog ?? [];
+  const pnl       = activeUser?.pnlHistory ?? [];
+  const execs     = activeUser?.executions ?? [];
 
   const activeOppId = pos?.venueId ?? null;
+  const metrics     = portfolio?.metrics ?? null;
 
   const redCount    = brks.filter(b => b.status === 'RED').length;
   const yellowCount = brks.filter(b => b.status === 'YELLOW').length;
@@ -453,31 +473,76 @@ export default function AgentDashboard() {
       )}
 
       {/* ── Top metrics strip ──────────────────────────────────────────────── */}
-      {pos && (
+      {metrics && (
         <div style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
-          gap: 12, marginBottom: 20,
+          gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
+          gap: 10, marginBottom: 20,
         }}>
           {[
-            { label: 'Current USD', value: fUSD(pos.currentUSD), color: pos.totalReturnUSD >= 0 ? '#22c55e' : '#ef4444' },
-            { label: 'Total Return', value: fDelta(pos.totalReturnPct), color: pos.totalReturnPct >= 0 ? '#22c55e' : '#ef4444' },
-            { label: 'Income Earned', value: fUSD(pos.incomeEarnedUSD), color: '#a855f7' },
-            { label: 'Effective APY', value: fAPY(pos.effectiveAPY), color: '#f97316' },
-            { label: 'Net APY Now', value: fAPY(pos.currentNetAPY), color: '#3b82f6' },
-            { label: 'Drawdown', value: `-${pos.drawdownPct.toFixed(2)}%`, color: pos.drawdownPct > 5 ? '#ef4444' : '#475569' },
-            { label: 'Days Held', value: `${pos.daysHeld.toFixed(1)}d`, color: '#64748b' },
+            { label: 'Portfolio USD',   value: fUSD(metrics.totalValueUSD),    color: metrics.totalReturnUSD >= 0 ? '#22c55e' : '#ef4444' },
+            { label: 'Total Return',    value: fDelta(metrics.totalReturnPct),  color: metrics.totalReturnPct >= 0 ? '#22c55e' : '#ef4444' },
+            { label: 'Income Earned',   value: fUSD(metrics.incomeEarnedUSD),   color: '#a855f7' },
+            { label: 'IL Impact',       value: metrics.totalILUSD < -0.01 ? `-${fUSD(Math.abs(metrics.totalILUSD))}` : '~$0', color: metrics.totalILUSD < -10 ? '#ef4444' : '#22c55e' },
+            { label: 'Weighted APY',    value: fAPY(metrics.weightedNetAPY),    color: '#f97316' },
+            { label: 'Real Yield APY',  value: fAPY(metrics.realYieldAPY),      color: '#3b82f6' },
+            { label: 'Drawdown',        value: `-${(metrics.drawdownPct ?? 0).toFixed(2)}%`, color: (metrics.drawdownPct ?? 0) > 5 ? '#ef4444' : '#475569' },
+            { label: 'Diversification', value: `${((metrics.diversificationScore ?? 0) * 100).toFixed(0)}%`, color: '#64748b' },
           ].map(m => (
-            <div key={m.label} style={{
-              background: '#0f172a', border: '1px solid #1e293b',
-              borderRadius: 10, padding: '12px 14px',
-            }}>
-              <div style={{ color: '#475569', fontSize: 11, marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                {m.label}
-              </div>
-              <div style={{ color: m.color, fontSize: 20, fontWeight: 700 }}>{m.value}</div>
+            <div key={m.label} style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 10, padding: '10px 12px' }}>
+              <div style={{ color: '#475569', fontSize: 10, marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{m.label}</div>
+              <div style={{ color: m.color, fontSize: 18, fontWeight: 700 }}>{m.value}</div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* ── Portfolio positions breakdown ──────────────────────────────────── */}
+      {portfolio && portfolio.positions.length > 1 && (
+        <div style={{ marginBottom: 16 }}>
+          <Card title="Portfolio Positions" badge={
+            <span style={{ fontSize: 11, color: '#475569' }}>{portfolio.positions.length} active · diversification {((metrics?.diversificationScore ?? 0) * 100).toFixed(0)}%</span>
+          }>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {portfolio.positions.map(p => (
+                <div key={p.id} style={{
+                  display: 'flex', alignItems: 'center', gap: 10,
+                  padding: '8px 10px', borderRadius: 6,
+                  background: p.isILProfitable ? 'rgba(34,197,94,0.05)' : 'rgba(239,68,68,0.05)',
+                  border: `1px solid ${p.isILProfitable ? '#22c55e22' : '#ef444422'}`,
+                }}>
+                  <span style={{ background: STRAT_COLOR[p.strategyType] + '22', color: STRAT_COLOR[p.strategyType], borderRadius: 4, padding: '2px 5px', fontSize: 10, fontWeight: 700, flexShrink: 0, width: 36, textAlign: 'center' }}>
+                    {STRAT_LABEL[p.strategyType]}
+                  </span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ color: '#e2e8f0', fontSize: 12, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.protocol}</div>
+                    <div style={{ color: '#475569', fontSize: 11 }}>{p.venueName} · {p.allocationPct.toFixed(0)}% · {fUSD(p.allocationUSD)}</div>
+                  </div>
+                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                    <div style={{ color: p.currentNetAPY >= 8 ? '#22c55e' : '#eab308', fontWeight: 700, fontSize: 13 }}>{fAPY(p.currentNetAPY)}</div>
+                    <div style={{ fontSize: 10, color: '#475569' }}>net APY</div>
+                  </div>
+                  {p.ilCategory !== 'none' && (
+                    <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                      <div style={{ color: p.isILProfitable ? '#22c55e' : '#ef4444', fontSize: 12 }}>
+                        IL: {(p.ilPct * 100).toFixed(1)}%
+                      </div>
+                      <div style={{ fontSize: 10, color: '#475569' }}>{p.isILProfitable ? '✓ covered' : '⚠ uncovered'}</div>
+                    </div>
+                  )}
+                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                    <div style={{ color: p.totalReturnPct >= 0 ? '#22c55e' : '#ef4444', fontWeight: 600, fontSize: 12 }}>
+                      {fDelta(p.totalReturnPct)}
+                    </div>
+                    <div style={{ fontSize: 10, color: '#475569' }}>return</div>
+                  </div>
+                  <div style={{ fontSize: 10, color: '#334155', flexShrink: 0 }}>
+                    {p.geckoScore?.toFixed(1) ?? '—'}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
         </div>
       )}
 
@@ -496,14 +561,21 @@ export default function AgentDashboard() {
               </span>
             ) : null}
           >
-            {pos ? (
+            {metrics ? (
               <>
-                <PnLChart history={pnl} entryUSD={pos.entryUSD} />
+                <PnLChart history={pnl} entryUSD={metrics.totalEntryUSD} />
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 10, fontSize: 11, color: '#475569' }}>
-                  <span>Entry: {fUSD(pos.entryUSD)}</span>
-                  <span>{pos.venueName}</span>
-                  <span>Now: {fUSD(pos.currentUSD)}</span>
+                  <span>Entry: {fUSD(metrics.totalEntryUSD)}</span>
+                  <span>{portfolio?.positions.length ?? 0} position{portfolio?.positions.length !== 1 ? 's' : ''}</span>
+                  <span style={{ color: metrics.totalReturnUSD >= 0 ? '#22c55e' : '#ef4444' }}>
+                    Now: {fUSD(metrics.totalValueUSD)} ({fDelta(metrics.totalReturnPct)})
+                  </span>
                 </div>
+                {metrics.totalILUSD < -1 && (
+                  <div style={{ marginTop: 6, fontSize: 11, color: metrics.ilCoveredByFees ? '#22c55e' : '#ef4444' }}>
+                    IL: -{fUSD(Math.abs(metrics.totalILUSD))} · Fees: {fUSD(metrics.incomeEarnedUSD)} · {metrics.ilCoveredByFees ? '✓ fees covering IL' : '⚠ IL exceeds fees'}
+                  </div>
+                )}
               </>
             ) : (
               <div style={{ height: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#334155', fontSize: 13 }}>
@@ -529,6 +601,7 @@ export default function AgentDashboard() {
               <span style={{ flex: 1 }}>Protocol / Pool</span>
               <span style={{ width: 68, textAlign: 'right', flexShrink: 0 }}>Net APY</span>
               <span style={{ width: 60, textAlign: 'right', flexShrink: 0 }}>30d Mean</span>
+              <span style={{ width: 40, textAlign: 'right', flexShrink: 0 }}>Score</span>
             </div>
 
             <div style={{ maxHeight: 420, overflowY: 'auto' }}>

@@ -1,43 +1,57 @@
 // ─── Shared types for the YieldGeko Agent Orchestrator ───────────────────────
 
 export type RiskTier     = 'conservative' | 'balanced' | 'aggressive' | 'advanced';
-export type StrategyType = 'GMX_REAL_YIELD' | 'DELTA_NEUTRAL' | 'AAVE_LENDING';
-export type Trend        = 'rising' | 'falling' | 'stable' | 'unknown';
-export type Phase        = 'INITIALIZING' | 'SCANNING' | 'ALLOCATED' | 'MONITORING' | 'MIGRATING' | 'SAFETY_EXIT' | 'IDLE';
-export type CBStatus     = 'GREEN' | 'YELLOW' | 'RED';
-export type LogLevel     = 'INFO' | 'SUCCESS' | 'WARN' | 'ERROR';
-export type ActionType   = 'HOLD' | 'GENESIS' | 'MIGRATE' | 'SAFETY_EXIT' | 'HARVEST';
+export type StrategyType =
+  | 'GMX_REAL_YIELD'    // Counterparty to traders — real yield from trading fees
+  | 'DELTA_NEUTRAL'     // LP + perp hedge — fee income, price-neutral
+  | 'AAVE_LENDING'      // Passive lending — safe haven floor only
+  | 'MORPHO_LENDING'    // Optimised lending — 50-150bps better than Aave
+  | 'PENDLE_PT'         // Fixed yield bond — zero IL, predictable return
+  | 'PENDLE_LP'         // Yield market LP — fees + PENDLE rewards, low IL
+  | 'PENDLE_YT'         // Yield token speculation — advanced tier only
+  | 'LEVERAGED_LOOP';   // Borrow-and-redeploy — amplified real yield
+export type Trend     = 'rising' | 'falling' | 'stable' | 'unknown';
+export type Phase     = 'INITIALIZING' | 'SCANNING' | 'ALLOCATED' | 'MONITORING' | 'MIGRATING' | 'SAFETY_EXIT' | 'IDLE';
+export type CBStatus  = 'GREEN' | 'YELLOW' | 'RED';
+export type LogLevel  = 'INFO' | 'SUCCESS' | 'WARN' | 'ERROR';
+export type ActionType = 'HOLD' | 'GENESIS' | 'MIGRATE' | 'SAFETY_EXIT' | 'HARVEST' | 'REBALANCE';
+export type ILCategory = 'none' | 'low' | 'medium' | 'high';
 
-// ── User Policy (replaces EIP-712 signed intent in dev) ───────────────────────
+// ── User Policy ───────────────────────────────────────────────────────────────
 
 export interface UserPolicy {
   id:                    string;
   displayName:           string;
   riskTier:              RiskTier;
   managedUSD:            number;
-  minAPY:                number;      // won't hold below this %
+  minAPY:                number;
   maxSlippageBps:        number;
-  maxDrawdownPct:        number;      // exit if USD value drops this much from peak
+  maxDrawdownPct:        number;
   maxFeeBps:             number;
-  migrationThresholdPct: number;      // min APY uplift to justify a migration
+  migrationThresholdPct: number;
   createdAt:             number;
   expiresAt:             number;
+  // Real user fields — undefined for demo users (simulated path)
+  isReal?:       boolean;   // true = real funds in vault, false = demo simulation
+  userAddress?:  string;    // user's on-chain wallet address
+  chainId?:      number;    // chain where vault is deployed (42161 = Arbitrum)
 }
 
 // ── Opportunities ─────────────────────────────────────────────────────────────
 
 export interface OpportunityCosts {
-  fundingAnnual:  number;   // perp hedge annual cost %
-  executionPct:   number;   // entry/exit slippage estimate %
-  gasAnnual:      number;   // annualized gas as % of position
-  oiPenalty:      number;   // GMX OI-imbalance discount %
+  fundingAnnual:  number;
+  executionPct:   number;
+  gasAnnual:      number;
+  oiPenalty:      number;
 }
 
 export interface OpportunityRisk {
   counterpartyRisk: 'none' | 'low' | 'medium' | 'high';
   ilRisk:           boolean;
   liquidationRisk:  boolean;
-  oiBalance:        number | null;  // GMX: long/(long+short)
+  rebalanceNeeded:  boolean;
+  oiBalance:        number | null;
   oiRiskFlag:       boolean;
 }
 
@@ -49,45 +63,160 @@ export interface Opportunity {
   asset:           string;
   tvlUSD:          number;
   grossAPY:        number;
+  realYieldAPY:    number;        // emission-adjusted: only real fee/interest income
+  emissionFraction: number;       // 0-1, how much of APY is token emissions
   netAPY:          number;
+  geckoScore:      number;        // proprietary multi-factor score
   costs:           OpportunityCosts;
   risk:            OpportunityRisk;
   history: {
-    apy7d:  number | null;
-    apy30d: number | null;
-    trend:  Trend;
-    sigma:  number | null;
+    apy7d:    number | null;
+    apy30d:   number | null;
+    trend:    Trend;
+    sigma:    number | null;
   };
   minTier:         RiskTier;
-  score:           number;
   verifiedOnChain: boolean;
   llamaPoolId:     string;
   address:         string;
   updatedAt:       number;
+  // Pendle-specific
+  maturityDate?:   number;        // unix timestamp — agent checks before deciding exit path
+  impliedAPY?:     number;        // Pendle implied APY from market price
+  ytAddress?:      string;        // YT token address (needed for redeemPyToToken)
+  ptAddress?:      string;        // PT token address (needed for PT balance reads, distinct from market address)
+  // For leveraged strategies
+  borrowRateAPY?:  number;
+  healthFactor?:   number;
 }
 
-// ── Position ──────────────────────────────────────────────────────────────────
+// ── Position (single venue, part of Portfolio) ────────────────────────────────
 
 export interface Position {
   id:              string;
-  venueId:         string;
+  venueId:         string;        // matches Opportunity.id
+  venueAddress?:   string;        // protocol/market contract used for on-chain execution
   venueName:       string;
   protocol:        string;
   strategyType:    StrategyType;
+
+  // Entry snapshot
   entryAPY:        number;
   entryUSD:        number;
   entryTime:       number;
+  entryPriceUSD:   number;        // price of volatile asset at entry (0 for stable)
+
+  // Live metrics
   currentAPY:      number;
   currentNetAPY:   number;
-  currentUSD:      number;          // simulated NAV
-  incomeEarnedUSD: number;          // accumulated yield income
-  totalReturnUSD:  number;
+  currentUSD:      number;
+
+  // Returns
+  incomeEarnedUSD: number;        // accumulated yield/fee income
+  totalReturnUSD:  number;        // currentUSD + incomeEarnedUSD - entryUSD
   totalReturnPct:  number;
-  effectiveAPY:    number;          // realized APY so far
+  effectiveAPY:    number;        // realized APY since entry
+
+  // IL tracking (per position, real-time)
+  ilPct:           number;        // IL as fraction (0 for non-LP, ≤0 for LP)
+  ilUSD:           number;        // IL in USD (0 or negative)
+  ilCategory:      ILCategory;
+  feesEarnedUSD:   number;        // accumulated fees ONLY (not counting NAV change)
+  netAfterILUSD:   number;        // feesEarnedUSD + ilUSD (net position profit)
+  isILProfitable:  boolean;       // fees outpacing IL?
+  ilUnprofTicks:   number;        // consecutive ticks where IL > fees (exit signal)
+
+  // Compounding
+  pendingRewardsUSD: number;      // uncollected rewards ready to harvest
+  lastHarvestAt:   number;
+
+  // Risk metrics
   peakUSD:         number;
   drawdownPct:     number;
   daysHeld:        number;
-  simulated:       true;
+
+  // Aave leveraged loop
+  healthFactor?:   number;        // Aave health factor (below 1.0 = liquidatable)
+  borrowedUSD?:    number;        // total borrowed against collateral
+  loopCount?:      number;        // number of borrow loops executed
+
+  // Pendle PT/YT: maturity tracking
+  maturityDate?:   number;        // unix timestamp — agent checks this before deciding how to exit
+  ytAddress?:      string;        // YT token address (needed for redeemPyToToken at maturity)
+  ptAddress?:      string;        // PT token address (needed for PT balance reads in position-reader)
+
+  // Uniswap V3 / Delta-neutral LP position
+  uniV3TokenId?:   string;
+  uniV3Liquidity?: string;
+
+  // Delta-neutral GMX hedge
+  gmxOrderKey?:    string;        // bytes32 key of the GMX short order
+  hedgeSizeUSD?:   number;        // USD value of the perp short
+
+  // UniV3 out-of-range tracking (incremented each tick while price is outside tick range)
+  uniV3OutOfRangeTicks?: number;
+
+  // ── On-chain state for real-user accurate value reads ────────────────────
+  // These are captured at deposit time and used by position-reader.ts each tick.
+  // Only populated for isReal=true users; demo users stay formula-based.
+
+  // Aave / LEVERAGED_LOOP: liquidityIndex at entry (1e27 ray, stored as decimal string)
+  // currentValue = entryUSD × (currentIndex / entryIndex)
+  entryLiquidityIndex?: string;
+
+  // Morpho (ERC-4626 vault): share tokens received at deposit
+  // currentValue = vault.convertToAssets(morphoShares)
+  morphoShares?: string;
+
+  // Pendle LP: LP tokens received at deposit
+  // currentValue = pendleLpAmount × oracle.getLpToAssetRate(market, 900) / 1e18
+  pendleLpAmount?: string;
+
+  // GMX: GM tokens held (captured once async deposit settles)
+  // currentValue = gmTokenAmount × (poolValueUSD / totalSupply)
+  gmTokenAmount?: string;
+
+  simulated:       boolean;
+}
+
+// ── Portfolio (multi-position, replaces single Position) ─────────────────────
+
+export interface PortfolioPosition extends Position {
+  allocationPct:   number;        // target % of total capital
+  allocationUSD:   number;        // USD amount allocated
+  geckoScore:      number;        // score at time of entry
+}
+
+export interface PortfolioMetrics {
+  totalValueUSD:   number;
+  totalEntryUSD:   number;
+  totalReturnUSD:  number;
+  totalReturnPct:  number;
+  incomeEarnedUSD: number;
+  totalILUSD:      number;        // sum of all IL (negative)
+  weightedNetAPY:  number;        // capital-weighted average
+  realYieldAPY:    number;        // real yield only
+  peakValueUSD:    number;
+  drawdownPct:     number;
+  diversificationScore: number;   // 0-1 (1 = fully uncorrelated)
+  ilCoveredByFees: boolean;       // are fees > IL across full portfolio?
+}
+
+export interface Portfolio {
+  positions:       PortfolioPosition[];
+  metrics:         PortfolioMetrics;
+  lastRebalanceAt: number;
+  updatedAt:       number;
+}
+
+// ── Allocation targets per tier ───────────────────────────────────────────────
+
+export interface AllocationTarget {
+  strategyType: StrategyType;
+  minPct:       number;
+  maxPct:       number;
+  targetPct:    number;
+  priority:     number;           // lower = filled first
 }
 
 // ── Circuit Breakers ──────────────────────────────────────────────────────────
@@ -99,6 +228,7 @@ export interface CircuitBreaker {
   value:       string;
   threshold:   string;
   description: string;
+  positionId?: string;            // per-position breaker if set
 }
 
 // ── Engines ───────────────────────────────────────────────────────────────────
@@ -109,6 +239,8 @@ export interface AllocationDecision {
   currentOpportunity:  Opportunity | null;
   reason:              string;
   upliftPct:           number;
+  // Portfolio-level decisions
+  rebalanceTargets?:   { positionId: string; newAllocationPct: number }[];
 }
 
 export interface SafetyCheckResult {
@@ -122,14 +254,26 @@ export interface SafetyCheckResult {
   }[];
 }
 
+export interface HarvestRecommendation {
+  shouldHarvest:     boolean;
+  positionId:        string;
+  pendingRewardsUSD: number;
+  estimatedGasUSD:   number;
+  netGainUSD:        number;
+  reason:            string;
+}
+
 export interface ExecutionRecord {
-  action:    ActionType;
-  from:      string | null;
-  to:        string;
-  amountUSD: number;
-  simulated: true;
+  action:      ActionType;
+  from:        string | null;
+  to:          string;
+  amountUSD:   number;
+  simulated:   boolean;
   receiptHash: string;
-  timestamp: number;
+  txHash?:     string;    // on-chain tx hash (undefined for simulated)
+  timestamp:   number;
+  portfolioValueBefore?: number;
+  portfolioValueAfter?:  number;
 }
 
 // ── Activity Log ──────────────────────────────────────────────────────────────
@@ -145,10 +289,12 @@ export interface LogEntry {
 // ── P&L History ──────────────────────────────────────────────────────────────
 
 export interface PnLPoint {
-  ts:        number;
-  totalUSD:  number;   // NAV + harvested income
-  navUSD:    number;
-  incomeUSD: number;
+  ts:         number;
+  totalUSD:   number;
+  navUSD:     number;
+  incomeUSD:  number;
+  ilUSD:      number;             // IL component (negative)
+  netUSD:     number;             // income + IL
 }
 
 // ── SSE Events ────────────────────────────────────────────────────────────────
@@ -160,8 +306,9 @@ export type EventType =
   | 'ALLOCATION'
   | 'SAFETY'
   | 'EXECUTION'
-  | 'POSITION'
+  | 'PORTFOLIO'       // replaces POSITION
   | 'BREAKERS'
+  | 'HARVEST'
   | 'LOG'
   | 'TICK_END';
 
@@ -171,27 +318,27 @@ export interface AgentEvent<T = unknown> {
   payload: T;
 }
 
-// ── Per-user state (persisted to 0G Storage or local disk) ───────────────────
+// ── Per-user state (persisted) ────────────────────────────────────────────────
 
 export interface UserState {
   userId:       string;
   policy:       UserPolicy;
   phase:        Phase;
-  position:     Position | null;
+  portfolio:    Portfolio | null;   // replaces position: Position | null
   breakers:     CircuitBreaker[];
   pnlHistory:   PnLPoint[];
   executions:   ExecutionRecord[];
   log:          LogEntry[];
   updatedAt:    number;
-  tickErrors:   number;          // consecutive tick failures for this user
+  tickErrors:   number;
 }
 
-// ── Global agent state (rebuilt each tick — not persisted directly) ───────────
+// ── Global agent state ────────────────────────────────────────────────────────
 
 export interface AgentState {
-  users:         Record<string, UserState>;   // userId → per-user state
-  opportunities: Opportunity[];               // shared market data (all users read same)
-  globalLog:     LogEntry[];                  // agent-level events (not user-specific)
+  users:         Record<string, UserState>;
+  opportunities: Opportunity[];
+  globalLog:     LogEntry[];
   lastTickAt:    number;
   nextTickAt:    number;
   block:         number;

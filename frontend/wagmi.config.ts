@@ -7,10 +7,7 @@ export default defineConfig({
   plugins: [
     foundry({
       project: '../contracts',
-      include: [
-        'YieldGekoRouter.sol/**',
-        'StrategyRegistry.sol/**',
-      ],
+      include: ['YieldGeko.sol/**'],
     }),
     react(),
   ],

@@ -1,0 +1,6 @@
+<svg width="80" height="80" viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="YieldGeko">
+  <!-- Transparent background — gecko only, use on any bg -->
+  <path d="M40 14c14 0 24 10 24 24a18 18 0 0 1-30 13c2 4 6 7 11 7v6c-12 0-22-9-22-22 0-15 7-28 17-28z" fill="#EA580C"/>
+  <!-- Eye -->
+  <circle cx="48" cy="32" r="3" fill="white"/>
+</svg>

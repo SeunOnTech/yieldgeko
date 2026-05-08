@@ -17,9 +17,15 @@ createAppKit({
   adapters: [wagmiAdapter],
   networks,
   projectId,
+  themeMode: 'light',
+  themeVariables: {
+    '--w3m-accent':               '#EA580C',
+    '--w3m-border-radius-master': '3px',
+    '--w3m-font-family':          'var(--font-aeonik), -apple-system, BlinkMacSystemFont, sans-serif',
+  },
   features: {
-    analytics: true
-  }
+    analytics: false,
+  },
 })
 
 export default function AppKitProvider({ children }: { children: ReactNode }) {

@@ -1,0 +1,10 @@
+<svg width="80" height="80" viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="YieldGeko">
+  <!-- Orange background -->
+  <rect width="80" height="80" rx="18" fill="#EA580C"/>
+  <!-- Subtle outer ring -->
+  <circle cx="40" cy="40" r="34" stroke="white" stroke-width="1.5" opacity="0.2"/>
+  <!-- Gecko body -->
+  <path d="M40 14c14 0 24 10 24 24a18 18 0 0 1-30 13c2 4 6 7 11 7v6c-12 0-22-9-22-22 0-15 7-28 17-28z" fill="white"/>
+  <!-- Eye -->
+  <circle cx="48" cy="32" r="3" fill="#EA580C"/>
+</svg>

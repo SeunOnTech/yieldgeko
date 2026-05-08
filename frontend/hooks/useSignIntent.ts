@@ -1,47 +1,73 @@
-import { useSignTypedData, useAccount } from 'wagmi';
-import { EIP712_DOMAIN, INTENT_TYPES } from '@yieldgeko/core';
+import { useSignTypedData, useAccount, useChainId } from 'wagmi'
+import { VAULT_ADDRESS } from '../config'
+import { useReadYieldGekoNonces } from '../src/generated'
 
-export function useSignIntent() {
-  const { signTypedDataAsync } = useSignTypedData();
-  const { address } = useAccount();
+// EIP-712 Policy type — matches YieldGeko.sol POLICY_TYPEHASH
+const POLICY_TYPES = {
+  Policy: [
+    { name: 'user',          type: 'address' },
+    { name: 'managedUSD',    type: 'uint256' },
+    { name: 'minAPY',        type: 'uint256' },
+    { name: 'maxDrawdownBps',type: 'uint256' },
+    { name: 'maxFeeBps',     type: 'uint256' },
+    { name: 'nonce',         type: 'uint256' },
+    { name: 'deadline',      type: 'uint256' },
+  ],
+} as const
 
-  const signIntent = async (
-    asset: `0x${string}`,
-    fromStrategy: `0x${string}`,
-    toStrategy: `0x${string}`,
-    amount: bigint,
-    minAPY: number, 
-    expectedAPY: number,
-    maxSlippage: number, 
-    maxFee: bigint,
-    nonce: number, 
-    deadline: number
-  ) => {
-    if (!address) throw new Error("Wallet not connected");
+export type PolicyParams = {
+  managedUSD:     bigint   // token units for the deposited asset; USDC onboarding uses 6 decimals
+  minAPY:         bigint   // bps, e.g. 800 = 8%
+  maxDrawdownBps: bigint   // e.g. 1000 = 10%
+  maxFeeBps:      bigint   // e.g. 50 = 0.5%
+  deadline:       bigint
+}
+
+export function useSignPolicy() {
+  const { signTypedDataAsync } = useSignTypedData()
+  const { address } = useAccount()
+  const chainId = useChainId()
+
+  const { data: currentNonce, refetch: refetchNonce } = useReadYieldGekoNonces({
+    address: VAULT_ADDRESS,
+    args: address ? [address] : undefined,
+    query: { enabled: Boolean(address && VAULT_ADDRESS) },
+  })
+
+  const signPolicy = async (params: PolicyParams) => {
+    if (!address) throw new Error('Wallet not connected')
+
+    const nonce = currentNonce ?? BigInt(0)
 
     const message = {
-      user: address as `0x${string}`,
-      asset,
-      fromStrategy,
-      toStrategy,
-      amount,
-      minAPY: BigInt(minAPY),
-      expectedAPY: BigInt(expectedAPY),
-      maxSlippage: BigInt(maxSlippage),
-      maxFee,
-      nonce: BigInt(nonce),
-      deadline: BigInt(deadline)
-    };
+      user:          address as `0x${string}`,
+      managedUSD:    params.managedUSD,
+      minAPY:        params.minAPY,
+      maxDrawdownBps:params.maxDrawdownBps,
+      maxFeeBps:     params.maxFeeBps,
+      nonce,
+      deadline:      params.deadline,
+    }
+
+    const domain = {
+      name: 'YieldGeko',
+      version: '1',
+      chainId,
+      verifyingContract: VAULT_ADDRESS,
+    } as const
 
     const signature = await signTypedDataAsync({
-      domain: EIP712_DOMAIN,
-      types: INTENT_TYPES,
-      primaryType: 'Intent',
-      message
-    });
+      domain,
+      types: POLICY_TYPES,
+      primaryType: 'Policy',
+      message,
+    })
 
-    return { signature, message };
-  };
+    return { signature, message, nonce }
+  }
 
-  return { signIntent };
+  return { signPolicy, currentNonce, refetchNonce }
 }
+
+// Legacy export alias so any file still importing useSignIntent doesn't break
+export const useSignIntent = useSignPolicy

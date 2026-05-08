@@ -1,72 +1,62 @@
-import { useWriteContract, useAccount } from 'wagmi';
-import { ADDRESSES } from '@yieldgeko/core';
-import { parseUnits } from 'viem';
-import { useReadYieldGekoRouterUserBalances } from '../src/generated';
+import { useWriteContract, useAccount } from 'wagmi'
+import { parseUnits } from 'viem'
+import { VAULT_ADDRESS, USDC_ADDRESS } from '../config'
+import {
+  useReadYieldGekoBalances,
+  useReadYieldGekoDeployed,
+  yieldGekoAbi,
+} from '../src/generated'
 
-export function useYieldVault(assetAddress: `0x${string}`) {
-  const { writeContractAsync } = useWriteContract();
-  const { address } = useAccount();
+export function useYieldVault(assetAddress: `0x${string}` = USDC_ADDRESS) {
+  const { writeContractAsync } = useWriteContract()
+  const { address } = useAccount()
 
-  // Read current balance from contract
-  const { data: balance, refetch: refetchBalance } = useReadYieldGekoRouterUserBalances({
-    address: ADDRESSES.YIELD_GEKO_ROUTER as `0x${string}`,
-    args: address ? [address, assetAddress] : undefined
-  });
+  const { data: idleBalance, refetch: refetchIdle } = useReadYieldGekoBalances({
+    address: VAULT_ADDRESS,
+    args: address ? [address, assetAddress] : undefined,
+    query: { enabled: Boolean(address && VAULT_ADDRESS) },
+  })
+
+  const { data: deployedBalance, refetch: refetchDeployed } = useReadYieldGekoDeployed({
+    address: VAULT_ADDRESS,
+    args: address ? [address, assetAddress] : undefined,
+    query: { enabled: Boolean(address && VAULT_ADDRESS) },
+  })
 
   const deposit = async (amount: string) => {
-    if (!address) throw new Error("Wallet not connected");
-    
-    // We assume 6 decimals for USDC-like assets on Galileo for this demo
-    const amountRaw = parseUnits(amount, 6);
-
+    if (!address) throw new Error('Wallet not connected')
+    const amountRaw = parseUnits(amount, 6)
     await writeContractAsync({
-      address: ADDRESSES.YIELD_GEKO_ROUTER as `0x${string}`,
-      abi: [
-        {
-          name: 'deposit',
-          type: 'function',
-          stateMutability: 'nonpayable',
-          inputs: [
-            { name: '_asset', type: 'address' },
-            { name: '_amount', type: 'uint256' }
-          ]
-        }
-      ],
+      address: VAULT_ADDRESS,
+      abi: yieldGekoAbi,
       functionName: 'deposit',
-      args: [assetAddress, amountRaw]
-    });
-
-    await refetchBalance();
-  };
+      args: [assetAddress, amountRaw],
+    })
+    await refetchIdle()
+  }
 
   const withdraw = async (amount: string) => {
-    if (!address) throw new Error("Wallet not connected");
-    const amountRaw = parseUnits(amount, 6);
-
+    if (!address) throw new Error('Wallet not connected')
+    const amountRaw = parseUnits(amount, 6)
     await writeContractAsync({
-      address: ADDRESSES.YIELD_GEKO_ROUTER as `0x${string}`,
-      abi: [
-        {
-          name: 'withdraw',
-          type: 'function',
-          stateMutability: 'nonpayable',
-          inputs: [
-            { name: '_asset', type: 'address' },
-            { name: '_amount', type: 'uint256' }
-          ]
-        }
-      ],
+      address: VAULT_ADDRESS,
+      abi: yieldGekoAbi,
       functionName: 'withdraw',
-      args: [assetAddress, amountRaw]
-    });
+      args: [assetAddress, amountRaw],
+    })
+    await refetchIdle()
+  }
 
-    await refetchBalance();
-  };
+  const refetch = async () => {
+    await Promise.all([refetchIdle(), refetchDeployed()])
+  }
 
-  return { 
-    deposit, 
-    withdraw, 
-    balance,
-    refetchBalance
-  };
+  return {
+    deposit,
+    withdraw,
+    balance: idleBalance,
+    deployedBalance,
+    refetch,
+    refetchBalance: refetchIdle,
+  }
 }

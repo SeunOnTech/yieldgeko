@@ -12,17 +12,32 @@ import type { AgentEvent, AgentState } from './types';
 //    GET /health  — {ok, clients, uptime}
 // ─────────────────────────────────────────────────────────────────────────────
 
+import type { UserPolicy } from './types';
+
 let SSE_PORT = Number(process.env.SSE_PORT ?? 3001);
 
 const clients = new Set<http.ServerResponse>();
 let   latestState: AgentState | null = null;
 const startedAt = Date.now();
 
-// ── CORS headers for cross-origin (frontend on :3000) ─────────────────────────
+// ── Real user registration callback ──────────────────────────────────────────
+//  Set by the orchestrator after UserRegistry is ready.
+//  Called when POST /api/register receives a valid signed policy.
+
+type RegisterFn = (policy: UserPolicy) => UserState;
+let registerCallback: RegisterFn | null = null;
+
+import type { UserState } from './types';
+
+export function setRegisterCallback(fn: RegisterFn): void {
+  registerCallback = fn;
+}
+
+// ── CORS headers ──────────────────────────────────────────────────────────────
 
 function setCORS(res: http.ServerResponse): void {
   res.setHeader('Access-Control-Allow-Origin',  '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Cache-Control');
 }
 
@@ -110,6 +125,64 @@ export function startSSEServer(): void {
       });
       res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) });
       res.end(body);
+      return;
+    }
+
+    // ── Real user registration ──────────────────────────────────────────────
+    //  Called by the frontend after user signs EIP-712 policy and deposits.
+    //  Demo users (Alice/Bob/Carol) keep running unchanged.
+    if (req.url === '/api/register' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+      req.on('end', () => {
+        try {
+          const payload = JSON.parse(body) as {
+            id:                    string;
+            displayName:           string;
+            riskTier:              string;
+            managedUSD:            number;
+            minAPY:                number;
+            maxSlippageBps:        number;
+            maxDrawdownPct:        number;
+            maxFeeBps:             number;
+            migrationThresholdPct: number;
+            userAddress:           string;
+            chainId?:              number;
+          };
+
+          if (!registerCallback) {
+            res.writeHead(503, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Agent not ready' }));
+            return;
+          }
+
+          const policy: UserPolicy = {
+            id:                    payload.id || `user-${payload.userAddress?.slice(2, 10)}`,
+            displayName:           payload.displayName || `User ${payload.userAddress?.slice(0, 8)}`,
+            riskTier:              (payload.riskTier as any) || 'balanced',
+            managedUSD:            payload.managedUSD,
+            minAPY:                payload.minAPY ?? 8,
+            maxSlippageBps:        payload.maxSlippageBps ?? 50,
+            maxDrawdownPct:        payload.maxDrawdownPct ?? 10,
+            maxFeeBps:             payload.maxFeeBps ?? 100,
+            migrationThresholdPct: payload.migrationThresholdPct ?? 3,
+            createdAt:             Date.now(),
+            expiresAt:             Date.now() + 30 * 24 * 60 * 60 * 1_000,
+            isReal:                true,
+            userAddress:           payload.userAddress,
+            chainId:               payload.chainId ?? 42161,
+          };
+
+          registerCallback(policy);
+
+          const respBody = JSON.stringify({ ok: true, userId: policy.id });
+          res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(respBody) });
+          res.end(respBody);
+        } catch (err: any) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
       return;
     }
 

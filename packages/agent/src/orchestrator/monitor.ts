@@ -1,71 +1,94 @@
 import * as crypto from 'node:crypto';
+import type { JsonRpcProvider } from 'ethers';
 import type {
-  Position, Opportunity, UserPolicy,
-  CircuitBreaker, CBStatus, ExecutionRecord, ActionType,
+  Portfolio, PortfolioPosition, Opportunity, UserPolicy,
+  CircuitBreaker, ExecutionRecord, ActionType,
 } from './types';
+import type { PriceMap } from './protocols/chainlink';
+import { applyILUpdate, shouldExitForIL } from './il-engine';
+import { estimatePendingRewards } from './compounder';
+import { updatePortfolio, computePortfolioMetrics } from './portfolio';
+import { readRealPositionValue } from './position-reader';
 
-// ── Position simulation ───────────────────────────────────────────────────────
+// ── Position Monitor ──────────────────────────────────────────────────────────
 //
-//  For dev/demo: no real funds on-chain.
-//  Position value is simulated from real live APYs.
+//  Updates every position in the portfolio every tick:
+//    1. NAV simulation (income accrual from netAPY)
+//    2. IL calculation from live Chainlink prices
+//    3. Pending rewards estimation
+//    4. Per-position peak/drawdown tracking
 //
-//  income grows linearly: managedUSD × (netAPY/100) × (seconds / 31536000)
-//  For GMX: small daily NAV fluctuation simulates trader PnL effect.
+//  For GMX positions: simulate small NAV fluctuation (trader PnL effect).
+//  For all others: clean compound growth from netAPY.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const TICK_SECONDS = 60;  // matches orchestrator tick interval
+const TICK_SECONDS = 60;
 
-interface NavFluctuation {
-  venueId:        string;
-  lastFluctuation: number;
-  cumFluctuation:  number;
+// ── NAV fluctuation for GMX (trader PnL effect) ───────────────────────────────
+
+const gmxFluctMap = new Map<string, number>();  // positionId → cumulative factor
+
+function gmxNavFactor(positionId: string): number {
+  const prev = gmxFluctMap.get(positionId) ?? 1.0;
+  // ±0.15% per tick with slight positive bias (fees usually outpace trader wins)
+  const delta = (Math.random() - 0.48) * 0.003;
+  const next  = Math.max(0.95, Math.min(1.08, prev * (1 + delta)));
+  gmxFluctMap.set(positionId, next);
+  return next;
 }
 
-const fluctMap = new Map<string, NavFluctuation>();
-
-function getGMXNavFactor(venueId: string): number {
-  if (!fluctMap.has(venueId)) {
-    fluctMap.set(venueId, { venueId, lastFluctuation: 0, cumFluctuation: 1.0 });
-  }
-  const f = fluctMap.get(venueId)!;
-  // ±0.15% per tick when within 60-second windows (realistic for GM tokens)
-  const tick = (Math.random() - 0.48) * 0.003;  // slight positive bias
-  f.cumFluctuation *= (1 + tick);
-  // Clamp: GM tokens realistically trade within ±5% of inception over weeks
-  f.cumFluctuation = Math.max(0.95, Math.min(1.08, f.cumFluctuation));
-  f.lastFluctuation = tick;
-  return f.cumFluctuation;
-}
+// ── Update single position ────────────────────────────────────────────────────
 
 export function updatePosition(
-  position:    Position,
-  opportunity: Opportunity | null,
-  elapsedSec:  number,
-): Position {
-  const netAPY     = opportunity?.netAPY ?? position.currentNetAPY;
-  const grossAPY   = opportunity?.grossAPY ?? position.currentAPY;
-  const yearFrac   = elapsedSec / 31_536_000;
+  pos:        PortfolioPosition,
+  opp:        Opportunity | null,
+  elapsedSec: number,
+  prices:     PriceMap,
+): PortfolioPosition {
+  const netAPY   = opp?.netAPY   ?? pos.currentNetAPY;
+  const grossAPY = opp?.grossAPY ?? pos.currentAPY;
+  const yearFrac  = elapsedSec / 31_536_000;
 
-  // Compound income on existing position
-  const newIncome = position.entryUSD * (netAPY / 100) * yearFrac;
-  const totalIncome = position.incomeEarnedUSD + newIncome;
+  // Income accrual
+  const newIncome = pos.allocationUSD * (netAPY / 100) * yearFrac;
+  const totalIncome = pos.incomeEarnedUSD + newIncome;
 
-  // NAV: for GMX simulate trader PnL fluctuation on top of entry
-  let navUSD = position.entryUSD;
-  if (position.strategyType === 'GMX_REAL_YIELD') {
-    navUSD = position.entryUSD * getGMXNavFactor(position.venueId);
+  // NAV: GMX gets trader PnL simulation, others are clean compound growth
+  let navUSD = pos.entryUSD;
+  if (pos.strategyType === 'GMX_REAL_YIELD') {
+    navUSD = pos.entryUSD * gmxNavFactor(pos.id);
   }
 
   const currentUSD     = navUSD + totalIncome;
-  const totalReturnUSD = currentUSD - position.entryUSD;
-  const totalReturnPct = (totalReturnUSD / position.entryUSD) * 100;
-  const daysHeld       = (Date.now() - position.entryTime) / 86_400_000;
+  const totalReturnUSD = currentUSD - pos.entryUSD;
+  const totalReturnPct = (totalReturnUSD / pos.entryUSD) * 100;
+  const daysHeld       = (Date.now() - pos.entryTime) / 86_400_000;
   const effectiveAPY   = daysHeld > 0 ? (totalReturnPct / daysHeld) * 365 : netAPY;
-  const peakUSD        = Math.max(position.peakUSD, currentUSD);
+  const peakUSD        = Math.max(pos.peakUSD, currentUSD);
   const drawdownPct    = peakUSD > 0 ? ((peakUSD - currentUSD) / peakUSD) * 100 : 0;
 
+  // IL update from live Chainlink prices
+  let currentPriceUSD = pos.entryPriceUSD;
+  if (pos.entryPriceUSD > 0 && prices) {
+    // Try to find current price for the volatile asset in this LP
+    for (const [sym, tp] of prices.entries()) {
+      if (pos.venueName.toUpperCase().includes(sym.toUpperCase()) && sym !== 'USDC' && sym !== 'USDT' && sym !== 'DAI') {
+        currentPriceUSD = tp.priceUSD;
+        break;
+      }
+    }
+  }
+
+  const ilUpdate = applyILUpdate(pos, currentPriceUSD, newIncome * 0.3);  // 30% of income is "fees" for IL tracking
+
+  // Pending rewards estimation
+  const pendingRewardsUSD = estimatePendingRewards(
+    { ...pos, currentNetAPY: netAPY },
+    elapsedSec,
+  );
+
   return {
-    ...position,
+    ...pos,
     currentAPY:      grossAPY,
     currentNetAPY:   netAPY,
     currentUSD,
@@ -76,108 +99,243 @@ export function updatePosition(
     peakUSD,
     drawdownPct,
     daysHeld,
+    pendingRewardsUSD,
+    ...ilUpdate,
   };
 }
 
+// ── Update full portfolio — formula-based (demo users, /agent page) ───────────
+//
+//  Used for Alice / Bob / Carol and any user without policy.isReal.
+//  Completely unchanged — demo page stays exactly as-is.
+
+export function updatePortfolioPositions(
+  portfolio:  Portfolio,
+  opportunities: Opportunity[],
+  elapsedSec: number,
+  prices:     PriceMap,
+): Portfolio {
+  const updated = portfolio.positions.map(pos => {
+    const opp = opportunities.find(o => o.id === pos.venueId) ?? null;
+    return updatePosition(pos, opp, elapsedSec, prices);
+  });
+  return updatePortfolio(portfolio, updated);
+}
+
+// ── Update full portfolio — real on-chain reads (isReal users only) ───────────
+//
+//  For each position, calls position-reader.ts which reads the ACTUAL current
+//  value from the protocol (Aave aUSDC balance, UniV3 NFT, Pendle oracle, etc.).
+//
+//  Falls back to formula-based estimate if any on-chain read fails (network error,
+//  position not yet settled, etc.) — the tick loop never stalls.
+//
+//  The formula is still used for:
+//    · APY/IL/circuit-breaker derived fields (these stay formula-based even for
+//      real users because they describe rate/risk, not absolute value)
+//    · GMX pending deposits (gmTokenAmount = '' until async order settles)
+
+export async function updatePortfolioPositionsReal(
+  portfolio:    Portfolio,
+  opportunities: Opportunity[],
+  elapsedSec:   number,
+  prices:       PriceMap,
+  provider:     JsonRpcProvider,
+  vaultAddress: string,
+): Promise<Portfolio> {
+  const updated = await Promise.all(
+    portfolio.positions.map(async (pos) => {
+      const opp = opportunities.find(o => o.id === pos.venueId) ?? null;
+
+      // 1. Start with the formula-based update for APY/IL/drawdown/rewards fields
+      const formulaPos = updatePosition(pos, opp, elapsedSec, prices);
+
+      // 2. Attempt real on-chain value read
+      let realRead: Awaited<ReturnType<typeof readRealPositionValue>> = null;
+      try {
+        realRead = await readRealPositionValue(pos, provider, vaultAddress, prices);
+      } catch (err: any) {
+        console.warn(`[Monitor] Real read failed for ${pos.strategyType} — using formula. ${err.message}`);
+      }
+
+      if (!realRead) {
+        // No real data available — keep formula result
+        return formulaPos;
+      }
+
+      // 3. Merge: override currentUSD + incomeEarnedUSD with real values,
+      //    keep everything else (APY, IL, drawdown, peak tracking) from formula
+      const currentUSD      = realRead.currentUSD;
+      const incomeEarnedUSD = Math.max(0, realRead.incomeEarnedUSD);  // clamp negatives from rounding
+      const totalReturnUSD  = currentUSD - pos.entryUSD;
+      const totalReturnPct  = pos.entryUSD > 0 ? (totalReturnUSD / pos.entryUSD) * 100 : 0;
+      const daysHeld        = (Date.now() - pos.entryTime) / 86_400_000;
+      const effectiveAPY    = daysHeld > 0 ? (totalReturnPct / daysHeld) * 365 : formulaPos.currentNetAPY;
+      const peakUSD         = Math.max(formulaPos.peakUSD, currentUSD);
+      const drawdownPct     = peakUSD > 0 ? ((peakUSD - currentUSD) / peakUSD) * 100 : 0;
+
+      return {
+        ...formulaPos,
+        currentUSD,
+        incomeEarnedUSD,
+        totalReturnUSD,
+        totalReturnPct,
+        effectiveAPY,
+        peakUSD,
+        drawdownPct,
+        // Real pending rewards drives the harvest decision (not formula estimate)
+        pendingRewardsUSD: realRead.pendingRewardsUSD,
+        // UniV3: real fees owed = actual income; for other protocols income is NAV delta
+        feesEarnedUSD: pos.strategyType === 'DELTA_NEUTRAL'
+          ? realRead.incomeEarnedUSD
+          : formulaPos.feesEarnedUSD,
+        // Track consecutive out-of-range ticks for UniV3 range circuit breaker
+        uniV3OutOfRangeTicks: pos.strategyType === 'DELTA_NEUTRAL'
+          ? (realRead.outOfRange ? (pos.uniV3OutOfRangeTicks ?? 0) + 1 : 0)
+          : pos.uniV3OutOfRangeTicks,
+        // LEVERAGED_LOOP: persist health factor for circuit breaker
+        ...(realRead.healthFactor != null ? { healthFactor: realRead.healthFactor } : {}),
+      };
+    }),
+  );
+
+  return updatePortfolio(portfolio, updated);
+}
+
 // ── Circuit Breakers ──────────────────────────────────────────────────────────
+//
+//  Portfolio-level + per-position breakers.
+//  Red = exit immediately. Yellow = monitor closely. Green = all clear.
 
 export function checkCircuitBreakers(
-  position:    Position | null,
-  opportunity: Opportunity | null,
-  policy:      UserPolicy,
+  portfolio:  Portfolio | null,
+  opportunities: Opportunity[],
+  policy:     UserPolicy,
 ): CircuitBreaker[] {
   const breakers: CircuitBreaker[] = [];
+  if (!portfolio) return breakers;
 
-  // ── 1. APY Floor ────────────────────────────────────────────────────────────
-  if (position && opportunity) {
-    const apy     = opportunity.netAPY;
-    const floor   = policy.minAPY;
-    let status: CBStatus = 'GREEN';
-    if (apy < floor * 0.50) status = 'RED';
-    else if (apy < floor * 0.80) status = 'YELLOW';
+  const m = portfolio.metrics;
+
+  // ── 1. Portfolio NAV drawdown ────────────────────────────────────────────
+  const dd     = m.drawdownPct;
+  const maxDD  = policy.maxDrawdownPct;
+  breakers.push({
+    id: 'portfolio-drawdown', name: 'Portfolio Drawdown',
+    status: dd >= maxDD ? 'RED' : dd >= maxDD * 0.60 ? 'YELLOW' : 'GREEN',
+    value: `-${dd.toFixed(2)}%`, threshold: `max -${maxDD}%`,
+    description: 'Total portfolio USD value decline from peak',
+  });
+
+  // ── 2. Weighted APY vs minimum ───────────────────────────────────────────
+  const apy   = m.weightedNetAPY;
+  const floor = policy.minAPY;
+  breakers.push({
+    id: 'portfolio-apy', name: 'Portfolio APY Floor',
+    status: apy < floor * 0.50 ? 'RED' : apy < floor * 0.80 ? 'YELLOW' : 'GREEN',
+    value: `${apy.toFixed(2)}%`, threshold: `min ${floor}%`,
+    description: 'Capital-weighted net APY across all positions',
+  });
+
+  // ── 3. IL coverage (fees beating IL?) ───────────────────────────────────
+  if (!m.ilCoveredByFees && Math.abs(m.totalILUSD) > 10) {
     breakers.push({
-      id: 'apy-floor', name: 'APY Floor',
-      status,
-      value: `${apy.toFixed(2)}%`,
-      threshold: `min ${floor}%`,
-      description: 'Current net APY vs user minimum policy',
+      id: 'il-coverage', name: 'IL vs Fees Coverage',
+      status: Math.abs(m.totalILUSD) > m.incomeEarnedUSD * 1.5 ? 'RED' : 'YELLOW',
+      value: `IL: $${Math.abs(m.totalILUSD).toFixed(0)} | Fees: $${m.incomeEarnedUSD.toFixed(0)}`,
+      threshold: 'Fees must exceed IL',
+      description: 'Accumulated IL is outpacing fee income — positions losing real USD value',
     });
   }
 
-  // ── 2. Drawdown from peak ───────────────────────────────────────────────────
-  if (position) {
-    const dd      = position.drawdownPct;
-    const maxDD   = policy.maxDrawdownPct;
-    let status: CBStatus = 'GREEN';
-    if (dd >= maxDD) status = 'RED';
-    else if (dd >= maxDD * 0.60) status = 'YELLOW';
-    breakers.push({
-      id: 'drawdown', name: 'NAV Drawdown',
-      status,
-      value: `-${dd.toFixed(2)}%`,
-      threshold: `max -${maxDD}%`,
-      description: 'USD value decline from peak',
-    });
-  }
+  // ── 4. Per-position checks ───────────────────────────────────────────────
+  for (const pos of portfolio.positions) {
+    const opp = opportunities.find(o => o.id === pos.venueId);
 
-  // ── 3. OI Balance (GMX only) ────────────────────────────────────────────────
-  if (opportunity?.strategyType === 'GMX_REAL_YIELD' && opportunity.risk.oiBalance !== null) {
-    const oi = opportunity.risk.oiBalance;
-    const skew = Math.abs(oi - 0.5) * 2;
-    let status: CBStatus = 'GREEN';
-    if (skew > 0.50) status = 'RED';
-    else if (skew > 0.30) status = 'YELLOW';
-    breakers.push({
-      id: 'oi-balance', name: 'GMX OI Balance',
-      status,
-      value: `${(oi * 100).toFixed(1)}% long`,
-      threshold: '30–70% long = safe',
-      description: 'Open interest skew — heavy imbalance means trader wins probable',
-    });
-  }
+    // IL exit signal per position
+    const ilCheck = shouldExitForIL(pos);
+    if (ilCheck.shouldExit) {
+      breakers.push({
+        id:          `il-exit-${pos.id.slice(0, 8)}`,
+        name:        `IL Exit — ${pos.protocol}`,
+        status:      'RED',
+        value:       `IL: ${(Math.abs(pos.ilPct) * 100).toFixed(1)}% | Ticks: ${pos.ilUnprofTicks}`,
+        threshold:   `${3} consecutive unprofitable ticks`,
+        description: ilCheck.reason,
+        positionId:  pos.id,
+      });
+    }
 
-  // ── 4. Pool Liquidity ────────────────────────────────────────────────────────
-  if (opportunity) {
-    const tvl     = opportunity.tvlUSD;
-    const minTVL  = policy.managedUSD * 50;
-    let status: CBStatus = 'GREEN';
-    if (tvl < policy.managedUSD * 10) status = 'RED';
-    else if (tvl < minTVL) status = 'YELLOW';
-    breakers.push({
-      id: 'liquidity', name: 'Pool Liquidity',
-      status,
-      value: `$${(tvl / 1e6).toFixed(2)}M TVL`,
-      threshold: `≥ $${(minTVL / 1e6).toFixed(2)}M`,
-      description: 'Pool TVL vs position size — must have room to exit',
-    });
-  }
+    // LEVERAGED_LOOP health factor — must unwind before Aave liquidates (HF < 1.0)
+    if (pos.strategyType === 'LEVERAGED_LOOP' && pos.healthFactor != null) {
+      const hf = pos.healthFactor;
+      if (hf < 1.3) {
+        breakers.push({
+          id:          `hf-${pos.id.slice(0, 8)}`,
+          name:        `Aave Health Factor — ${pos.protocol}`,
+          // RED at HF < 1.1: immediate unwind required (liquidation bot threshold is 1.0)
+          // YELLOW at HF < 1.3: de-risk, consider unwinding
+          status:      hf < 1.1 ? 'RED' : 'YELLOW',
+          value:       `HF ${hf.toFixed(3)}`,
+          threshold:   'Min 1.3 safe | Unwind at 1.1',
+          description: hf < 1.1
+            ? 'CRITICAL: Aave liquidation imminent — unwind leveraged position immediately'
+            : 'Health factor approaching danger zone — consider reducing leverage',
+          positionId:  pos.id,
+        });
+      }
+    }
 
-  // ── 5. APY Drift from entry ──────────────────────────────────────────────────
-  if (position && opportunity) {
-    const drift = ((position.entryAPY - opportunity.netAPY) / position.entryAPY) * 100;
-    let status: CBStatus = 'GREEN';
-    if (drift > 50) status = 'RED';
-    else if (drift > 30) status = 'YELLOW';
-    breakers.push({
-      id: 'apy-drift', name: 'APY Drift from Entry',
-      status,
-      value: drift > 0 ? `-${drift.toFixed(1)}%` : `+${Math.abs(drift).toFixed(1)}%`,
-      threshold: 'max -50% drift',
-      description: 'How much APY has changed since position entry',
-    });
-  }
+    // UniV3 out-of-range (real users only — field is undefined for demo users)
+    if (pos.strategyType === 'DELTA_NEUTRAL' && pos.uniV3OutOfRangeTicks != null) {
+      const oor = pos.uniV3OutOfRangeTicks;
+      if (oor > 0) {
+        breakers.push({
+          id:          `univ3-oor-${pos.id.slice(0, 8)}`,
+          name:        `UniV3 Out-of-Range — ${pos.protocol}`,
+          // RED after 3 consecutive out-of-range ticks (~3 min): earning 0 fees, must rebalance
+          status:      oor >= 3 ? 'RED' : 'YELLOW',
+          value:       `${oor} tick${oor > 1 ? 's' : ''} out of range`,
+          threshold:   '3 ticks = rebalance',
+          description: 'LP price outside tick range — earning 0 fees. Agent will migrate to a new range.',
+          positionId:  pos.id,
+        });
+      }
+    }
 
-  // ── 6. Position age ──────────────────────────────────────────────────────────
-  if (position) {
-    const days   = position.daysHeld;
-    const status: CBStatus = days > 30 ? 'YELLOW' : 'GREEN';
-    breakers.push({
-      id: 'position-age', name: 'Position Age',
-      status,
-      value: `${days.toFixed(1)} days`,
-      threshold: 'review after 30d',
-      description: 'Old positions should be re-evaluated against fresh opportunities',
-    });
+    // GMX OI balance per position
+    if (pos.strategyType === 'GMX_REAL_YIELD' && opp?.risk.oiBalance !== null) {
+      const oiBal = opp?.risk.oiBalance ?? 0.5;
+      const skew  = Math.abs(oiBal - 0.5) * 2;
+      if (skew > 0.20) {
+        breakers.push({
+          id:          `gmx-oi-${pos.id.slice(0, 8)}`,
+          name:        `GMX OI — ${pos.protocol}`,
+          status:      skew > 0.50 ? 'RED' : 'YELLOW',
+          value:       `${(oiBal * 100).toFixed(1)}% long`,
+          threshold:   '30–70% long = safe',
+          description: 'Open interest skew — heavy imbalance increases counterparty risk',
+          positionId:  pos.id,
+        });
+      }
+    }
+
+    // Liquidity per position
+    if (opp) {
+      const tvl    = opp.tvlUSD;
+      const minTvl = policy.managedUSD * 50 * (pos.allocationPct / 100);
+      if (tvl < policy.managedUSD * 10) {
+        breakers.push({
+          id:          `liq-${pos.id.slice(0, 8)}`,
+          name:        `Liquidity — ${pos.protocol}`,
+          status:      'RED',
+          value:       `$${(tvl / 1e6).toFixed(2)}M TVL`,
+          threshold:   `≥ $${(minTvl / 1e6).toFixed(2)}M`,
+          description: 'Pool TVL critically low — exit risk',
+          positionId:  pos.id,
+        });
+      }
+    }
   }
 
   return breakers;
@@ -187,13 +345,18 @@ export function hasRedBreaker(breakers: CircuitBreaker[]): boolean {
   return breakers.some(b => b.status === 'RED');
 }
 
+export function redBreakerForPosition(breakers: CircuitBreaker[], positionId: string): boolean {
+  return breakers.some(b => b.status === 'RED' && b.positionId === positionId);
+}
+
 // ── Execution record ──────────────────────────────────────────────────────────
 
 export function buildExecutionRecord(
-  action:   ActionType,
-  from:     string | null,
-  to:       string,
+  action:    ActionType,
+  from:      string | null,
+  to:        string,
   amountUSD: number,
+  portfolioValueBefore?: number,
 ): ExecutionRecord {
   const hash = crypto
     .createHash('sha256')
@@ -205,34 +368,6 @@ export function buildExecutionRecord(
     simulated:   true,
     receiptHash: `0x${hash}`,
     timestamp:   Date.now(),
-  };
-}
-
-// ── Build new simulated position ──────────────────────────────────────────────
-
-export function openPosition(
-  opportunity: Opportunity,
-  policy:      UserPolicy,
-): Position {
-  return {
-    id:              crypto.randomUUID(),
-    venueId:         opportunity.id,
-    venueName:       `${opportunity.protocol} ${opportunity.pool}`,
-    protocol:        opportunity.protocol,
-    strategyType:    opportunity.strategyType,
-    entryAPY:        opportunity.grossAPY,
-    entryUSD:        policy.managedUSD,
-    entryTime:       Date.now(),
-    currentAPY:      opportunity.grossAPY,
-    currentNetAPY:   opportunity.netAPY,
-    currentUSD:      policy.managedUSD,
-    incomeEarnedUSD: 0,
-    totalReturnUSD:  0,
-    totalReturnPct:  0,
-    effectiveAPY:    opportunity.netAPY,
-    peakUSD:         policy.managedUSD,
-    drawdownPct:     0,
-    daysHeld:        0,
-    simulated:       true,
+    portfolioValueBefore,
   };
 }

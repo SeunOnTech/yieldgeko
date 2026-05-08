@@ -1,280 +1,89 @@
 import {
+  createUseReadContract,
   createUseWriteContract,
   createUseSimulateContract,
-  createUseReadContract,
   createUseWatchContractEvent,
 } from 'wagmi/codegen'
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// IStrategyAdapter
+// YieldGeko
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-export const iStrategyAdapterAbi = [
-  {
-    type: 'function',
-    inputs: [
-      { name: 'asset', internalType: 'address', type: 'address' },
-      { name: 'amount', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'deposit',
-    outputs: [
-      { name: 'depositedAmount', internalType: 'uint256', type: 'uint256' },
-    ],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'asset', internalType: 'address', type: 'address' },
-      { name: 'amount', internalType: 'uint256', type: 'uint256' },
-      { name: 'recipient', internalType: 'address', type: 'address' },
-    ],
-    name: 'withdraw',
-    outputs: [
-      { name: 'withdrawnAmount', internalType: 'uint256', type: 'uint256' },
-    ],
-    stateMutability: 'nonpayable',
-  },
-] as const
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// StrategyRegistry
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-export const strategyRegistryAbi = [
-  { type: 'constructor', inputs: [], stateMutability: 'nonpayable' },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_strategy', internalType: 'address', type: 'address' },
-      { name: '_adapter', internalType: 'address', type: 'address' },
-      { name: '_name', internalType: 'string', type: 'string' },
-      { name: '_chainId', internalType: 'uint64', type: 'uint64' },
-      { name: '_minLiquidity', internalType: 'uint256', type: 'uint256' },
-      { name: '_isAudited', internalType: 'bool', type: 'bool' },
-    ],
-    name: 'addStrategy',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'getActiveStrategies',
-    outputs: [{ name: '', internalType: 'address[]', type: 'address[]' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: '_strategy', internalType: 'address', type: 'address' }],
-    name: 'getStrategyInfo',
-    outputs: [
-      {
-        name: '',
-        internalType: 'struct StrategyRegistry.StrategyInfo',
-        type: 'tuple',
-        components: [
-          { name: 'isActive', internalType: 'bool', type: 'bool' },
-          { name: 'adapter', internalType: 'address', type: 'address' },
-          { name: 'name', internalType: 'string', type: 'string' },
-          { name: 'chainId', internalType: 'uint64', type: 'uint64' },
-          { name: 'minLiquidity', internalType: 'uint256', type: 'uint256' },
-          { name: 'isAudited', internalType: 'bool', type: 'bool' },
-          { name: 'isPaused', internalType: 'bool', type: 'bool' },
-        ],
-      },
-    ],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: '_strategy', internalType: 'address', type: 'address' }],
-    name: 'isStrategyApproved',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'owner',
-    outputs: [{ name: '', internalType: 'address', type: 'address' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_strategy', internalType: 'address', type: 'address' },
-      { name: '_pause', internalType: 'bool', type: 'bool' },
-    ],
-    name: 'pauseStrategy',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: '_strategy', internalType: 'address', type: 'address' }],
-    name: 'removeStrategy',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'renounceOwnership',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: '', internalType: 'address', type: 'address' }],
-    name: 'strategies',
-    outputs: [
-      { name: 'isActive', internalType: 'bool', type: 'bool' },
-      { name: 'adapter', internalType: 'address', type: 'address' },
-      { name: 'name', internalType: 'string', type: 'string' },
-      { name: 'chainId', internalType: 'uint64', type: 'uint64' },
-      { name: 'minLiquidity', internalType: 'uint256', type: 'uint256' },
-      { name: 'isAudited', internalType: 'bool', type: 'bool' },
-      { name: 'isPaused', internalType: 'bool', type: 'bool' },
-    ],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'newOwner', internalType: 'address', type: 'address' }],
-    name: 'transferOwnership',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'previousOwner',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-      {
-        name: 'newOwner',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-    ],
-    name: 'OwnershipTransferred',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'strategy',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-      {
-        name: 'adapter',
-        internalType: 'address',
-        type: 'address',
-        indexed: false,
-      },
-      { name: 'name', internalType: 'string', type: 'string', indexed: false },
-      {
-        name: 'chainId',
-        internalType: 'uint64',
-        type: 'uint64',
-        indexed: false,
-      },
-    ],
-    name: 'StrategyAdded',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'strategy',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-    ],
-    name: 'StrategyPaused',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'strategy',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-    ],
-    name: 'StrategyRemoved',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'strategy',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-    ],
-    name: 'StrategyUnpaused',
-  },
-  {
-    type: 'error',
-    inputs: [{ name: 'owner', internalType: 'address', type: 'address' }],
-    name: 'OwnableInvalidOwner',
-  },
-  {
-    type: 'error',
-    inputs: [{ name: 'account', internalType: 'address', type: 'address' }],
-    name: 'OwnableUnauthorizedAccount',
-  },
-] as const
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// YieldGekoRouter
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-export const yieldGekoRouterAbi = [
+export const yieldGekoAbi = [
   {
     type: 'constructor',
     inputs: [
-      { name: '_registry', internalType: 'address', type: 'address' },
       { name: '_agent', internalType: 'address', type: 'address' },
       { name: '_treasury', internalType: 'address', type: 'address' },
+      { name: '_defaultFeeBps', internalType: 'uint256', type: 'uint256' },
     ],
     stateMutability: 'nonpayable',
+  },
+  { type: 'receive', stateMutability: 'payable' },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'MAX_DRAWDOWN_BPS',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
   },
   {
     type: 'function',
     inputs: [],
-    name: 'INTENT_TYPEHASH',
+    name: 'MAX_FEE_BPS',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'MAX_POLICY_DURATION',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'POLICY_TYPEHASH',
     outputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
     stateMutability: 'view',
   },
   {
     type: 'function',
     inputs: [],
-    name: 'MIGRATION_FEE_BPS',
-    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
-    stateMutability: 'view',
+    name: 'acceptOwnership',
+    outputs: [],
+    stateMutability: 'nonpayable',
   },
   {
     type: 'function',
-    inputs: [],
-    name: 'SUCCESS_FEE_BPS',
-    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    inputs: [
+      { name: 'chainId', internalType: 'uint256', type: 'uint256' },
+      { name: 'target', internalType: 'address', type: 'address' },
+    ],
+    name: 'approveTarget',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'asset', internalType: 'address', type: 'address' },
+      { name: 'spender', internalType: 'address', type: 'address' },
+      { name: 'amount', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'approveToken',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '', internalType: 'uint256', type: 'uint256' },
+      { name: '', internalType: 'address', type: 'address' },
+    ],
+    name: 'approvedTargets',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
     stateMutability: 'view',
   },
   {
@@ -287,8 +96,46 @@ export const yieldGekoRouterAbi = [
   {
     type: 'function',
     inputs: [
-      { name: '_asset', internalType: 'address', type: 'address' },
-      { name: '_amount', internalType: 'uint256', type: 'uint256' },
+      { name: '', internalType: 'address', type: 'address' },
+      { name: '', internalType: 'address', type: 'address' },
+    ],
+    name: 'balances',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'asset', internalType: 'address', type: 'address' },
+      { name: 'user', internalType: 'address', type: 'address' },
+      { name: 'grossAmount', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'collectFee',
+    outputs: [{ name: 'netAmount', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'defaultFeeBps',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '', internalType: 'address', type: 'address' },
+      { name: '', internalType: 'address', type: 'address' },
+    ],
+    name: 'deployed',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'asset', internalType: 'address', type: 'address' },
+      { name: 'amount', internalType: 'uint256', type: 'uint256' },
     ],
     name: 'deposit',
     outputs: [],
@@ -318,108 +165,128 @@ export const yieldGekoRouterAbi = [
   },
   {
     type: 'function',
+    inputs: [],
+    name: 'emergencyMode',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'asset', internalType: 'address', type: 'address' }],
+    name: 'emergencyWithdraw',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
     inputs: [
+      { name: 'user', internalType: 'address', type: 'address' },
+      { name: 'target', internalType: 'address', type: 'address' },
+      { name: 'data', internalType: 'bytes', type: 'bytes' },
+      { name: 'receiptHash', internalType: 'bytes32', type: 'bytes32' },
+      { name: 'guardAsset', internalType: 'address', type: 'address' },
+    ],
+    name: 'execute',
+    outputs: [{ name: '', internalType: 'bytes', type: 'bytes' }],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'user', internalType: 'address', type: 'address' },
+      { name: 'asset', internalType: 'address', type: 'address' },
+      { name: 'targets', internalType: 'address[]', type: 'address[]' },
+      { name: 'dataArr', internalType: 'bytes[]', type: 'bytes[]' },
+      { name: 'receiptHash', internalType: 'bytes32', type: 'bytes32' },
+    ],
+    name: 'executeBatch',
+    outputs: [{ name: 'results', internalType: 'bytes[]', type: 'bytes[]' }],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'user', internalType: 'address', type: 'address' },
+      { name: 'assets', internalType: 'address[]', type: 'address[]' },
+      { name: 'targets', internalType: 'address[]', type: 'address[]' },
+      { name: 'dataArr', internalType: 'bytes[]', type: 'bytes[]' },
+      { name: 'receiptHash', internalType: 'bytes32', type: 'bytes32' },
+    ],
+    name: 'executeBatchMulti',
+    outputs: [{ name: 'results', internalType: 'bytes[]', type: 'bytes[]' }],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'user', internalType: 'address', type: 'address' },
+      { name: 'asset', internalType: 'address', type: 'address' },
+      { name: 'amount', internalType: 'uint256', type: 'uint256' },
+      { name: 'assertedAPY', internalType: 'uint256', type: 'uint256' },
+      { name: 'target', internalType: 'address', type: 'address' },
+      { name: 'data', internalType: 'bytes', type: 'bytes' },
+      { name: 'receiptHash', internalType: 'bytes32', type: 'bytes32' },
+    ],
+    name: 'executeDeposit',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'user', internalType: 'address', type: 'address' },
+      { name: 'asset', internalType: 'address', type: 'address' },
+      { name: 'deployedAmount', internalType: 'uint256', type: 'uint256' },
+      { name: 'target', internalType: 'address', type: 'address' },
+      { name: 'data', internalType: 'bytes', type: 'bytes' },
+      { name: 'receiptHash', internalType: 'bytes32', type: 'bytes32' },
+    ],
+    name: 'executeWithdraw',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'user', internalType: 'address', type: 'address' },
+      { name: 'assets', internalType: 'address[]', type: 'address[]' },
+      { name: 'deployedAmounts', internalType: 'uint256[]', type: 'uint256[]' },
+      { name: 'target', internalType: 'address', type: 'address' },
+      { name: 'data', internalType: 'bytes', type: 'bytes' },
+      { name: 'receiptHash', internalType: 'bytes32', type: 'bytes32' },
+    ],
+    name: 'executeWithdrawMulti',
+    outputs: [
+      { name: 'returnedAmounts', internalType: 'uint256[]', type: 'uint256[]' },
+    ],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'user', internalType: 'address', type: 'address' }],
+    name: 'getExecutionCount',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'user', internalType: 'address', type: 'address' }],
+    name: 'getExecutions',
+    outputs: [
       {
-        name: '_params',
-        internalType: 'struct YieldGekoRouter.BatchMigrationParams[]',
+        name: '',
+        internalType: 'struct YieldGeko.ExecutionRecord[]',
         type: 'tuple[]',
         components: [
-          {
-            name: 'intent',
-            internalType: 'struct YieldGekoRouter.Intent',
-            type: 'tuple',
-            components: [
-              { name: 'user', internalType: 'address', type: 'address' },
-              { name: 'asset', internalType: 'address', type: 'address' },
-              {
-                name: 'fromStrategy',
-                internalType: 'address',
-                type: 'address',
-              },
-              { name: 'toStrategy', internalType: 'address', type: 'address' },
-              { name: 'amount', internalType: 'uint256', type: 'uint256' },
-              { name: 'minAPY', internalType: 'uint256', type: 'uint256' },
-              { name: 'expectedAPY', internalType: 'uint256', type: 'uint256' },
-              { name: 'maxSlippage', internalType: 'uint256', type: 'uint256' },
-              { name: 'maxFee', internalType: 'uint256', type: 'uint256' },
-              { name: 'nonce', internalType: 'uint256', type: 'uint256' },
-              { name: 'deadline', internalType: 'uint256', type: 'uint256' },
-            ],
-          },
-          { name: 'signature', internalType: 'bytes', type: 'bytes' },
-          {
-            name: 'actualSlippageBps',
-            internalType: 'uint256',
-            type: 'uint256',
-          },
           { name: 'receiptHash', internalType: 'bytes32', type: 'bytes32' },
-          { name: 'gasFeeInAsset', internalType: 'uint256', type: 'uint256' },
+          { name: 'chainId', internalType: 'uint256', type: 'uint256' },
+          { name: 'action', internalType: 'string', type: 'string' },
+          { name: 'amountUSD', internalType: 'uint256', type: 'uint256' },
+          { name: 'timestamp', internalType: 'uint256', type: 'uint256' },
         ],
       },
     ],
-    name: 'executeBatchMigration',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      {
-        name: '_intent',
-        internalType: 'struct YieldGekoRouter.Intent',
-        type: 'tuple',
-        components: [
-          { name: 'user', internalType: 'address', type: 'address' },
-          { name: 'asset', internalType: 'address', type: 'address' },
-          { name: 'fromStrategy', internalType: 'address', type: 'address' },
-          { name: 'toStrategy', internalType: 'address', type: 'address' },
-          { name: 'amount', internalType: 'uint256', type: 'uint256' },
-          { name: 'minAPY', internalType: 'uint256', type: 'uint256' },
-          { name: 'expectedAPY', internalType: 'uint256', type: 'uint256' },
-          { name: 'maxSlippage', internalType: 'uint256', type: 'uint256' },
-          { name: 'maxFee', internalType: 'uint256', type: 'uint256' },
-          { name: 'nonce', internalType: 'uint256', type: 'uint256' },
-          { name: 'deadline', internalType: 'uint256', type: 'uint256' },
-        ],
-      },
-      { name: '_signature', internalType: 'bytes', type: 'bytes' },
-      { name: '_actualSlippageBps', internalType: 'uint256', type: 'uint256' },
-      { name: '_receiptHash', internalType: 'bytes32', type: 'bytes32' },
-      { name: '_gasFeeInAsset', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'executeMigration',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      {
-        name: '_intent',
-        internalType: 'struct YieldGekoRouter.Intent',
-        type: 'tuple',
-        components: [
-          { name: 'user', internalType: 'address', type: 'address' },
-          { name: 'asset', internalType: 'address', type: 'address' },
-          { name: 'fromStrategy', internalType: 'address', type: 'address' },
-          { name: 'toStrategy', internalType: 'address', type: 'address' },
-          { name: 'amount', internalType: 'uint256', type: 'uint256' },
-          { name: 'minAPY', internalType: 'uint256', type: 'uint256' },
-          { name: 'expectedAPY', internalType: 'uint256', type: 'uint256' },
-          { name: 'maxSlippage', internalType: 'uint256', type: 'uint256' },
-          { name: 'maxFee', internalType: 'uint256', type: 'uint256' },
-          { name: 'nonce', internalType: 'uint256', type: 'uint256' },
-          { name: 'deadline', internalType: 'uint256', type: 'uint256' },
-        ],
-      },
-      { name: '_signature', internalType: 'bytes', type: 'bytes' },
-      { name: '_actualSlippageBps', internalType: 'uint256', type: 'uint256' },
-      { name: '_receiptHash', internalType: 'bytes32', type: 'bytes32' },
-      { name: '_gasFeeInAsset', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'executeMigrationExternal',
-    outputs: [],
-    stateMutability: 'nonpayable',
+    stateMutability: 'view',
   },
   {
     type: 'function',
@@ -451,12 +318,75 @@ export const yieldGekoRouterAbi = [
   },
   {
     type: 'function',
+    inputs: [{ name: '', internalType: 'address', type: 'address' }],
+    name: 'peakValues',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
     inputs: [],
-    name: 'registry',
+    name: 'pendingOwner',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '', internalType: 'address', type: 'address' }],
+    name: 'policies',
     outputs: [
-      { name: '', internalType: 'contract StrategyRegistry', type: 'address' },
+      { name: 'active', internalType: 'bool', type: 'bool' },
+      { name: 'managedUSD', internalType: 'uint256', type: 'uint256' },
+      { name: 'minAPY', internalType: 'uint256', type: 'uint256' },
+      { name: 'maxDrawdownBps', internalType: 'uint256', type: 'uint256' },
+      { name: 'maxFeeBps', internalType: 'uint256', type: 'uint256' },
+      { name: 'registeredAt', internalType: 'uint256', type: 'uint256' },
+      { name: 'expiresAt', internalType: 'uint256', type: 'uint256' },
     ],
     stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '', internalType: 'address', type: 'address' }],
+    name: 'protectedAsset',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'user', internalType: 'address', type: 'address' },
+      { name: 'receiptHash', internalType: 'bytes32', type: 'bytes32' },
+      { name: 'chainId', internalType: 'uint256', type: 'uint256' },
+      { name: 'action', internalType: 'string', type: 'string' },
+      { name: 'amountUSD', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'recordExecution',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      {
+        name: '_p',
+        internalType: 'struct YieldGeko.Policy',
+        type: 'tuple',
+        components: [
+          { name: 'user', internalType: 'address', type: 'address' },
+          { name: 'managedUSD', internalType: 'uint256', type: 'uint256' },
+          { name: 'minAPY', internalType: 'uint256', type: 'uint256' },
+          { name: 'maxDrawdownBps', internalType: 'uint256', type: 'uint256' },
+          { name: 'maxFeeBps', internalType: 'uint256', type: 'uint256' },
+          { name: 'nonce', internalType: 'uint256', type: 'uint256' },
+          { name: 'deadline', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+      { name: '_sig', internalType: 'bytes', type: 'bytes' },
+    ],
+    name: 'registerPolicy',
+    outputs: [],
+    stateMutability: 'nonpayable',
   },
   {
     type: 'function',
@@ -467,8 +397,56 @@ export const yieldGekoRouterAbi = [
   },
   {
     type: 'function',
+    inputs: [
+      { name: 'user', internalType: 'address', type: 'address' },
+      { name: 'currentValueUSD', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'reportValue',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'user', internalType: 'address', type: 'address' }],
+    name: 'resumeUser',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'revokePolicy',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'chainId', internalType: 'uint256', type: 'uint256' },
+      { name: 'target', internalType: 'address', type: 'address' },
+    ],
+    name: 'revokeTarget',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
     inputs: [{ name: '_agent', internalType: 'address', type: 'address' }],
-    name: 'setAuthorizedAgent',
+    name: 'setAgent',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '_feeBps', internalType: 'uint256', type: 'uint256' }],
+    name: 'setDefaultFeeBps',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'enabled', internalType: 'bool', type: 'bool' }],
+    name: 'setEmergencyMode',
     outputs: [],
     stateMutability: 'nonpayable',
   },
@@ -482,12 +460,21 @@ export const yieldGekoRouterAbi = [
   {
     type: 'function',
     inputs: [
-      { name: '', internalType: 'address', type: 'address' },
+      { name: 'user', internalType: 'address', type: 'address' },
+      { name: 'asset', internalType: 'address', type: 'address' },
+    ],
+    name: 'totalFunds',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
       { name: '', internalType: 'address', type: 'address' },
       { name: '', internalType: 'address', type: 'address' },
     ],
-    name: 'strategyPositions',
-    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    name: 'trackedSpenderAsset',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
     stateMutability: 'view',
   },
   {
@@ -513,19 +500,26 @@ export const yieldGekoRouterAbi = [
   },
   {
     type: 'function',
-    inputs: [
-      { name: '', internalType: 'address', type: 'address' },
-      { name: '', internalType: 'address', type: 'address' },
-    ],
-    name: 'userBalances',
-    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    inputs: [{ name: '', internalType: 'address', type: 'address' }],
+    name: 'userPaused',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
     stateMutability: 'view',
   },
   {
     type: 'function',
     inputs: [
-      { name: '_asset', internalType: 'address', type: 'address' },
-      { name: '_amount', internalType: 'uint256', type: 'uint256' },
+      { name: 'target', internalType: 'address', type: 'address' },
+      { name: 'data', internalType: 'bytes', type: 'bytes' },
+    ],
+    name: 'vaultSetup',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'asset', internalType: 'address', type: 'address' },
+      { name: 'amount', internalType: 'uint256', type: 'uint256' },
     ],
     name: 'withdraw',
     outputs: [],
@@ -535,14 +529,60 @@ export const yieldGekoRouterAbi = [
     type: 'event',
     anonymous: false,
     inputs: [
+      { name: 'user', internalType: 'address', type: 'address', indexed: true },
       {
-        name: 'newAgent',
+        name: 'target',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'receiptHash',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: false,
+      },
+      {
+        name: 'timestamp',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'ActionExecuted',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'agent',
         internalType: 'address',
         type: 'address',
         indexed: true,
       },
     ],
     name: 'AgentUpdated',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'user', internalType: 'address', type: 'address', indexed: true },
+      {
+        name: 'steps',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      {
+        name: 'receiptHash',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: false,
+      },
+    ],
+    name: 'BatchExecuted',
   },
   {
     type: 'event',
@@ -569,33 +609,9 @@ export const yieldGekoRouterAbi = [
     type: 'event',
     anonymous: false,
     inputs: [
-      { name: 'user', internalType: 'address', type: 'address', indexed: true },
-      {
-        name: 'migrationFee',
-        internalType: 'uint256',
-        type: 'uint256',
-        indexed: false,
-      },
-      {
-        name: 'successFee',
-        internalType: 'uint256',
-        type: 'uint256',
-        indexed: false,
-      },
-      {
-        name: 'gasFee',
-        internalType: 'uint256',
-        type: 'uint256',
-        indexed: false,
-      },
-      {
-        name: 'receiptHash',
-        internalType: 'bytes32',
-        type: 'bytes32',
-        indexed: false,
-      },
+      { name: 'enabled', internalType: 'bool', type: 'bool', indexed: false },
     ],
-    name: 'FeeSettled',
+    name: 'EmergencyModeSet',
   },
   {
     type: 'event',
@@ -603,13 +619,48 @@ export const yieldGekoRouterAbi = [
     inputs: [
       { name: 'user', internalType: 'address', type: 'address', indexed: true },
       {
-        name: 'fromStrategy',
+        name: 'receiptHash',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: false,
+      },
+      {
+        name: 'action',
+        internalType: 'string',
+        type: 'string',
+        indexed: false,
+      },
+      {
+        name: 'amountUSD',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'ExecutionRecorded',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'user', internalType: 'address', type: 'address', indexed: true },
+      {
+        name: 'asset',
         internalType: 'address',
         type: 'address',
         indexed: true,
       },
+      { name: 'fee', internalType: 'uint256', type: 'uint256', indexed: false },
+    ],
+    name: 'FeeCollected',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'user', internalType: 'address', type: 'address', indexed: true },
       {
-        name: 'toStrategy',
+        name: 'asset',
         internalType: 'address',
         type: 'address',
         indexed: true,
@@ -620,14 +671,8 @@ export const yieldGekoRouterAbi = [
         type: 'uint256',
         indexed: false,
       },
-      {
-        name: 'totalFee',
-        internalType: 'uint256',
-        type: 'uint256',
-        indexed: false,
-      },
     ],
-    name: 'MigrationExecuted',
+    name: 'FundsDeployed',
   },
   {
     type: 'event',
@@ -635,13 +680,38 @@ export const yieldGekoRouterAbi = [
     inputs: [
       { name: 'user', internalType: 'address', type: 'address', indexed: true },
       {
-        name: 'reason',
-        internalType: 'string',
-        type: 'string',
+        name: 'asset',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'actual',
+        internalType: 'uint256',
+        type: 'uint256',
         indexed: false,
       },
     ],
-    name: 'MigrationFailed',
+    name: 'FundsReturned',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'previousOwner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'newOwner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+    ],
+    name: 'OwnershipTransferStarted',
   },
   {
     type: 'event',
@@ -681,32 +751,78 @@ export const yieldGekoRouterAbi = [
     inputs: [
       { name: 'user', internalType: 'address', type: 'address', indexed: true },
       {
-        name: 'asset',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
+        name: 'managedUSD',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
       },
       {
-        name: 'strategy',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
+        name: 'maxDrawdownBps',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
       },
       {
-        name: 'positionAmount',
+        name: 'expiresAt',
         internalType: 'uint256',
         type: 'uint256',
         indexed: false,
       },
     ],
-    name: 'StrategyPositionUpdated',
+    name: 'PolicyRegistered',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'user', internalType: 'address', type: 'address', indexed: true },
+    ],
+    name: 'PolicyRevoked',
   },
   {
     type: 'event',
     anonymous: false,
     inputs: [
       {
-        name: 'newTreasury',
+        name: 'chainId',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: true,
+      },
+      {
+        name: 'target',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+    ],
+    name: 'TargetApproved',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'chainId',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: true,
+      },
+      {
+        name: 'target',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+    ],
+    name: 'TargetRevoked',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'treasury',
         internalType: 'address',
         type: 'address',
         indexed: true,
@@ -733,6 +849,54 @@ export const yieldGekoRouterAbi = [
     inputs: [
       { name: 'user', internalType: 'address', type: 'address', indexed: true },
       {
+        name: 'drawdownBps',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      {
+        name: 'maxBps',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'UserAutoPaused',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'user', internalType: 'address', type: 'address', indexed: true },
+    ],
+    name: 'UserResumed',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'user', internalType: 'address', type: 'address', indexed: true },
+      {
+        name: 'currentValueUSD',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      {
+        name: 'peakValueUSD',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'ValueReported',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'user', internalType: 'address', type: 'address', indexed: true },
+      {
         name: 'asset',
         internalType: 'address',
         type: 'address',
@@ -747,6 +911,22 @@ export const yieldGekoRouterAbi = [
     ],
     name: 'Withdrawn',
   },
+  {
+    type: 'error',
+    inputs: [
+      { name: 'asserted', internalType: 'uint256', type: 'uint256' },
+      { name: 'required', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'APYTooLow',
+  },
+  {
+    type: 'error',
+    inputs: [
+      { name: 'bps', internalType: 'uint256', type: 'uint256' },
+      { name: 'maxBps', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'DrawdownTooHigh',
+  },
   { type: 'error', inputs: [], name: 'ECDSAInvalidSignature' },
   {
     type: 'error',
@@ -758,9 +938,37 @@ export const yieldGekoRouterAbi = [
     inputs: [{ name: 's', internalType: 'bytes32', type: 'bytes32' }],
     name: 'ECDSAInvalidSignatureS',
   },
+  { type: 'error', inputs: [], name: 'EmergencyModeOff' },
   { type: 'error', inputs: [], name: 'EnforcedPause' },
+  {
+    type: 'error',
+    inputs: [
+      { name: 'total', internalType: 'uint256', type: 'uint256' },
+      { name: 'cap', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'ExceedsManagedCapacity',
+  },
   { type: 'error', inputs: [], name: 'ExpectedPause' },
+  {
+    type: 'error',
+    inputs: [
+      { name: 'bps', internalType: 'uint256', type: 'uint256' },
+      { name: 'maxBps', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'FeeTooHigh',
+  },
+  {
+    type: 'error',
+    inputs: [
+      { name: 'have', internalType: 'uint256', type: 'uint256' },
+      { name: 'need', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'InsufficientBalance',
+  },
   { type: 'error', inputs: [], name: 'InvalidShortString' },
+  { type: 'error', inputs: [], name: 'InvalidSignature' },
+  { type: 'error', inputs: [], name: 'LengthMismatch' },
+  { type: 'error', inputs: [], name: 'NotAgent' },
   {
     type: 'error',
     inputs: [{ name: 'owner', internalType: 'address', type: 'address' }],
@@ -771,6 +979,8 @@ export const yieldGekoRouterAbi = [
     inputs: [{ name: 'account', internalType: 'address', type: 'address' }],
     name: 'OwnableUnauthorizedAccount',
   },
+  { type: 'error', inputs: [], name: 'PolicyExpired' },
+  { type: 'error', inputs: [], name: 'PolicyNotActive' },
   { type: 'error', inputs: [], name: 'ReentrancyGuardReentrantCall' },
   {
     type: 'error',
@@ -782,6 +992,19 @@ export const yieldGekoRouterAbi = [
     inputs: [{ name: 'str', internalType: 'string', type: 'string' }],
     name: 'StringTooLong',
   },
+  {
+    type: 'error',
+    inputs: [{ name: 'target', internalType: 'address', type: 'address' }],
+    name: 'TargetNotApproved',
+  },
+  { type: 'error', inputs: [], name: 'UnsafeGenericExecution' },
+  {
+    type: 'error',
+    inputs: [{ name: 'user', internalType: 'address', type: 'address' }],
+    name: 'UserPausedByDrawdown',
+  },
+  { type: 'error', inputs: [], name: 'ZeroAddress' },
+  { type: 'error', inputs: [], name: 'ZeroAmount' },
 ] as const
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -789,698 +1012,938 @@ export const yieldGekoRouterAbi = [
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /**
- * Wraps __{@link useWriteContract}__ with `abi` set to __{@link iStrategyAdapterAbi}__
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link yieldGekoAbi}__
  */
-export const useWriteIStrategyAdapter = /*#__PURE__*/ createUseWriteContract({
-  abi: iStrategyAdapterAbi,
+export const useReadYieldGeko = /*#__PURE__*/ createUseReadContract({
+  abi: yieldGekoAbi,
 })
 
 /**
- * Wraps __{@link useWriteContract}__ with `abi` set to __{@link iStrategyAdapterAbi}__ and `functionName` set to `"deposit"`
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"MAX_DRAWDOWN_BPS"`
  */
-export const useWriteIStrategyAdapterDeposit =
-  /*#__PURE__*/ createUseWriteContract({
-    abi: iStrategyAdapterAbi,
-    functionName: 'deposit',
+export const useReadYieldGekoMaxDrawdownBps =
+  /*#__PURE__*/ createUseReadContract({
+    abi: yieldGekoAbi,
+    functionName: 'MAX_DRAWDOWN_BPS',
   })
 
 /**
- * Wraps __{@link useWriteContract}__ with `abi` set to __{@link iStrategyAdapterAbi}__ and `functionName` set to `"withdraw"`
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"MAX_FEE_BPS"`
  */
-export const useWriteIStrategyAdapterWithdraw =
-  /*#__PURE__*/ createUseWriteContract({
-    abi: iStrategyAdapterAbi,
-    functionName: 'withdraw',
-  })
-
-/**
- * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link iStrategyAdapterAbi}__
- */
-export const useSimulateIStrategyAdapter =
-  /*#__PURE__*/ createUseSimulateContract({ abi: iStrategyAdapterAbi })
-
-/**
- * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link iStrategyAdapterAbi}__ and `functionName` set to `"deposit"`
- */
-export const useSimulateIStrategyAdapterDeposit =
-  /*#__PURE__*/ createUseSimulateContract({
-    abi: iStrategyAdapterAbi,
-    functionName: 'deposit',
-  })
-
-/**
- * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link iStrategyAdapterAbi}__ and `functionName` set to `"withdraw"`
- */
-export const useSimulateIStrategyAdapterWithdraw =
-  /*#__PURE__*/ createUseSimulateContract({
-    abi: iStrategyAdapterAbi,
-    functionName: 'withdraw',
-  })
-
-/**
- * Wraps __{@link useReadContract}__ with `abi` set to __{@link strategyRegistryAbi}__
- */
-export const useReadStrategyRegistry = /*#__PURE__*/ createUseReadContract({
-  abi: strategyRegistryAbi,
+export const useReadYieldGekoMaxFeeBps = /*#__PURE__*/ createUseReadContract({
+  abi: yieldGekoAbi,
+  functionName: 'MAX_FEE_BPS',
 })
 
 /**
- * Wraps __{@link useReadContract}__ with `abi` set to __{@link strategyRegistryAbi}__ and `functionName` set to `"getActiveStrategies"`
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"MAX_POLICY_DURATION"`
  */
-export const useReadStrategyRegistryGetActiveStrategies =
+export const useReadYieldGekoMaxPolicyDuration =
   /*#__PURE__*/ createUseReadContract({
-    abi: strategyRegistryAbi,
-    functionName: 'getActiveStrategies',
+    abi: yieldGekoAbi,
+    functionName: 'MAX_POLICY_DURATION',
   })
 
 /**
- * Wraps __{@link useReadContract}__ with `abi` set to __{@link strategyRegistryAbi}__ and `functionName` set to `"getStrategyInfo"`
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"POLICY_TYPEHASH"`
  */
-export const useReadStrategyRegistryGetStrategyInfo =
+export const useReadYieldGekoPolicyTypehash =
   /*#__PURE__*/ createUseReadContract({
-    abi: strategyRegistryAbi,
-    functionName: 'getStrategyInfo',
+    abi: yieldGekoAbi,
+    functionName: 'POLICY_TYPEHASH',
   })
 
 /**
- * Wraps __{@link useReadContract}__ with `abi` set to __{@link strategyRegistryAbi}__ and `functionName` set to `"isStrategyApproved"`
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"approvedTargets"`
  */
-export const useReadStrategyRegistryIsStrategyApproved =
+export const useReadYieldGekoApprovedTargets =
   /*#__PURE__*/ createUseReadContract({
-    abi: strategyRegistryAbi,
-    functionName: 'isStrategyApproved',
+    abi: yieldGekoAbi,
+    functionName: 'approvedTargets',
   })
 
 /**
- * Wraps __{@link useReadContract}__ with `abi` set to __{@link strategyRegistryAbi}__ and `functionName` set to `"owner"`
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"authorizedAgent"`
  */
-export const useReadStrategyRegistryOwner = /*#__PURE__*/ createUseReadContract(
-  { abi: strategyRegistryAbi, functionName: 'owner' },
-)
-
-/**
- * Wraps __{@link useReadContract}__ with `abi` set to __{@link strategyRegistryAbi}__ and `functionName` set to `"strategies"`
- */
-export const useReadStrategyRegistryStrategies =
+export const useReadYieldGekoAuthorizedAgent =
   /*#__PURE__*/ createUseReadContract({
-    abi: strategyRegistryAbi,
-    functionName: 'strategies',
-  })
-
-/**
- * Wraps __{@link useWriteContract}__ with `abi` set to __{@link strategyRegistryAbi}__
- */
-export const useWriteStrategyRegistry = /*#__PURE__*/ createUseWriteContract({
-  abi: strategyRegistryAbi,
-})
-
-/**
- * Wraps __{@link useWriteContract}__ with `abi` set to __{@link strategyRegistryAbi}__ and `functionName` set to `"addStrategy"`
- */
-export const useWriteStrategyRegistryAddStrategy =
-  /*#__PURE__*/ createUseWriteContract({
-    abi: strategyRegistryAbi,
-    functionName: 'addStrategy',
-  })
-
-/**
- * Wraps __{@link useWriteContract}__ with `abi` set to __{@link strategyRegistryAbi}__ and `functionName` set to `"pauseStrategy"`
- */
-export const useWriteStrategyRegistryPauseStrategy =
-  /*#__PURE__*/ createUseWriteContract({
-    abi: strategyRegistryAbi,
-    functionName: 'pauseStrategy',
-  })
-
-/**
- * Wraps __{@link useWriteContract}__ with `abi` set to __{@link strategyRegistryAbi}__ and `functionName` set to `"removeStrategy"`
- */
-export const useWriteStrategyRegistryRemoveStrategy =
-  /*#__PURE__*/ createUseWriteContract({
-    abi: strategyRegistryAbi,
-    functionName: 'removeStrategy',
-  })
-
-/**
- * Wraps __{@link useWriteContract}__ with `abi` set to __{@link strategyRegistryAbi}__ and `functionName` set to `"renounceOwnership"`
- */
-export const useWriteStrategyRegistryRenounceOwnership =
-  /*#__PURE__*/ createUseWriteContract({
-    abi: strategyRegistryAbi,
-    functionName: 'renounceOwnership',
-  })
-
-/**
- * Wraps __{@link useWriteContract}__ with `abi` set to __{@link strategyRegistryAbi}__ and `functionName` set to `"transferOwnership"`
- */
-export const useWriteStrategyRegistryTransferOwnership =
-  /*#__PURE__*/ createUseWriteContract({
-    abi: strategyRegistryAbi,
-    functionName: 'transferOwnership',
-  })
-
-/**
- * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link strategyRegistryAbi}__
- */
-export const useSimulateStrategyRegistry =
-  /*#__PURE__*/ createUseSimulateContract({ abi: strategyRegistryAbi })
-
-/**
- * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link strategyRegistryAbi}__ and `functionName` set to `"addStrategy"`
- */
-export const useSimulateStrategyRegistryAddStrategy =
-  /*#__PURE__*/ createUseSimulateContract({
-    abi: strategyRegistryAbi,
-    functionName: 'addStrategy',
-  })
-
-/**
- * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link strategyRegistryAbi}__ and `functionName` set to `"pauseStrategy"`
- */
-export const useSimulateStrategyRegistryPauseStrategy =
-  /*#__PURE__*/ createUseSimulateContract({
-    abi: strategyRegistryAbi,
-    functionName: 'pauseStrategy',
-  })
-
-/**
- * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link strategyRegistryAbi}__ and `functionName` set to `"removeStrategy"`
- */
-export const useSimulateStrategyRegistryRemoveStrategy =
-  /*#__PURE__*/ createUseSimulateContract({
-    abi: strategyRegistryAbi,
-    functionName: 'removeStrategy',
-  })
-
-/**
- * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link strategyRegistryAbi}__ and `functionName` set to `"renounceOwnership"`
- */
-export const useSimulateStrategyRegistryRenounceOwnership =
-  /*#__PURE__*/ createUseSimulateContract({
-    abi: strategyRegistryAbi,
-    functionName: 'renounceOwnership',
-  })
-
-/**
- * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link strategyRegistryAbi}__ and `functionName` set to `"transferOwnership"`
- */
-export const useSimulateStrategyRegistryTransferOwnership =
-  /*#__PURE__*/ createUseSimulateContract({
-    abi: strategyRegistryAbi,
-    functionName: 'transferOwnership',
-  })
-
-/**
- * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link strategyRegistryAbi}__
- */
-export const useWatchStrategyRegistryEvent =
-  /*#__PURE__*/ createUseWatchContractEvent({ abi: strategyRegistryAbi })
-
-/**
- * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link strategyRegistryAbi}__ and `eventName` set to `"OwnershipTransferred"`
- */
-export const useWatchStrategyRegistryOwnershipTransferredEvent =
-  /*#__PURE__*/ createUseWatchContractEvent({
-    abi: strategyRegistryAbi,
-    eventName: 'OwnershipTransferred',
-  })
-
-/**
- * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link strategyRegistryAbi}__ and `eventName` set to `"StrategyAdded"`
- */
-export const useWatchStrategyRegistryStrategyAddedEvent =
-  /*#__PURE__*/ createUseWatchContractEvent({
-    abi: strategyRegistryAbi,
-    eventName: 'StrategyAdded',
-  })
-
-/**
- * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link strategyRegistryAbi}__ and `eventName` set to `"StrategyPaused"`
- */
-export const useWatchStrategyRegistryStrategyPausedEvent =
-  /*#__PURE__*/ createUseWatchContractEvent({
-    abi: strategyRegistryAbi,
-    eventName: 'StrategyPaused',
-  })
-
-/**
- * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link strategyRegistryAbi}__ and `eventName` set to `"StrategyRemoved"`
- */
-export const useWatchStrategyRegistryStrategyRemovedEvent =
-  /*#__PURE__*/ createUseWatchContractEvent({
-    abi: strategyRegistryAbi,
-    eventName: 'StrategyRemoved',
-  })
-
-/**
- * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link strategyRegistryAbi}__ and `eventName` set to `"StrategyUnpaused"`
- */
-export const useWatchStrategyRegistryStrategyUnpausedEvent =
-  /*#__PURE__*/ createUseWatchContractEvent({
-    abi: strategyRegistryAbi,
-    eventName: 'StrategyUnpaused',
-  })
-
-/**
- * Wraps __{@link useReadContract}__ with `abi` set to __{@link yieldGekoRouterAbi}__
- */
-export const useReadYieldGekoRouter = /*#__PURE__*/ createUseReadContract({
-  abi: yieldGekoRouterAbi,
-})
-
-/**
- * Wraps __{@link useReadContract}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `functionName` set to `"INTENT_TYPEHASH"`
- */
-export const useReadYieldGekoRouterIntentTypehash =
-  /*#__PURE__*/ createUseReadContract({
-    abi: yieldGekoRouterAbi,
-    functionName: 'INTENT_TYPEHASH',
-  })
-
-/**
- * Wraps __{@link useReadContract}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `functionName` set to `"MIGRATION_FEE_BPS"`
- */
-export const useReadYieldGekoRouterMigrationFeeBps =
-  /*#__PURE__*/ createUseReadContract({
-    abi: yieldGekoRouterAbi,
-    functionName: 'MIGRATION_FEE_BPS',
-  })
-
-/**
- * Wraps __{@link useReadContract}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `functionName` set to `"SUCCESS_FEE_BPS"`
- */
-export const useReadYieldGekoRouterSuccessFeeBps =
-  /*#__PURE__*/ createUseReadContract({
-    abi: yieldGekoRouterAbi,
-    functionName: 'SUCCESS_FEE_BPS',
-  })
-
-/**
- * Wraps __{@link useReadContract}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `functionName` set to `"authorizedAgent"`
- */
-export const useReadYieldGekoRouterAuthorizedAgent =
-  /*#__PURE__*/ createUseReadContract({
-    abi: yieldGekoRouterAbi,
+    abi: yieldGekoAbi,
     functionName: 'authorizedAgent',
   })
 
 /**
- * Wraps __{@link useReadContract}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `functionName` set to `"domainSeparator"`
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"balances"`
  */
-export const useReadYieldGekoRouterDomainSeparator =
+export const useReadYieldGekoBalances = /*#__PURE__*/ createUseReadContract({
+  abi: yieldGekoAbi,
+  functionName: 'balances',
+})
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"defaultFeeBps"`
+ */
+export const useReadYieldGekoDefaultFeeBps =
   /*#__PURE__*/ createUseReadContract({
-    abi: yieldGekoRouterAbi,
+    abi: yieldGekoAbi,
+    functionName: 'defaultFeeBps',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"deployed"`
+ */
+export const useReadYieldGekoDeployed = /*#__PURE__*/ createUseReadContract({
+  abi: yieldGekoAbi,
+  functionName: 'deployed',
+})
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"domainSeparator"`
+ */
+export const useReadYieldGekoDomainSeparator =
+  /*#__PURE__*/ createUseReadContract({
+    abi: yieldGekoAbi,
     functionName: 'domainSeparator',
   })
 
 /**
- * Wraps __{@link useReadContract}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `functionName` set to `"eip712Domain"`
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"eip712Domain"`
  */
-export const useReadYieldGekoRouterEip712Domain =
-  /*#__PURE__*/ createUseReadContract({
-    abi: yieldGekoRouterAbi,
-    functionName: 'eip712Domain',
-  })
-
-/**
- * Wraps __{@link useReadContract}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `functionName` set to `"nonces"`
- */
-export const useReadYieldGekoRouterNonces = /*#__PURE__*/ createUseReadContract(
-  { abi: yieldGekoRouterAbi, functionName: 'nonces' },
+export const useReadYieldGekoEip712Domain = /*#__PURE__*/ createUseReadContract(
+  { abi: yieldGekoAbi, functionName: 'eip712Domain' },
 )
 
 /**
- * Wraps __{@link useReadContract}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `functionName` set to `"owner"`
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"emergencyMode"`
  */
-export const useReadYieldGekoRouterOwner = /*#__PURE__*/ createUseReadContract({
-  abi: yieldGekoRouterAbi,
+export const useReadYieldGekoEmergencyMode =
+  /*#__PURE__*/ createUseReadContract({
+    abi: yieldGekoAbi,
+    functionName: 'emergencyMode',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"getExecutionCount"`
+ */
+export const useReadYieldGekoGetExecutionCount =
+  /*#__PURE__*/ createUseReadContract({
+    abi: yieldGekoAbi,
+    functionName: 'getExecutionCount',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"getExecutions"`
+ */
+export const useReadYieldGekoGetExecutions =
+  /*#__PURE__*/ createUseReadContract({
+    abi: yieldGekoAbi,
+    functionName: 'getExecutions',
+  })
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"nonces"`
+ */
+export const useReadYieldGekoNonces = /*#__PURE__*/ createUseReadContract({
+  abi: yieldGekoAbi,
+  functionName: 'nonces',
+})
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"owner"`
+ */
+export const useReadYieldGekoOwner = /*#__PURE__*/ createUseReadContract({
+  abi: yieldGekoAbi,
   functionName: 'owner',
 })
 
 /**
- * Wraps __{@link useReadContract}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `functionName` set to `"paused"`
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"paused"`
  */
-export const useReadYieldGekoRouterPaused = /*#__PURE__*/ createUseReadContract(
-  { abi: yieldGekoRouterAbi, functionName: 'paused' },
-)
-
-/**
- * Wraps __{@link useReadContract}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `functionName` set to `"registry"`
- */
-export const useReadYieldGekoRouterRegistry =
-  /*#__PURE__*/ createUseReadContract({
-    abi: yieldGekoRouterAbi,
-    functionName: 'registry',
-  })
-
-/**
- * Wraps __{@link useReadContract}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `functionName` set to `"strategyPositions"`
- */
-export const useReadYieldGekoRouterStrategyPositions =
-  /*#__PURE__*/ createUseReadContract({
-    abi: yieldGekoRouterAbi,
-    functionName: 'strategyPositions',
-  })
-
-/**
- * Wraps __{@link useReadContract}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `functionName` set to `"treasury"`
- */
-export const useReadYieldGekoRouterTreasury =
-  /*#__PURE__*/ createUseReadContract({
-    abi: yieldGekoRouterAbi,
-    functionName: 'treasury',
-  })
-
-/**
- * Wraps __{@link useReadContract}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `functionName` set to `"userBalances"`
- */
-export const useReadYieldGekoRouterUserBalances =
-  /*#__PURE__*/ createUseReadContract({
-    abi: yieldGekoRouterAbi,
-    functionName: 'userBalances',
-  })
-
-/**
- * Wraps __{@link useWriteContract}__ with `abi` set to __{@link yieldGekoRouterAbi}__
- */
-export const useWriteYieldGekoRouter = /*#__PURE__*/ createUseWriteContract({
-  abi: yieldGekoRouterAbi,
+export const useReadYieldGekoPaused = /*#__PURE__*/ createUseReadContract({
+  abi: yieldGekoAbi,
+  functionName: 'paused',
 })
 
 /**
- * Wraps __{@link useWriteContract}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `functionName` set to `"deposit"`
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"peakValues"`
  */
-export const useWriteYieldGekoRouterDeposit =
-  /*#__PURE__*/ createUseWriteContract({
-    abi: yieldGekoRouterAbi,
-    functionName: 'deposit',
+export const useReadYieldGekoPeakValues = /*#__PURE__*/ createUseReadContract({
+  abi: yieldGekoAbi,
+  functionName: 'peakValues',
+})
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"pendingOwner"`
+ */
+export const useReadYieldGekoPendingOwner = /*#__PURE__*/ createUseReadContract(
+  { abi: yieldGekoAbi, functionName: 'pendingOwner' },
+)
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"policies"`
+ */
+export const useReadYieldGekoPolicies = /*#__PURE__*/ createUseReadContract({
+  abi: yieldGekoAbi,
+  functionName: 'policies',
+})
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"protectedAsset"`
+ */
+export const useReadYieldGekoProtectedAsset =
+  /*#__PURE__*/ createUseReadContract({
+    abi: yieldGekoAbi,
+    functionName: 'protectedAsset',
   })
 
 /**
- * Wraps __{@link useWriteContract}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `functionName` set to `"executeBatchMigration"`
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"totalFunds"`
  */
-export const useWriteYieldGekoRouterExecuteBatchMigration =
-  /*#__PURE__*/ createUseWriteContract({
-    abi: yieldGekoRouterAbi,
-    functionName: 'executeBatchMigration',
+export const useReadYieldGekoTotalFunds = /*#__PURE__*/ createUseReadContract({
+  abi: yieldGekoAbi,
+  functionName: 'totalFunds',
+})
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"trackedSpenderAsset"`
+ */
+export const useReadYieldGekoTrackedSpenderAsset =
+  /*#__PURE__*/ createUseReadContract({
+    abi: yieldGekoAbi,
+    functionName: 'trackedSpenderAsset',
   })
 
 /**
- * Wraps __{@link useWriteContract}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `functionName` set to `"executeMigration"`
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"treasury"`
  */
-export const useWriteYieldGekoRouterExecuteMigration =
+export const useReadYieldGekoTreasury = /*#__PURE__*/ createUseReadContract({
+  abi: yieldGekoAbi,
+  functionName: 'treasury',
+})
+
+/**
+ * Wraps __{@link useReadContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"userPaused"`
+ */
+export const useReadYieldGekoUserPaused = /*#__PURE__*/ createUseReadContract({
+  abi: yieldGekoAbi,
+  functionName: 'userPaused',
+})
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link yieldGekoAbi}__
+ */
+export const useWriteYieldGeko = /*#__PURE__*/ createUseWriteContract({
+  abi: yieldGekoAbi,
+})
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"acceptOwnership"`
+ */
+export const useWriteYieldGekoAcceptOwnership =
   /*#__PURE__*/ createUseWriteContract({
-    abi: yieldGekoRouterAbi,
-    functionName: 'executeMigration',
+    abi: yieldGekoAbi,
+    functionName: 'acceptOwnership',
   })
 
 /**
- * Wraps __{@link useWriteContract}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `functionName` set to `"executeMigrationExternal"`
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"approveTarget"`
  */
-export const useWriteYieldGekoRouterExecuteMigrationExternal =
+export const useWriteYieldGekoApproveTarget =
   /*#__PURE__*/ createUseWriteContract({
-    abi: yieldGekoRouterAbi,
-    functionName: 'executeMigrationExternal',
+    abi: yieldGekoAbi,
+    functionName: 'approveTarget',
   })
 
 /**
- * Wraps __{@link useWriteContract}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `functionName` set to `"pause"`
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"approveToken"`
  */
-export const useWriteYieldGekoRouterPause =
+export const useWriteYieldGekoApproveToken =
   /*#__PURE__*/ createUseWriteContract({
-    abi: yieldGekoRouterAbi,
-    functionName: 'pause',
+    abi: yieldGekoAbi,
+    functionName: 'approveToken',
   })
 
 /**
- * Wraps __{@link useWriteContract}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `functionName` set to `"renounceOwnership"`
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"collectFee"`
  */
-export const useWriteYieldGekoRouterRenounceOwnership =
+export const useWriteYieldGekoCollectFee = /*#__PURE__*/ createUseWriteContract(
+  { abi: yieldGekoAbi, functionName: 'collectFee' },
+)
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"deposit"`
+ */
+export const useWriteYieldGekoDeposit = /*#__PURE__*/ createUseWriteContract({
+  abi: yieldGekoAbi,
+  functionName: 'deposit',
+})
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"emergencyWithdraw"`
+ */
+export const useWriteYieldGekoEmergencyWithdraw =
   /*#__PURE__*/ createUseWriteContract({
-    abi: yieldGekoRouterAbi,
+    abi: yieldGekoAbi,
+    functionName: 'emergencyWithdraw',
+  })
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"execute"`
+ */
+export const useWriteYieldGekoExecute = /*#__PURE__*/ createUseWriteContract({
+  abi: yieldGekoAbi,
+  functionName: 'execute',
+})
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"executeBatch"`
+ */
+export const useWriteYieldGekoExecuteBatch =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: yieldGekoAbi,
+    functionName: 'executeBatch',
+  })
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"executeBatchMulti"`
+ */
+export const useWriteYieldGekoExecuteBatchMulti =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: yieldGekoAbi,
+    functionName: 'executeBatchMulti',
+  })
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"executeDeposit"`
+ */
+export const useWriteYieldGekoExecuteDeposit =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: yieldGekoAbi,
+    functionName: 'executeDeposit',
+  })
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"executeWithdraw"`
+ */
+export const useWriteYieldGekoExecuteWithdraw =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: yieldGekoAbi,
+    functionName: 'executeWithdraw',
+  })
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"executeWithdrawMulti"`
+ */
+export const useWriteYieldGekoExecuteWithdrawMulti =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: yieldGekoAbi,
+    functionName: 'executeWithdrawMulti',
+  })
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"pause"`
+ */
+export const useWriteYieldGekoPause = /*#__PURE__*/ createUseWriteContract({
+  abi: yieldGekoAbi,
+  functionName: 'pause',
+})
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"recordExecution"`
+ */
+export const useWriteYieldGekoRecordExecution =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: yieldGekoAbi,
+    functionName: 'recordExecution',
+  })
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"registerPolicy"`
+ */
+export const useWriteYieldGekoRegisterPolicy =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: yieldGekoAbi,
+    functionName: 'registerPolicy',
+  })
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"renounceOwnership"`
+ */
+export const useWriteYieldGekoRenounceOwnership =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: yieldGekoAbi,
     functionName: 'renounceOwnership',
   })
 
 /**
- * Wraps __{@link useWriteContract}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `functionName` set to `"setAuthorizedAgent"`
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"reportValue"`
  */
-export const useWriteYieldGekoRouterSetAuthorizedAgent =
+export const useWriteYieldGekoReportValue =
   /*#__PURE__*/ createUseWriteContract({
-    abi: yieldGekoRouterAbi,
-    functionName: 'setAuthorizedAgent',
+    abi: yieldGekoAbi,
+    functionName: 'reportValue',
   })
 
 /**
- * Wraps __{@link useWriteContract}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `functionName` set to `"setTreasury"`
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"resumeUser"`
  */
-export const useWriteYieldGekoRouterSetTreasury =
+export const useWriteYieldGekoResumeUser = /*#__PURE__*/ createUseWriteContract(
+  { abi: yieldGekoAbi, functionName: 'resumeUser' },
+)
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"revokePolicy"`
+ */
+export const useWriteYieldGekoRevokePolicy =
   /*#__PURE__*/ createUseWriteContract({
-    abi: yieldGekoRouterAbi,
+    abi: yieldGekoAbi,
+    functionName: 'revokePolicy',
+  })
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"revokeTarget"`
+ */
+export const useWriteYieldGekoRevokeTarget =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: yieldGekoAbi,
+    functionName: 'revokeTarget',
+  })
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"setAgent"`
+ */
+export const useWriteYieldGekoSetAgent = /*#__PURE__*/ createUseWriteContract({
+  abi: yieldGekoAbi,
+  functionName: 'setAgent',
+})
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"setDefaultFeeBps"`
+ */
+export const useWriteYieldGekoSetDefaultFeeBps =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: yieldGekoAbi,
+    functionName: 'setDefaultFeeBps',
+  })
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"setEmergencyMode"`
+ */
+export const useWriteYieldGekoSetEmergencyMode =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: yieldGekoAbi,
+    functionName: 'setEmergencyMode',
+  })
+
+/**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"setTreasury"`
+ */
+export const useWriteYieldGekoSetTreasury =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: yieldGekoAbi,
     functionName: 'setTreasury',
   })
 
 /**
- * Wraps __{@link useWriteContract}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `functionName` set to `"transferOwnership"`
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"transferOwnership"`
  */
-export const useWriteYieldGekoRouterTransferOwnership =
+export const useWriteYieldGekoTransferOwnership =
   /*#__PURE__*/ createUseWriteContract({
-    abi: yieldGekoRouterAbi,
+    abi: yieldGekoAbi,
     functionName: 'transferOwnership',
   })
 
 /**
- * Wraps __{@link useWriteContract}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `functionName` set to `"unpause"`
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"unpause"`
  */
-export const useWriteYieldGekoRouterUnpause =
-  /*#__PURE__*/ createUseWriteContract({
-    abi: yieldGekoRouterAbi,
-    functionName: 'unpause',
-  })
+export const useWriteYieldGekoUnpause = /*#__PURE__*/ createUseWriteContract({
+  abi: yieldGekoAbi,
+  functionName: 'unpause',
+})
 
 /**
- * Wraps __{@link useWriteContract}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `functionName` set to `"withdraw"`
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"vaultSetup"`
  */
-export const useWriteYieldGekoRouterWithdraw =
-  /*#__PURE__*/ createUseWriteContract({
-    abi: yieldGekoRouterAbi,
-    functionName: 'withdraw',
-  })
+export const useWriteYieldGekoVaultSetup = /*#__PURE__*/ createUseWriteContract(
+  { abi: yieldGekoAbi, functionName: 'vaultSetup' },
+)
 
 /**
- * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link yieldGekoRouterAbi}__
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"withdraw"`
  */
-export const useSimulateYieldGekoRouter =
-  /*#__PURE__*/ createUseSimulateContract({ abi: yieldGekoRouterAbi })
+export const useWriteYieldGekoWithdraw = /*#__PURE__*/ createUseWriteContract({
+  abi: yieldGekoAbi,
+  functionName: 'withdraw',
+})
 
 /**
- * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `functionName` set to `"deposit"`
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link yieldGekoAbi}__
  */
-export const useSimulateYieldGekoRouterDeposit =
+export const useSimulateYieldGeko = /*#__PURE__*/ createUseSimulateContract({
+  abi: yieldGekoAbi,
+})
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"acceptOwnership"`
+ */
+export const useSimulateYieldGekoAcceptOwnership =
   /*#__PURE__*/ createUseSimulateContract({
-    abi: yieldGekoRouterAbi,
+    abi: yieldGekoAbi,
+    functionName: 'acceptOwnership',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"approveTarget"`
+ */
+export const useSimulateYieldGekoApproveTarget =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: yieldGekoAbi,
+    functionName: 'approveTarget',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"approveToken"`
+ */
+export const useSimulateYieldGekoApproveToken =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: yieldGekoAbi,
+    functionName: 'approveToken',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"collectFee"`
+ */
+export const useSimulateYieldGekoCollectFee =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: yieldGekoAbi,
+    functionName: 'collectFee',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"deposit"`
+ */
+export const useSimulateYieldGekoDeposit =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: yieldGekoAbi,
     functionName: 'deposit',
   })
 
 /**
- * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `functionName` set to `"executeBatchMigration"`
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"emergencyWithdraw"`
  */
-export const useSimulateYieldGekoRouterExecuteBatchMigration =
+export const useSimulateYieldGekoEmergencyWithdraw =
   /*#__PURE__*/ createUseSimulateContract({
-    abi: yieldGekoRouterAbi,
-    functionName: 'executeBatchMigration',
+    abi: yieldGekoAbi,
+    functionName: 'emergencyWithdraw',
   })
 
 /**
- * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `functionName` set to `"executeMigration"`
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"execute"`
  */
-export const useSimulateYieldGekoRouterExecuteMigration =
+export const useSimulateYieldGekoExecute =
   /*#__PURE__*/ createUseSimulateContract({
-    abi: yieldGekoRouterAbi,
-    functionName: 'executeMigration',
+    abi: yieldGekoAbi,
+    functionName: 'execute',
   })
 
 /**
- * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `functionName` set to `"executeMigrationExternal"`
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"executeBatch"`
  */
-export const useSimulateYieldGekoRouterExecuteMigrationExternal =
+export const useSimulateYieldGekoExecuteBatch =
   /*#__PURE__*/ createUseSimulateContract({
-    abi: yieldGekoRouterAbi,
-    functionName: 'executeMigrationExternal',
+    abi: yieldGekoAbi,
+    functionName: 'executeBatch',
   })
 
 /**
- * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `functionName` set to `"pause"`
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"executeBatchMulti"`
  */
-export const useSimulateYieldGekoRouterPause =
+export const useSimulateYieldGekoExecuteBatchMulti =
   /*#__PURE__*/ createUseSimulateContract({
-    abi: yieldGekoRouterAbi,
+    abi: yieldGekoAbi,
+    functionName: 'executeBatchMulti',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"executeDeposit"`
+ */
+export const useSimulateYieldGekoExecuteDeposit =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: yieldGekoAbi,
+    functionName: 'executeDeposit',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"executeWithdraw"`
+ */
+export const useSimulateYieldGekoExecuteWithdraw =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: yieldGekoAbi,
+    functionName: 'executeWithdraw',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"executeWithdrawMulti"`
+ */
+export const useSimulateYieldGekoExecuteWithdrawMulti =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: yieldGekoAbi,
+    functionName: 'executeWithdrawMulti',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"pause"`
+ */
+export const useSimulateYieldGekoPause =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: yieldGekoAbi,
     functionName: 'pause',
   })
 
 /**
- * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `functionName` set to `"renounceOwnership"`
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"recordExecution"`
  */
-export const useSimulateYieldGekoRouterRenounceOwnership =
+export const useSimulateYieldGekoRecordExecution =
   /*#__PURE__*/ createUseSimulateContract({
-    abi: yieldGekoRouterAbi,
+    abi: yieldGekoAbi,
+    functionName: 'recordExecution',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"registerPolicy"`
+ */
+export const useSimulateYieldGekoRegisterPolicy =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: yieldGekoAbi,
+    functionName: 'registerPolicy',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"renounceOwnership"`
+ */
+export const useSimulateYieldGekoRenounceOwnership =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: yieldGekoAbi,
     functionName: 'renounceOwnership',
   })
 
 /**
- * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `functionName` set to `"setAuthorizedAgent"`
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"reportValue"`
  */
-export const useSimulateYieldGekoRouterSetAuthorizedAgent =
+export const useSimulateYieldGekoReportValue =
   /*#__PURE__*/ createUseSimulateContract({
-    abi: yieldGekoRouterAbi,
-    functionName: 'setAuthorizedAgent',
+    abi: yieldGekoAbi,
+    functionName: 'reportValue',
   })
 
 /**
- * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `functionName` set to `"setTreasury"`
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"resumeUser"`
  */
-export const useSimulateYieldGekoRouterSetTreasury =
+export const useSimulateYieldGekoResumeUser =
   /*#__PURE__*/ createUseSimulateContract({
-    abi: yieldGekoRouterAbi,
+    abi: yieldGekoAbi,
+    functionName: 'resumeUser',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"revokePolicy"`
+ */
+export const useSimulateYieldGekoRevokePolicy =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: yieldGekoAbi,
+    functionName: 'revokePolicy',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"revokeTarget"`
+ */
+export const useSimulateYieldGekoRevokeTarget =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: yieldGekoAbi,
+    functionName: 'revokeTarget',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"setAgent"`
+ */
+export const useSimulateYieldGekoSetAgent =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: yieldGekoAbi,
+    functionName: 'setAgent',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"setDefaultFeeBps"`
+ */
+export const useSimulateYieldGekoSetDefaultFeeBps =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: yieldGekoAbi,
+    functionName: 'setDefaultFeeBps',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"setEmergencyMode"`
+ */
+export const useSimulateYieldGekoSetEmergencyMode =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: yieldGekoAbi,
+    functionName: 'setEmergencyMode',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"setTreasury"`
+ */
+export const useSimulateYieldGekoSetTreasury =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: yieldGekoAbi,
     functionName: 'setTreasury',
   })
 
 /**
- * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `functionName` set to `"transferOwnership"`
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"transferOwnership"`
  */
-export const useSimulateYieldGekoRouterTransferOwnership =
+export const useSimulateYieldGekoTransferOwnership =
   /*#__PURE__*/ createUseSimulateContract({
-    abi: yieldGekoRouterAbi,
+    abi: yieldGekoAbi,
     functionName: 'transferOwnership',
   })
 
 /**
- * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `functionName` set to `"unpause"`
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"unpause"`
  */
-export const useSimulateYieldGekoRouterUnpause =
+export const useSimulateYieldGekoUnpause =
   /*#__PURE__*/ createUseSimulateContract({
-    abi: yieldGekoRouterAbi,
+    abi: yieldGekoAbi,
     functionName: 'unpause',
   })
 
 /**
- * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `functionName` set to `"withdraw"`
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"vaultSetup"`
  */
-export const useSimulateYieldGekoRouterWithdraw =
+export const useSimulateYieldGekoVaultSetup =
   /*#__PURE__*/ createUseSimulateContract({
-    abi: yieldGekoRouterAbi,
+    abi: yieldGekoAbi,
+    functionName: 'vaultSetup',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"withdraw"`
+ */
+export const useSimulateYieldGekoWithdraw =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: yieldGekoAbi,
     functionName: 'withdraw',
   })
 
 /**
- * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link yieldGekoRouterAbi}__
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link yieldGekoAbi}__
  */
-export const useWatchYieldGekoRouterEvent =
-  /*#__PURE__*/ createUseWatchContractEvent({ abi: yieldGekoRouterAbi })
+export const useWatchYieldGekoEvent = /*#__PURE__*/ createUseWatchContractEvent(
+  { abi: yieldGekoAbi },
+)
 
 /**
- * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `eventName` set to `"AgentUpdated"`
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link yieldGekoAbi}__ and `eventName` set to `"ActionExecuted"`
  */
-export const useWatchYieldGekoRouterAgentUpdatedEvent =
+export const useWatchYieldGekoActionExecutedEvent =
   /*#__PURE__*/ createUseWatchContractEvent({
-    abi: yieldGekoRouterAbi,
+    abi: yieldGekoAbi,
+    eventName: 'ActionExecuted',
+  })
+
+/**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link yieldGekoAbi}__ and `eventName` set to `"AgentUpdated"`
+ */
+export const useWatchYieldGekoAgentUpdatedEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({
+    abi: yieldGekoAbi,
     eventName: 'AgentUpdated',
   })
 
 /**
- * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `eventName` set to `"Deposited"`
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link yieldGekoAbi}__ and `eventName` set to `"BatchExecuted"`
  */
-export const useWatchYieldGekoRouterDepositedEvent =
+export const useWatchYieldGekoBatchExecutedEvent =
   /*#__PURE__*/ createUseWatchContractEvent({
-    abi: yieldGekoRouterAbi,
+    abi: yieldGekoAbi,
+    eventName: 'BatchExecuted',
+  })
+
+/**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link yieldGekoAbi}__ and `eventName` set to `"Deposited"`
+ */
+export const useWatchYieldGekoDepositedEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({
+    abi: yieldGekoAbi,
     eventName: 'Deposited',
   })
 
 /**
- * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `eventName` set to `"EIP712DomainChanged"`
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link yieldGekoAbi}__ and `eventName` set to `"EIP712DomainChanged"`
  */
-export const useWatchYieldGekoRouterEip712DomainChangedEvent =
+export const useWatchYieldGekoEip712DomainChangedEvent =
   /*#__PURE__*/ createUseWatchContractEvent({
-    abi: yieldGekoRouterAbi,
+    abi: yieldGekoAbi,
     eventName: 'EIP712DomainChanged',
   })
 
 /**
- * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `eventName` set to `"FeeSettled"`
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link yieldGekoAbi}__ and `eventName` set to `"EmergencyModeSet"`
  */
-export const useWatchYieldGekoRouterFeeSettledEvent =
+export const useWatchYieldGekoEmergencyModeSetEvent =
   /*#__PURE__*/ createUseWatchContractEvent({
-    abi: yieldGekoRouterAbi,
-    eventName: 'FeeSettled',
+    abi: yieldGekoAbi,
+    eventName: 'EmergencyModeSet',
   })
 
 /**
- * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `eventName` set to `"MigrationExecuted"`
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link yieldGekoAbi}__ and `eventName` set to `"ExecutionRecorded"`
  */
-export const useWatchYieldGekoRouterMigrationExecutedEvent =
+export const useWatchYieldGekoExecutionRecordedEvent =
   /*#__PURE__*/ createUseWatchContractEvent({
-    abi: yieldGekoRouterAbi,
-    eventName: 'MigrationExecuted',
+    abi: yieldGekoAbi,
+    eventName: 'ExecutionRecorded',
   })
 
 /**
- * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `eventName` set to `"MigrationFailed"`
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link yieldGekoAbi}__ and `eventName` set to `"FeeCollected"`
  */
-export const useWatchYieldGekoRouterMigrationFailedEvent =
+export const useWatchYieldGekoFeeCollectedEvent =
   /*#__PURE__*/ createUseWatchContractEvent({
-    abi: yieldGekoRouterAbi,
-    eventName: 'MigrationFailed',
+    abi: yieldGekoAbi,
+    eventName: 'FeeCollected',
   })
 
 /**
- * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `eventName` set to `"OwnershipTransferred"`
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link yieldGekoAbi}__ and `eventName` set to `"FundsDeployed"`
  */
-export const useWatchYieldGekoRouterOwnershipTransferredEvent =
+export const useWatchYieldGekoFundsDeployedEvent =
   /*#__PURE__*/ createUseWatchContractEvent({
-    abi: yieldGekoRouterAbi,
+    abi: yieldGekoAbi,
+    eventName: 'FundsDeployed',
+  })
+
+/**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link yieldGekoAbi}__ and `eventName` set to `"FundsReturned"`
+ */
+export const useWatchYieldGekoFundsReturnedEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({
+    abi: yieldGekoAbi,
+    eventName: 'FundsReturned',
+  })
+
+/**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link yieldGekoAbi}__ and `eventName` set to `"OwnershipTransferStarted"`
+ */
+export const useWatchYieldGekoOwnershipTransferStartedEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({
+    abi: yieldGekoAbi,
+    eventName: 'OwnershipTransferStarted',
+  })
+
+/**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link yieldGekoAbi}__ and `eventName` set to `"OwnershipTransferred"`
+ */
+export const useWatchYieldGekoOwnershipTransferredEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({
+    abi: yieldGekoAbi,
     eventName: 'OwnershipTransferred',
   })
 
 /**
- * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `eventName` set to `"Paused"`
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link yieldGekoAbi}__ and `eventName` set to `"Paused"`
  */
-export const useWatchYieldGekoRouterPausedEvent =
+export const useWatchYieldGekoPausedEvent =
   /*#__PURE__*/ createUseWatchContractEvent({
-    abi: yieldGekoRouterAbi,
+    abi: yieldGekoAbi,
     eventName: 'Paused',
   })
 
 /**
- * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `eventName` set to `"StrategyPositionUpdated"`
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link yieldGekoAbi}__ and `eventName` set to `"PolicyRegistered"`
  */
-export const useWatchYieldGekoRouterStrategyPositionUpdatedEvent =
+export const useWatchYieldGekoPolicyRegisteredEvent =
   /*#__PURE__*/ createUseWatchContractEvent({
-    abi: yieldGekoRouterAbi,
-    eventName: 'StrategyPositionUpdated',
+    abi: yieldGekoAbi,
+    eventName: 'PolicyRegistered',
   })
 
 /**
- * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `eventName` set to `"TreasuryUpdated"`
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link yieldGekoAbi}__ and `eventName` set to `"PolicyRevoked"`
  */
-export const useWatchYieldGekoRouterTreasuryUpdatedEvent =
+export const useWatchYieldGekoPolicyRevokedEvent =
   /*#__PURE__*/ createUseWatchContractEvent({
-    abi: yieldGekoRouterAbi,
+    abi: yieldGekoAbi,
+    eventName: 'PolicyRevoked',
+  })
+
+/**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link yieldGekoAbi}__ and `eventName` set to `"TargetApproved"`
+ */
+export const useWatchYieldGekoTargetApprovedEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({
+    abi: yieldGekoAbi,
+    eventName: 'TargetApproved',
+  })
+
+/**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link yieldGekoAbi}__ and `eventName` set to `"TargetRevoked"`
+ */
+export const useWatchYieldGekoTargetRevokedEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({
+    abi: yieldGekoAbi,
+    eventName: 'TargetRevoked',
+  })
+
+/**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link yieldGekoAbi}__ and `eventName` set to `"TreasuryUpdated"`
+ */
+export const useWatchYieldGekoTreasuryUpdatedEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({
+    abi: yieldGekoAbi,
     eventName: 'TreasuryUpdated',
   })
 
 /**
- * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `eventName` set to `"Unpaused"`
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link yieldGekoAbi}__ and `eventName` set to `"Unpaused"`
  */
-export const useWatchYieldGekoRouterUnpausedEvent =
+export const useWatchYieldGekoUnpausedEvent =
   /*#__PURE__*/ createUseWatchContractEvent({
-    abi: yieldGekoRouterAbi,
+    abi: yieldGekoAbi,
     eventName: 'Unpaused',
   })
 
 /**
- * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link yieldGekoRouterAbi}__ and `eventName` set to `"Withdrawn"`
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link yieldGekoAbi}__ and `eventName` set to `"UserAutoPaused"`
  */
-export const useWatchYieldGekoRouterWithdrawnEvent =
+export const useWatchYieldGekoUserAutoPausedEvent =
   /*#__PURE__*/ createUseWatchContractEvent({
-    abi: yieldGekoRouterAbi,
+    abi: yieldGekoAbi,
+    eventName: 'UserAutoPaused',
+  })
+
+/**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link yieldGekoAbi}__ and `eventName` set to `"UserResumed"`
+ */
+export const useWatchYieldGekoUserResumedEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({
+    abi: yieldGekoAbi,
+    eventName: 'UserResumed',
+  })
+
+/**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link yieldGekoAbi}__ and `eventName` set to `"ValueReported"`
+ */
+export const useWatchYieldGekoValueReportedEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({
+    abi: yieldGekoAbi,
+    eventName: 'ValueReported',
+  })
+
+/**
+ * Wraps __{@link useWatchContractEvent}__ with `abi` set to __{@link yieldGekoAbi}__ and `eventName` set to `"Withdrawn"`
+ */
+export const useWatchYieldGekoWithdrawnEvent =
+  /*#__PURE__*/ createUseWatchContractEvent({
+    abi: yieldGekoAbi,
     eventName: 'Withdrawn',
   })

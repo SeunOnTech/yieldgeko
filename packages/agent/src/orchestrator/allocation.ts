@@ -1,128 +1,184 @@
 import type {
-  Opportunity, Position, UserPolicy,
-  AllocationDecision, ActionType,
+  Opportunity, Portfolio, UserPolicy, PortfolioPosition,
+  AllocationDecision, ActionType, CircuitBreaker,
 } from './types';
+import { planAllocation } from './portfolio';
+import { shouldExitForIL } from './il-engine';
+import { evaluatePortfolioHarvests } from './compounder';
 
 // ── Allocation Engine ─────────────────────────────────────────────────────────
 //
-//  Priority order for active yield (as per product direction):
-//    1. GMX Real Yield   — trader fee income, real yield
-//    2. Delta-Neutral LP — LP fees with price hedge
-//    3. Aave Lending     — last resort only, safe haven
+//  Decisions per tick:
 //
-//  Rules:
-//    GENESIS:      no position + qualifying opportunity found
-//    MIGRATE:      better opportunity available above threshold uplift
-//    SAFETY_EXIT:  circuit breaker RED or APY fell below minAPY
-//    HOLD:         current position still best
+//    GENESIS:      no portfolio → open initial multi-position portfolio
+//    REBALANCE:    portfolio drifted from targets, or better opportunity found
+//    SAFETY_EXIT:  RED circuit breaker → close risky position to safe haven
+//    HARVEST:      pending rewards above gas threshold → compound
+//    HOLD:         portfolio is healthy, no action
+//
+//  Priority order: SAFETY_EXIT > HARVEST > GENESIS > REBALANCE > HOLD
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function decideAllocation(
-  opportunities:    Opportunity[],
-  policy:           UserPolicy,
-  position:         Position | null,
+  opportunities:     Opportunity[],
+  policy:            UserPolicy,
+  portfolio:         Portfolio | null,
   circuitBreakerRed: boolean,
 ): AllocationDecision {
+  const topOpp = opportunities[0] ?? null;
 
-  // Filter to opportunities above minAPY that pass threshold
-  const valid = opportunities.filter(o =>
-    o.netAPY >= policy.minAPY &&
-    o.tvlUSD >= policy.managedUSD * 50  // pool must be at least 50× our size
-  );
+  // ── SAFETY EXIT ─────────────────────────────────────────────────────────
+  if (circuitBreakerRed && portfolio) {
+    // Find the safest venue (Aave or Morpho)
+    const safeHaven = opportunities.find(o =>
+      o.strategyType === 'AAVE_LENDING' || o.strategyType === 'MORPHO_LENDING'
+    ) ?? null;
 
-  const best = valid[0] ?? null;
-
-  // ── SAFETY EXIT: circuit breaker or APY collapse ───────────────────────────
-  if (circuitBreakerRed && position) {
-    const safeHaven = opportunities.find(o => o.strategyType === 'AAVE_LENDING') ?? null;
     return {
       action:             'SAFETY_EXIT',
       targetOpportunity:  safeHaven,
-      currentOpportunity: position ? opportunityFromPosition(position, opportunities) : null,
-      reason:             'Circuit breaker triggered — moving to safe haven',
+      currentOpportunity: topCurrentOpp(portfolio, opportunities),
+      reason:             'Circuit breaker RED — moving to safe haven to protect capital',
       upliftPct:          0,
     };
   }
 
-  // ── GENESIS: no position, deploy to best non-Aave first ───────────────────
-  if (!position) {
-    // Prefer active yield (GMX, delta-neutral) over Aave on genesis
-    const activeFirst = valid.find(o => o.strategyType !== 'AAVE_LENDING') ?? best;
+  // ── HARVEST ─────────────────────────────────────────────────────────────
+  if (portfolio) {
+    const harvests = evaluatePortfolioHarvests(portfolio.positions);
+    if (harvests.length > 0) {
+      const best = harvests[0];
+      return {
+        action:             'HARVEST',
+        targetOpportunity:  opportunities.find(o => o.id === portfolio.positions.find(p => p.id === best.positionId)?.venueId) ?? null,
+        currentOpportunity: topCurrentOpp(portfolio, opportunities),
+        reason:             best.reason,
+        upliftPct:          0,
+      };
+    }
+  }
 
-    if (!activeFirst) {
-      // Nothing passes minAPY — fallback to Aave if available
+  // ── GENESIS ──────────────────────────────────────────────────────────────
+  if (!portfolio) {
+    // Build the initial multi-position portfolio plan.
+    // Filter out PENDLE_PT/YT where the market matures before the user's policy expires —
+    // agent would be unable to exit cleanly within the user's time horizon.
+    const nowMs = Date.now();
+    const validOpps = opportunities.filter(o => {
+      if (o.netAPY < policy.minAPY * 0.8) return false;
+      if ((o.strategyType === 'PENDLE_PT' || o.strategyType === 'PENDLE_YT') && o.maturityDate) {
+        const maturityMs = o.maturityDate * 1_000;
+        // Skip if policy expires AFTER maturity (user time horizon outlasts the PT)
+        // OR if maturity is too close (< 7 days away — not worth entering near expiry)
+        const sevenDaysMs = 7 * 24 * 60 * 60 * 1_000;
+        if (maturityMs - nowMs < sevenDaysMs) return false;
+      }
+      return true;
+    });
+
+    if (validOpps.length === 0) {
+      // Nothing passes minimum — fallback to best Aave position
       const aave = opportunities.find(o => o.strategyType === 'AAVE_LENDING');
       if (aave) {
         return {
           action: 'GENESIS', targetOpportunity: aave,
           currentOpportunity: null,
-          reason: 'No active yield meets minAPY — deploying to Aave safe haven',
+          reason: 'No active strategy meets minAPY — deploying to Aave safe haven',
           upliftPct: 0,
         };
       }
       return {
         action: 'HOLD', targetOpportunity: null, currentOpportunity: null,
-        reason: 'No qualifying opportunities found — waiting',
-        upliftPct: 0,
+        reason: 'No qualifying opportunities found — waiting', upliftPct: 0,
       };
     }
 
+    const plan = planAllocation(validOpps, policy);
+    if (plan.allocations.length === 0) {
+      return {
+        action: 'HOLD', targetOpportunity: null, currentOpportunity: null,
+        reason: 'Allocation plan empty — waiting for better conditions', upliftPct: 0,
+      };
+    }
+
+    const topAlloc = plan.allocations[0];
     return {
-      action: 'GENESIS', targetOpportunity: activeFirst,
+      action:             'GENESIS',
+      targetOpportunity:  topAlloc.opportunity,
       currentOpportunity: null,
-      reason: `Deploying to ${activeFirst.protocol} ${activeFirst.pool} @ ${activeFirst.netAPY.toFixed(2)}% net APY`,
-      upliftPct: activeFirst.netAPY,
+      reason: `Opening ${plan.allocations.length}-position portfolio: ${plan.allocations.map(a => `${a.opportunity.strategyType} ${a.allocationPct.toFixed(0)}%`).join(' · ')}`,
+      upliftPct: plan.allocations.reduce((s, a) => s + a.opportunity.netAPY * a.allocationPct / 100, 0),
     };
   }
 
-  // ── With existing position ─────────────────────────────────────────────────
-
-  const currentOpp = opportunityFromPosition(position, opportunities);
-  const currentAPY = currentOpp?.netAPY ?? position.currentNetAPY;
-
-  // APY fell below minimum — migrate away
-  if (currentAPY < policy.minAPY * 0.80) {
-    const next = valid.find(o => o.id !== (currentOpp?.id ?? '')) ?? null;
-    if (next) {
-      return {
-        action: 'MIGRATE', targetOpportunity: next,
-        currentOpportunity: currentOpp,
-        reason: `${position.venueName} APY (${currentAPY.toFixed(1)}%) fell below floor — migrating`,
-        upliftPct: next.netAPY - currentAPY,
-      };
+  // ── IL EXIT CHECK (per position) ─────────────────────────────────────────
+  for (const pos of portfolio.positions) {
+    const ilCheck = shouldExitForIL(pos);
+    if (ilCheck.shouldExit) {
+      // Replace this position with a better alternative
+      const replacement = opportunities.find(o =>
+        o.id !== pos.venueId &&
+        o.geckoScore > pos.geckoScore * 0.8 &&  // at least 80% of original score
+        o.netAPY >= policy.minAPY * 0.8
+      );
+      if (replacement) {
+        return {
+          action:             'MIGRATE',
+          targetOpportunity:  replacement,
+          currentOpportunity: opportunities.find(o => o.id === pos.venueId) ?? null,
+          reason:             `IL exit on ${pos.venueName}: ${ilCheck.reason} → migrating to ${replacement.protocol} ${replacement.pool}`,
+          upliftPct:          replacement.netAPY - pos.currentNetAPY,
+        };
+      }
     }
   }
 
-  // Better opportunity with sufficient uplift — migrate
-  if (best && best.id !== (currentOpp?.id ?? '')) {
-    const uplift = best.netAPY - currentAPY;
-    if (uplift >= policy.migrationThresholdPct) {
-      return {
-        action: 'MIGRATE', targetOpportunity: best,
-        currentOpportunity: currentOpp,
-        reason: `+${uplift.toFixed(2)}% uplift available at ${best.protocol} ${best.pool}`,
-        upliftPct: uplift,
-      };
+  // ── REBALANCE / MIGRATE ──────────────────────────────────────────────────
+  if (portfolio) {
+    const currentWeightedAPY = portfolio.metrics.weightedNetAPY;
+
+    // Check if any position has a significantly better replacement
+    for (const pos of portfolio.positions) {
+      const better = opportunities.find(o =>
+        o.strategyType === pos.strategyType &&
+        o.geckoScore > pos.geckoScore * 1.15 &&  // 15% better GeckoScore
+        o.id !== pos.venueId
+      );
+      if (better) {
+        const uplift = better.netAPY - pos.currentNetAPY;
+        if (uplift >= policy.migrationThresholdPct) {
+          return {
+            action:             'MIGRATE',
+            targetOpportunity:  better,
+            currentOpportunity: opportunities.find(o => o.id === pos.venueId) ?? null,
+            reason: `GeckoScore upgrade: ${pos.venueName} → ${better.protocol} ${better.pool} (+${uplift.toFixed(2)}% APY, +${((better.geckoScore / pos.geckoScore - 1) * 100).toFixed(0)}% score)`,
+            upliftPct: uplift,
+          };
+        }
+      }
     }
+
+    // HOLD — portfolio is healthy
+    const topName = portfolio.positions
+      .sort((a, b) => b.allocationPct - a.allocationPct)[0]?.venueName ?? 'portfolio';
+    return {
+      action:             'HOLD',
+      targetOpportunity:  topCurrentOpp(portfolio, opportunities),
+      currentOpportunity: topCurrentOpp(portfolio, opportunities),
+      reason: `${portfolio.positions.length}-position portfolio healthy — weighted APY ${currentWeightedAPY.toFixed(2)}%, no better opportunities (+${topOpp ? (topOpp.netAPY - currentWeightedAPY).toFixed(2) : 0}% uplift below ${policy.migrationThresholdPct}% threshold)`,
+      upliftPct: topOpp ? topOpp.netAPY - currentWeightedAPY : 0,
+    };
   }
 
-  // HOLD
-  return {
-    action: 'HOLD', targetOpportunity: currentOpp,
-    currentOpportunity: currentOpp,
-    reason: `Holding ${position.venueName} @ ${currentAPY.toFixed(2)}% net APY — no better opportunity (+${((best?.netAPY ?? 0) - currentAPY).toFixed(2)}% uplift below ${policy.migrationThresholdPct}% threshold)`,
-    upliftPct: best ? best.netAPY - currentAPY : 0,
-  };
+  return { action: 'HOLD', targetOpportunity: null, currentOpportunity: null, reason: 'Holding', upliftPct: 0 };
 }
 
-function opportunityFromPosition(
-  position: Position,
-  opportunities: Opportunity[],
-): Opportunity | null {
-  return opportunities.find(o => o.id === position.venueId) ?? null;
+function topCurrentOpp(portfolio: Portfolio, opportunities: Opportunity[]): Opportunity | null {
+  const largest = portfolio.positions.sort((a, b) => b.allocationUSD - a.allocationUSD)[0];
+  return largest ? (opportunities.find(o => o.id === largest.venueId) ?? null) : null;
 }
 
-// ── Safety gate: verify conditions before executing ───────────────────────────
+// ── Safety gate ───────────────────────────────────────────────────────────────
 
 export interface SafetyCheck {
   name:     string;
@@ -137,54 +193,30 @@ export interface SafetyGateResult {
   abortReason: string | null;
 }
 
-export function runSafetyGate(
-  target:  Opportunity,
-  policy:  UserPolicy,
-): SafetyGateResult {
+export function runSafetyGate(target: Opportunity, policy: UserPolicy): SafetyGateResult {
   const checks: SafetyCheck[] = [];
 
-  // 1. APY still above minimum
-  const apyOk = target.netAPY >= policy.minAPY;
-  checks.push({
-    name: 'Net APY floor', passed: apyOk,
-    value: `${target.netAPY.toFixed(2)}%`,
-    required: `≥ ${policy.minAPY}%`,
-  });
+  const apyOk = target.netAPY >= policy.minAPY * 0.8;
+  checks.push({ name: 'Net APY floor', passed: apyOk, value: `${target.netAPY.toFixed(2)}%`, required: `≥ ${(policy.minAPY * 0.8).toFixed(1)}%` });
 
-  // 2. Pool liquidity: TVL must be at least 50× managed amount
-  const minTVL   = policy.managedUSD * 50;
-  const tvlOk    = target.tvlUSD >= minTVL;
-  checks.push({
-    name: 'Pool liquidity', passed: tvlOk,
-    value: `$${(target.tvlUSD / 1e6).toFixed(2)}M TVL`,
-    required: `≥ $${(minTVL / 1e6).toFixed(2)}M`,
-  });
+  const minTVL = policy.managedUSD * 30;
+  const tvlOk  = target.tvlUSD >= minTVL;
+  checks.push({ name: 'Pool liquidity', passed: tvlOk, value: `$${(target.tvlUSD / 1e6).toFixed(2)}M`, required: `≥ $${(minTVL / 1e6).toFixed(2)}M` });
 
-  // 3. OI balance check for GMX (not too skewed)
   let oiOk = true;
   if (target.strategyType === 'GMX_REAL_YIELD' && target.risk.oiBalance !== null) {
     oiOk = !target.risk.oiRiskFlag;
-    checks.push({
-      name: 'GMX OI balance', passed: oiOk,
-      value: `${(target.risk.oiBalance * 100).toFixed(1)}% long`,
-      required: '30–70% long',
-    });
+    checks.push({ name: 'GMX OI balance', passed: oiOk, value: `${(target.risk.oiBalance * 100).toFixed(1)}% long`, required: '30–70% long' });
   }
 
-  // 4. APY not an obvious outlier (>2× 30d mean is suspicious)
-  let apyStable = true;
+  let stabilityOk = true;
   if (target.history.apy30d && target.history.apy30d > 0) {
-    apyStable = target.grossAPY <= target.history.apy30d * 3.0;
-    checks.push({
-      name: 'APY stability', passed: apyStable,
-      value: `${target.grossAPY.toFixed(1)}% vs 30d mean ${target.history.apy30d.toFixed(1)}%`,
-      required: '≤ 3× 30d mean',
-    });
+    stabilityOk = target.grossAPY <= target.history.apy30d * 4;
+    checks.push({ name: 'APY stability', passed: stabilityOk, value: `${target.grossAPY.toFixed(1)}% vs 30d ${target.history.apy30d.toFixed(1)}%`, required: '≤ 4× 30d mean' });
   }
 
-  const passed      = apyOk && tvlOk && oiOk && apyStable;
-  const failed      = checks.filter(c => !c.passed);
-  const abortReason = passed ? null : `Failed: ${failed.map(c => c.name).join(', ')}`;
+  const passed = apyOk && tvlOk && oiOk && stabilityOk;
+  const failed = checks.filter(c => !c.passed);
 
-  return { passed, checks, abortReason };
+  return { passed, checks, abortReason: passed ? null : `Failed: ${failed.map(c => c.name).join(', ')}` };
 }

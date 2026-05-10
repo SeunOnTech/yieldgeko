@@ -347,7 +347,7 @@ export default function DashboardPage() {
                 working={working}
                 minAPY={minAPY}
                 agentUser={agentUser}
-                onClick={() => router.push(`/strategy/${address}`)}
+                onClick={() => router.push(`/app/strategy/${address}`)}
               />
 
               {/* Quick info card */}
@@ -389,7 +389,7 @@ export default function DashboardPage() {
                 <button
                   className="btn-primary-sm btn-sm"
                   style={{ width:'100%', borderRadius:12, height:44, fontSize:14 }}
-                  onClick={() => router.push(`/strategy/${address}`)}
+                  onClick={() => router.push(`/app/strategy/${address}`)}
                 >
                   View full strategy →
                 </button>

@@ -1380,7 +1380,7 @@ export default function OnboardPage() {
         {screen === 5 && (
           <Screen5Activation
             chain={chain}
-            onView={() => router.push('/dashboard')}
+            onView={() => router.push('/app')}
           />
         )}
       </ScreenStage>

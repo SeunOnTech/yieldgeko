@@ -54,7 +54,7 @@ export function GekoMark({ size = 80, color = '#EA580C' }: { size?: number; colo
 export function AppNav() {
   return (
     <header className="appnav">
-      <Link href="/dashboard" className="appnav-brand">
+      <Link href="/app" className="appnav-brand">
         <Image src="/logo.svg" alt="YieldGeko" width={32} height={32} style={{ borderRadius: 8 }} />
         <span className="appnav-wordmark">YieldGeko</span>
       </Link>

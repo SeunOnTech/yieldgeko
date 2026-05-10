@@ -6,7 +6,7 @@ import { useReadContract, useWriteContract } from 'wagmi'
 import { formatUnits, parseUnits } from 'viem'
 import { VAULT_ADDRESS, USDC_ADDRESS } from '@/config'
 import { yieldGekoAbi } from '@/src/generated'
-import { AppNav, StatusPill, ChainChip, ProtocolMark } from '../../components/ui'
+import { AppNav, StatusPill, ChainChip, ProtocolMark } from '../../../components/ui'
 
 // ── Agent state ───────────────────────────────────────────────────────────────
 
@@ -622,7 +622,7 @@ export default function StrategyPage({ params }: { params: Promise<{ id: string 
           {/* Back nav */}
           <div style={{ padding:'32px 0 0' }}>
             <button
-              onClick={() => router.push('/dashboard')}
+              onClick={() => router.push('/app')}
               style={{
                 background:'none', border:'none', padding:0,
                 fontSize:13, color:'var(--t3)', cursor:'pointer',

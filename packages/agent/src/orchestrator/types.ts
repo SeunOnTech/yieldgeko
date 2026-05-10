@@ -11,10 +11,10 @@ export type StrategyType =
   | 'PENDLE_YT'         // Yield token speculation — advanced tier only
   | 'LEVERAGED_LOOP';   // Borrow-and-redeploy — amplified real yield
 export type Trend     = 'rising' | 'falling' | 'stable' | 'unknown';
-export type Phase     = 'INITIALIZING' | 'SCANNING' | 'ALLOCATED' | 'MONITORING' | 'MIGRATING' | 'SAFETY_EXIT' | 'IDLE';
+export type Phase     = 'INITIALIZING' | 'SCANNING' | 'ALLOCATED' | 'MONITORING' | 'MIGRATING' | 'SAFETY_EXIT' | 'WITHDRAWING' | 'IDLE' | 'PAUSED';
 export type CBStatus  = 'GREEN' | 'YELLOW' | 'RED';
 export type LogLevel  = 'INFO' | 'SUCCESS' | 'WARN' | 'ERROR';
-export type ActionType = 'HOLD' | 'GENESIS' | 'MIGRATE' | 'SAFETY_EXIT' | 'HARVEST' | 'REBALANCE';
+export type ActionType = 'HOLD' | 'GENESIS' | 'MIGRATE' | 'SAFETY_EXIT' | 'HARVEST' | 'REBALANCE' | 'REBALANCE_UNIV3' | 'WITHDRAW';
 export type ILCategory = 'none' | 'low' | 'medium' | 'high';
 
 // ── User Policy ───────────────────────────────────────────────────────────────
@@ -88,6 +88,15 @@ export interface Opportunity {
   // For leveraged strategies
   borrowRateAPY?:  number;
   healthFactor?:   number;
+  // LVR screener results — set for DELTA_NEUTRAL from uniV3Screener (not from DeFiLlama)
+  lvrOptimalRangePct?: number;    // ±r% where net APY is maximised
+  lvrConcentrationC?:  number;    // C factor at that range
+  lvrCAvg?:            number;    // pool-average concentration (C_avg)
+  lvrAdjFeeAPY?:       number;    // DeFiLlama APY × (C / C_avg) — what we actually earn
+  lvrNetAPY?:          number;    // adjFeeAPY − lvrCost − gasFriction
+  lvrSigmaDaily?:      number;    // daily ratio volatility (%)
+  lvrEpochRatio?:      number;    // epoch fees / epoch IL — must be ≥ 1.2×
+  lvrScoredAt?:        number;    // timestamp of last screener run
 }
 
 // ── Position (single venue, part of Portfolio) ────────────────────────────────
@@ -130,6 +139,13 @@ export interface Position {
   pendingRewardsUSD: number;      // uncollected rewards ready to harvest
   lastHarvestAt:   number;
 
+  // Non-rounded display/audit strings. Numeric USD fields above are kept for
+  // calculations; these strings are for UI/API display when tiny values matter.
+  currentUSDExact?:        string;
+  incomeEarnedUSDExact?:   string;
+  feesEarnedUSDExact?:     string;
+  pendingRewardsUSDExact?: string;
+
   // Risk metrics
   peakUSD:         number;
   drawdownPct:     number;
@@ -153,8 +169,33 @@ export interface Position {
   gmxOrderKey?:    string;        // bytes32 key of the GMX short order
   hedgeSizeUSD?:   number;        // USD value of the perp short
 
+  // UniV3 active range tracking — set at mint, updated after every rebalance
+  uniV3TickLower?:     number;    // current tickLower of the position
+  uniV3TickUpper?:     number;    // current tickUpper of the position
+  uniV3CenterTick?:    number;    // (tickLower + tickUpper) / 2 at last mint
+  uniV3RangePct?:      number;    // ±r% used (from LVR screener optimal)
+  uniV3EntryPool?:     string;    // pool address (for slot0 drift reads)
+  uniV3LastDriftPct?:  number;    // last drift assessment (0–1, triggers rebalance at ≥0.70)
+  uniV3Rebalances?:    number;    // total rebalances executed on this position
+
   // UniV3 out-of-range tracking (incremented each tick while price is outside tick range)
   uniV3OutOfRangeTicks?: number;
+
+  // UniV3 exact fee accounting. The USD fields above stay numeric for
+  // monitoring math; these strings preserve on-chain token-unit precision.
+  uniV3Token0?:          string;
+  uniV3Token1?:          string;
+  uniV3Token0Decimals?:  number;
+  uniV3Token1Decimals?:  number;
+  uniV3TokensOwed0Raw?:  string;
+  uniV3TokensOwed1Raw?:  string;
+  uniV3TokensOwed0?:     string;
+  uniV3TokensOwed1?:     string;
+  uniV3PendingFees0USD?: number;
+  uniV3PendingFees1USD?: number;
+  uniV3PendingFees0USDExact?: string;
+  uniV3PendingFees1USDExact?: string;
+  uniV3PendingFeesUSDExact?:  string;
 
   // ── On-chain state for real-user accurate value reads ────────────────────
   // These are captured at deposit time and used by position-reader.ts each tick.
@@ -274,6 +315,7 @@ export interface ExecutionRecord {
   timestamp:   number;
   portfolioValueBefore?: number;
   portfolioValueAfter?:  number;
+  sessionId?:  string;
 }
 
 // ── Activity Log ──────────────────────────────────────────────────────────────
@@ -284,6 +326,7 @@ export interface LogEntry {
   level:     LogLevel;
   message:   string;
   detail?:   string;
+  sessionId?: string;
 }
 
 // ── P&L History ──────────────────────────────────────────────────────────────
@@ -329,6 +372,8 @@ export interface UserState {
   pnlHistory:   PnLPoint[];
   executions:   ExecutionRecord[];
   log:          LogEntry[];
+  activeSessionId:        string;
+  activeSessionStartedAt: number;
   updatedAt:    number;
   tickErrors:   number;
 }

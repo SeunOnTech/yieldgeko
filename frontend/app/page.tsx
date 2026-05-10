@@ -1,16 +1,61 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
 import styles from './page.module.css'
+import { ThemeToggle } from './components/ThemeToggle'
+import { useAccount } from 'wagmi'
+import { useAppKit } from '@reown/appkit/react'
+
+/** NE arrow SVG — proper 45° line with arrowhead, proportional to button text */
+function ArrowNE({ size = 16 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      style={{ display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }}
+    >
+      {/* tail: bottom-left to top-right */}
+      <line x1="7" y1="17" x2="17" y2="7" />
+      {/* arrowhead bracket */}
+      <polyline points="7 7 17 7 17 17" />
+    </svg>
+  );
+}
 
 export default function Landing() {
+
   const router = useRouter()
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [bannerVisible, setBannerVisible] = useState(true)
 
-  const handleStartEarning = () => router.push('/onboard')
+  const { isConnected } = useAccount()
+  const { open } = useAppKit()
+  const [pendingOnboard, setPendingOnboard] = useState(false)
+
+  // After wallet connects, navigate to onboard if user had clicked Start Earning
+  useEffect(() => {
+    if (isConnected && pendingOnboard) {
+      setPendingOnboard(false)
+      router.push('/onboard')
+    }
+  }, [isConnected, pendingOnboard, router])
+
+  const handleStartEarning = () => {
+    if (isConnected) {
+      router.push('/onboard')
+    } else {
+      setPendingOnboard(true)
+      open()
+    }
+  }
   const handleTryDemo = () => router.push('/agent')
 
   return (
@@ -58,8 +103,10 @@ export default function Landing() {
 
           {/* Header actions */}
           <div className={styles['header-actions']}>
+            <ThemeToggle />
             <button
               onClick={handleTryDemo}
+
               className={`${styles.btn} ${styles['btn-outline']} ${styles['nav-cta']}`}
             >
               Try Demo
@@ -68,7 +115,7 @@ export default function Landing() {
               onClick={handleStartEarning}
               className={`${styles.btn} ${styles['btn-primary']} ${styles['nav-cta']}`}
             >
-              Start Earning &rarr;
+                  Start Earning <ArrowNE />
             </button>
 
             {/* Mobile menu toggle */}
@@ -92,7 +139,7 @@ export default function Landing() {
             <li><a href="/agent" className={styles['mobile-nav-link']} onClick={() => setMobileMenuOpen(false)}>Demo</a></li>
           </ul>
           <button onClick={handleStartEarning} className={`${styles.btn} ${styles['btn-primary']} ${styles['btn-full']}`}>
-            Start Earning &rarr;
+            Start Earning <ArrowNE />
           </button>
         </div>
       </header>
@@ -138,7 +185,7 @@ export default function Landing() {
 
             <div className={styles['hero-actions']}>
               <button onClick={handleStartEarning} className={`${styles.btn} ${styles['btn-primary']} ${styles['btn-large']}`}>
-                Start Earning &rarr;
+                    Start Earning <ArrowNE />
               </button>
               <button onClick={handleTryDemo} className={`${styles.btn} ${styles['btn-outline']} ${styles['btn-large']}`}>
                 Try Demo
@@ -400,7 +447,7 @@ export default function Landing() {
                   Try Demo
                 </button>
                 <button className={`${styles.btn} ${styles['btn-primary']}`} onClick={handleStartEarning}>
-                  Start Earning &rarr;
+                      Start Earning <ArrowNE />
                 </button>
               </div>
             </div>

@@ -807,3 +807,74 @@
 }
 
 .features { overflow-x: hidden; }
+
+/* ── Dark Mode Overrides ─────────────────────────────────────── */
+/* These ONLY apply when the .dark class is on <html>.           */
+/* Light mode is completely unaffected.                           */
+
+:global(.dark) .landingWrapper {
+  --text-primary:   #e8e8e8;
+  --text-secondary: #a0a0a0;
+  --border-color:   rgba(255, 255, 255, 0.08);
+  --grid-line:      rgba(255, 255, 255, 0.04);
+  --secondary-bg:   rgba(234, 88, 12, 0.08);
+  background-color: #1a1a1a;
+  color: #e8e8e8;
+}
+
+/* Header */
+:global(.dark) .header {
+  background-color: #1a1a1a;
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+
+/* Outline button — flip for dark bg */
+:global(.dark) .landingWrapper .btn-outline {
+  border-color: rgba(255, 255, 255, 0.15) !important;
+  color: #e8e8e8 !important;
+}
+:global(.dark) .landingWrapper .btn-outline:hover {
+  border-color: rgba(255, 255, 255, 0.3) !important;
+  background: rgba(255, 255, 255, 0.06) !important;
+}
+
+/* Promo banner */
+:global(.dark) .promo-banner {
+  background-color: rgba(234, 88, 12, 0.08);
+  border-color: rgba(234, 88, 12, 0.15);
+}
+:global(.dark) .banner-link {
+  color: #e8e8e8;
+}
+:global(.dark) .close-banner {
+  color: #a0a0a0;
+}
+
+/* Mobile full-screen menu */
+:global(.dark) .mobile-menu {
+  background: #1a1a1a;
+}
+
+/* Chain logo stack borders */
+:global(.dark) .chain-logos-stack img {
+  border-color: #1a1a1a;
+}
+
+/* Ecosystem section (currently pure white) */
+:global(.dark) .ecosystem {
+  background-color: #242424;
+  color: #e8e8e8;
+}
+:global(.dark) .ecosystem-title {
+  color: #e8e8e8;
+}
+:global(.dark) .ecosystem-subtitle {
+  color: #a0a0a0;
+}
+
+/* Floating protocol icons */
+:global(.dark) .icon-floating {
+  background: #2e2e2e;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+}
+

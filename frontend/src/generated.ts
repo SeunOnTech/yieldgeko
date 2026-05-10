@@ -235,6 +235,19 @@ export const yieldGekoAbi = [
     type: 'function',
     inputs: [
       { name: 'user', internalType: 'address', type: 'address' },
+      { name: 'yieldAsset', internalType: 'address', type: 'address' },
+      { name: 'targets', internalType: 'address[]', type: 'address[]' },
+      { name: 'dataArr', internalType: 'bytes[]', type: 'bytes[]' },
+      { name: 'receiptHash', internalType: 'bytes32', type: 'bytes32' },
+    ],
+    name: 'executeHarvest',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'user', internalType: 'address', type: 'address' },
       { name: 'asset', internalType: 'address', type: 'address' },
       { name: 'deployedAmount', internalType: 'uint256', type: 'uint256' },
       { name: 'target', internalType: 'address', type: 'address' },
@@ -1322,6 +1335,15 @@ export const useWriteYieldGekoExecuteDeposit =
   })
 
 /**
+ * Wraps __{@link useWriteContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"executeHarvest"`
+ */
+export const useWriteYieldGekoExecuteHarvest =
+  /*#__PURE__*/ createUseWriteContract({
+    abi: yieldGekoAbi,
+    functionName: 'executeHarvest',
+  })
+
+/**
  * Wraps __{@link useWriteContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"executeWithdraw"`
  */
 export const useWriteYieldGekoExecuteWithdraw =
@@ -1570,6 +1592,15 @@ export const useSimulateYieldGekoExecuteDeposit =
   /*#__PURE__*/ createUseSimulateContract({
     abi: yieldGekoAbi,
     functionName: 'executeDeposit',
+  })
+
+/**
+ * Wraps __{@link useSimulateContract}__ with `abi` set to __{@link yieldGekoAbi}__ and `functionName` set to `"executeHarvest"`
+ */
+export const useSimulateYieldGekoExecuteHarvest =
+  /*#__PURE__*/ createUseSimulateContract({
+    abi: yieldGekoAbi,
+    functionName: 'executeHarvest',
   })
 
 /**

@@ -173,6 +173,34 @@ function detect0GConfig(): ZeroGConfig | null {
   } catch { return null; }
 }
 
+// ── Real-user index ───────────────────────────────────────────────────────────
+// A newline-delimited file listing every real-user ID ever registered.
+// Written synchronously on registration so it survives crashes immediately.
+// On boot: read this file → restore all real users alongside demo users.
+
+const INDEX_PATH = path.join(STATE_DIR, 'users.index');
+
+function readIndex(): string[] {
+  try {
+    if (!fs.existsSync(INDEX_PATH)) return [];
+    return fs.readFileSync(INDEX_PATH, 'utf8')
+      .split('\n')
+      .map(l => l.trim())
+      .filter(Boolean);
+  } catch { return []; }
+}
+
+function appendToIndex(userId: string): void {
+  try {
+    ensureStateDir();
+    const existing = readIndex();
+    if (existing.includes(userId)) return;   // idempotent
+    fs.appendFileSync(INDEX_PATH, userId + '\n', 'utf8');
+  } catch (err: any) {
+    console.warn(`[Persist] Index append failed (${userId}):`, err.message);
+  }
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 export class PersistenceStore {
@@ -201,6 +229,17 @@ export class PersistenceStore {
     } else {
       saveLocal(userId, state);
     }
+  }
+
+  // Register a real user in the index — call once at registration time.
+  // Idempotent: safe to call on every restart; won't duplicate entries.
+  registerInIndex(userId: string): void {
+    appendToIndex(userId);
+  }
+
+  // Return all real-user IDs from the index (used at boot to restore them).
+  getRealUserIds(): string[] {
+    return readIndex();
   }
 
   // Blocking restore — called once at boot

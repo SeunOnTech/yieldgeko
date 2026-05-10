@@ -29,16 +29,41 @@ export function decideAllocation(
 
   // ── SAFETY EXIT ─────────────────────────────────────────────────────────
   if (circuitBreakerRed && portfolio) {
-    // Find the safest venue (Aave or Morpho)
-    const safeHaven = opportunities.find(o =>
+    // Find the safest venue (Aave or Morpho preferred)
+    const idealSafeHaven = opportunities.find(o =>
       o.strategyType === 'AAVE_LENDING' || o.strategyType === 'MORPHO_LENDING'
     ) ?? null;
+
+    let safeHaven = idealSafeHaven;
+    let safeHavenReason = 'Circuit breaker RED — moving to safe haven to protect capital';
+
+    if (!safeHaven) {
+      // No Aave/Morpho opportunity in the ranked list — fall back to the
+      // single highest-ranked opportunity to avoid being stuck in HOLD.
+      safeHaven = opportunities[0] ?? null;
+      if (safeHaven) {
+        console.warn(
+          `[Allocation] WARN: ideal safe haven (Aave/Morpho) unavailable — using ${safeHaven.protocol} ${safeHaven.pool} as fallback safe haven`,
+        );
+        safeHavenReason = `Circuit breaker RED — ideal safe haven unavailable, falling back to highest-ranked opportunity (${safeHaven.protocol} ${safeHaven.pool})`;
+      }
+      // If safeHaven is still null (completely empty list), we HOLD below
+    }
+
+    if (!safeHaven) {
+      // Opportunity list is completely empty — no safe haven at all, must HOLD
+      return {
+        action: 'HOLD', targetOpportunity: null, currentOpportunity: topCurrentOpp(portfolio, opportunities),
+        reason: 'Circuit breaker RED but no opportunities available — holding until market recovers',
+        upliftPct: 0,
+      };
+    }
 
     return {
       action:             'SAFETY_EXIT',
       targetOpportunity:  safeHaven,
       currentOpportunity: topCurrentOpp(portfolio, opportunities),
-      reason:             'Circuit breaker RED — moving to safe haven to protect capital',
+      reason:             safeHavenReason,
       upliftPct:          0,
     };
   }
@@ -137,21 +162,27 @@ export function decideAllocation(
   if (portfolio) {
     const currentWeightedAPY = portfolio.metrics.weightedNetAPY;
 
-    // Check if any position has a significantly better replacement
+    // Check if any position has a significantly better replacement.
+    // Two triggers — either one is sufficient:
+    //   A. GeckoScore 15% better AND APY uplift above migration threshold (normal upgrades)
+    //   B. APY uplift is 2× or more the current APY (large opportunity gap — e.g. stablecoin→volatile)
     for (const pos of portfolio.positions) {
       const better = opportunities.find(o =>
         o.strategyType === pos.strategyType &&
-        o.geckoScore > pos.geckoScore * 1.15 &&  // 15% better GeckoScore
-        o.id !== pos.venueId
+        o.id !== pos.venueId &&
+        o.netAPY >= policy.minAPY * 0.8
       );
       if (better) {
-        const uplift = better.netAPY - pos.currentNetAPY;
-        if (uplift >= policy.migrationThresholdPct) {
+        const uplift      = better.netAPY - pos.currentNetAPY;
+        const scoreUpgrade = better.geckoScore > pos.geckoScore * 1.15;
+        const bigAPYGap    = better.netAPY >= pos.currentNetAPY * 2 && uplift >= policy.migrationThresholdPct;
+
+        if ((scoreUpgrade && uplift >= policy.migrationThresholdPct) || bigAPYGap) {
           return {
             action:             'MIGRATE',
             targetOpportunity:  better,
             currentOpportunity: opportunities.find(o => o.id === pos.venueId) ?? null,
-            reason: `GeckoScore upgrade: ${pos.venueName} → ${better.protocol} ${better.pool} (+${uplift.toFixed(2)}% APY, +${((better.geckoScore / pos.geckoScore - 1) * 100).toFixed(0)}% score)`,
+            reason: `Migrating: ${pos.venueName} (${pos.currentNetAPY.toFixed(1)}%) → ${better.protocol} ${better.pool} (${better.netAPY.toFixed(1)}%) +${uplift.toFixed(1)}% APY`,
             upliftPct: uplift,
           };
         }

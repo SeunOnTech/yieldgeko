@@ -34,7 +34,8 @@ contract Deploy is Script {
     address constant MORPHO_WETH = 0xBd5b3e4dcE14D1B390C332F36E25e3d3dA47b0b1; // Steakhouse WETH
 
     // Uniswap V3
-    address constant UNI_V3_ROUTER = 0xE592427A0AEce92De3Edee1F18E0157C05861564;
+    // SwapRouter02 is used by the agent for DELTA_NEUTRAL USDC→token swaps (not V1 router)
+    address constant UNI_V3_SWAP_ROUTER02 = 0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45;
     address constant UNI_V3_POSITION_MGR = 0xC36442b4a4522E871399CD717aBDD847Ab11FE88;
 
     // Pendle
@@ -72,10 +73,11 @@ contract Deploy is Script {
         // Only whitelist addresses that are live on this chain.
         // 0G Mainnet (16661) only has UniV3; Arbitrum has all protocols.
 
-        // Always safe: UniV3 position manager (exists on both chains if Uni V3 deployed)
-        vault.approveTarget(chainId, UNI_V3_ROUTER);
+        // UniV3: both SwapRouter02 (for DELTA_NEUTRAL swaps) and NonfungiblePositionManager (for LP minting)
+        // SwapRouter02 replaces V1 router — agent uses it for exactInputSingle token swaps
+        vault.approveTarget(chainId, UNI_V3_SWAP_ROUTER02);
         vault.approveTarget(chainId, UNI_V3_POSITION_MGR);
-        console.log("  UniV3 targets approved");
+        console.log("  UniV3 targets approved (SwapRouter02 + PositionManager)");
 
         if (chainId == 42161) {
             // Arbitrum only

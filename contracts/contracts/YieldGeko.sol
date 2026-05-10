@@ -114,7 +114,7 @@ contract YieldGeko is EIP712, Ownable2Step, ReentrancyGuard, Pausable {
         "uint256 maxDrawdownBps,uint256 maxFeeBps,uint256 nonce,uint256 deadline)"
     );
 
-    uint256 public constant MAX_FEE_BPS = 200; // 2 %
+    uint256 public constant MAX_FEE_BPS = 2000; // 20 %
     uint256 public constant MAX_POLICY_DURATION = 365 days;
     uint256 public constant MAX_DRAWDOWN_BPS = 5_000; // 50 %
 
@@ -443,16 +443,23 @@ contract YieldGeko is EIP712, Ownable2Step, ReentrancyGuard, Pausable {
         uint256 returned = balAfter > balBefore ? balAfter - balBefore : 0;
 
         // Deduct max(deployedAmount, returned) from deployed, capped at current dep.
-        // Using max() prevents an agent from understating deployedAmount:
-        //   returned tokens can never leave more deployed credited than they came from.
-        // Capped at dep so we can't underflow (previous check already handles oversized input).
         uint256 dep = deployed[user][asset];
         if (deployedAmount > dep) revert InsufficientBalance(dep, deployedAmount);
         uint256 toDeduct = returned > deployedAmount ? returned : deployedAmount;
         if (toDeduct > dep) toDeduct = dep;
+
+        // Auto-fee on realized yield — only when returned > declared deployment cost.
+        // IL-safe: fee = 0 whenever returned <= deployedAmount (no gain, no charge).
+        uint256 surplus = returned > deployedAmount ? returned - deployedAmount : 0;
+        uint256 fee = (surplus * _effectiveFeeBps(user)) / 10_000;
+
         unchecked {
             deployed[user][asset] = dep - toDeduct;
-            balances[user][asset] += returned;
+            balances[user][asset] += returned - fee;
+        }
+        if (fee > 0 && treasury != address(0)) {
+            IERC20(asset).safeTransfer(treasury, fee);
+            emit FeeCollected(user, asset, fee);
         }
 
         emit ActionExecuted(user, target, receiptHash, block.timestamp);
@@ -509,9 +516,17 @@ contract YieldGeko is EIP712, Ownable2Step, ReentrancyGuard, Pausable {
             if (declared > dep) revert InsufficientBalance(dep, declared);
             uint256 toDeduct = returned > declared ? returned : declared;
             if (toDeduct > dep) toDeduct = dep;
+
+            uint256 surplus = returned > declared ? returned - declared : 0;
+            uint256 fee = (surplus * _effectiveFeeBps(user)) / 10_000;
+
             unchecked {
                 deployed[user][asset] = dep - toDeduct;
-                balances[user][asset] += returned;
+                balances[user][asset] += returned - fee;
+            }
+            if (fee > 0 && treasury != address(0)) {
+                IERC20(asset).safeTransfer(treasury, fee);
+                emit FeeCollected(user, asset, fee);
             }
 
             returnedAmounts[i] = returned;
@@ -533,13 +548,14 @@ contract YieldGeko is EIP712, Ownable2Step, ReentrancyGuard, Pausable {
      *                     also checks every asset ever deposited or approved, closing
      *                     target/spender mismatch drains in router-style protocols.
      */
-    function execute(
-        address user,
-        address target,
-        bytes calldata data,
-        bytes32 receiptHash,
-        address guardAsset
-    ) external payable onlyAgent whenNotPaused nonReentrant returns (bytes memory) {
+    function execute(address user, address target, bytes calldata data, bytes32 receiptHash, address guardAsset)
+        external
+        payable
+        onlyAgent
+        whenNotPaused
+        nonReentrant
+        returns (bytes memory)
+    {
         _enforcePolicy(user);
         _assertNotUserPaused(user);
         _assertTarget(target);
@@ -733,6 +749,52 @@ contract YieldGeko is EIP712, Ownable2Step, ReentrancyGuard, Pausable {
     }
 
     /**
+     * @notice Harvest yield from deployed positions — auto-collects performance fee on net income.
+     * @dev    Measures yieldAsset balance before/after the harvest calls.
+     *         The positive delta (harvested) is split: (1 - feeBps) credited to user, feeBps to treasury.
+     *         If harvested == 0, the function is a no-op (no revert, no fee).
+     *         Used for: UniV3 fee collect+normalise, Pendle reward redemption, any claim→swap flow.
+     */
+    function executeHarvest(
+        address user,
+        address yieldAsset,
+        address[] calldata targets,
+        bytes[] calldata dataArr,
+        bytes32 receiptHash
+    ) external onlyAgent whenNotPaused nonReentrant {
+        if (targets.length != dataArr.length) revert LengthMismatch();
+        if (targets.length == 0) revert ZeroAmount();
+        _enforcePolicy(user);
+        _assertNotUserPaused(user);
+
+        uint256 balBefore = IERC20(yieldAsset).balanceOf(address(this));
+
+        for (uint256 i; i < targets.length;) {
+            _assertTarget(targets[i]);
+            (bool ok,) = targets[i].call(dataArr[i]);
+            require(ok, "Harvest step failed");
+            unchecked {
+                ++i;
+            }
+        }
+
+        uint256 balAfter = IERC20(yieldAsset).balanceOf(address(this));
+        uint256 harvested = balAfter > balBefore ? balAfter - balBefore : 0;
+
+        if (harvested > 0) {
+            uint256 fee = (harvested * _effectiveFeeBps(user)) / 10_000;
+            unchecked {
+                balances[user][yieldAsset] += harvested - fee;
+            }
+            if (fee > 0 && treasury != address(0)) {
+                IERC20(yieldAsset).safeTransfer(treasury, fee);
+                emit FeeCollected(user, yieldAsset, fee);
+            }
+            emit ActionExecuted(user, targets[0], receiptHash, block.timestamp);
+        }
+    }
+
+    /**
      * @notice Set token allowance for a whitelisted protocol.
      * @dev    Blocked during pause/emergency — agent cannot create new approvals
      *         that could be exploited while the contract is paused.
@@ -896,6 +958,11 @@ contract YieldGeko is EIP712, Ownable2Step, ReentrancyGuard, Pausable {
     // ─────────────────────────────────────────────────────────────────────────
     // SECTION 7 — INTERNAL
     // ─────────────────────────────────────────────────────────────────────────
+
+    function _effectiveFeeBps(address user) internal view returns (uint256) {
+        StoredPolicy storage p = policies[user];
+        return defaultFeeBps <= p.maxFeeBps ? defaultFeeBps : p.maxFeeBps;
+    }
 
     function _enforcePolicy(address user) internal view {
         StoredPolicy storage p = policies[user];

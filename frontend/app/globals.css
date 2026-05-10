@@ -53,11 +53,51 @@
   --shadow-card: 0 1px 3px rgba(28, 25, 23, 0.06), 0 1px 2px rgba(28, 25, 23, 0.04);
 }
 
+.dark {
+  /* App surfaces — Claude Warm Charcoal */
+  --background: #1a1a1a;
+  --surface:    #242424;
+  --foreground: #e8e8e8;
+
+  /* Text */
+  --text-primary:   #e8e8e8;
+  --text-secondary: #a0a0a0;
+  --text-muted:     #737373;
+
+  /* Borders */
+  --border:       rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.15);
+
+  /* Status overrides for dark mode */
+  --success-bg:     rgba(22, 163, 74, 0.1);
+  --warning-bg:     rgba(217, 119, 6, 0.1);
+  --danger-bg:      rgba(220, 38, 38, 0.1);
+  --earn-bg:        rgba(22, 163, 74, 0.15);
+  --loss-bg:        rgba(220, 38, 38, 0.15);
+
+  /* Chain overrides */
+  --arbitrum-bg:    rgba(40, 160, 240, 0.1);
+  --zerorg-bg:      rgba(13, 148, 136, 0.1);
+
+  /* Legacy aliases */
+  --secondary:   #1f1f1f;
+  --card-bg:     rgba(36, 36, 36, 0.8);
+  --card-border: rgba(255, 255, 255, 0.08);
+
+  /* Shadows — de-emphasized in dark mode */
+  --shadow-sm:   0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-md:   0 4px 12px rgba(0, 0, 0, 0.3);
+  --shadow-lg:   0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+
 * {
   box-sizing: border-box;
   padding: 0;
   margin: 0;
+  transition: background-color 0.3s ease, border-color 0.3s ease, color 0.3s ease;
 }
+
 
 body {
   background: var(--background);
@@ -75,15 +115,16 @@ body {
   padding: 0 20px;
 }
 
-/* Glass — light-theme version */
+/* Glass — theme-aware version */
 .glass {
-  background: rgba(255, 255, 255, 0.9);
+  background: var(--card-bg);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   border: 1px solid var(--border);
   border-radius: 16px;
   box-shadow: var(--shadow-card);
 }
+
 
 /* Gradient text using brand orange → success green */
 .gradient-text {
@@ -170,4 +211,71 @@ input[type="range"]::-webkit-slider-thumb {
   background: var(--primary-light);
   color: var(--primary);
   border: 1px solid var(--primary-border);
+}
+
+/* ── Theme Toggle ─────────────────────────────────────────────────────────── */
+.theme-toggle-btn {
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--surface);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 0;
+  box-shadow: none;
+  transition: border-color 0.2s ease, background-color 0.3s ease;
+  flex-shrink: 0;
+}
+
+
+.theme-toggle-btn:hover {
+  border-color: var(--primary);
+  box-shadow: none;
+  background: var(--background);
+}
+
+
+
+
+
+.theme-toggle-icon-wrap {
+  position: relative;
+  width: 18px;
+  height: 18px;
+}
+
+.theme-icon {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 18px;
+  height: 18px;
+  transition: opacity 0.25s ease, transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.theme-icon-sun {
+  color: var(--text-primary);
+  opacity: 0;
+  transform: rotate(-90deg) scale(0.7);
+}
+
+.theme-icon-moon {
+  color: var(--text-primary);
+  opacity: 0;
+  transform: rotate(90deg) scale(0.7);
+}
+
+
+.theme-toggle-btn[data-theme='light'] .theme-icon-sun {
+  opacity: 1;
+  transform: rotate(0deg) scale(1);
+}
+
+.theme-toggle-btn[data-theme='dark'] .theme-icon-moon {
+  opacity: 1;
+  transform: rotate(0deg) scale(1);
 }

@@ -13,11 +13,10 @@ const STALE_THRESHOLD_S = 3_600; // 1 hour
 // Chainlink feeds on Arbitrum (all verified against Chainlink docs)
 export const FEEDS: Record<string, { feed: string; decimals: number }> = {
   WETH: { feed: '0x639Fe6ab55C921f74e7fac1ee960C0B6293ba612', decimals: 8 },
-  WBTC: { feed: '0x6ce185026aF36877D6F8B0F98fBd36Fda7e6E4C', decimals: 8 },
+  WBTC: { feed: '0xd0C7101eACbB49F3deCcCc166d238410D6D46d57', decimals: 8 },
   USDC: { feed: '0x50834F3163758fcC1Df9973b6e91f0F0F0434aD3', decimals: 8 },
   USDT: { feed: '0x3f3f5dF88dC9F13eac63DF89EC16ef6e7E25DdE7', decimals: 8 },
   ARB:  { feed: '0xb2A824043730FE05F3DA2efaFa1CBbe83fa548D6', decimals: 8 },
-  LINK: { feed: '0x86E53CF1B873D1708130F08ffdfd51b3B1B90c6', decimals: 8 },
 };
 
 export interface TokenPrice {

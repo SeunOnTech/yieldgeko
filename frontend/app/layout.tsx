@@ -1,4 +1,4 @@
-import type { Metadata } from 'next'
+import type { Metadata, Viewport } from 'next'
 import localFont from 'next/font/local'
 // Logo variants:
 //   /logo.svg        — dark bg + white gecko (navbar, favicons, dark surfaces)
@@ -8,8 +8,10 @@ import './globals.css'
 import './app-pages.css'
 import AppKitProvider from '@/context'
 import { LoadingBar } from './components/LoadingBar'
+import { ThemeProvider } from './components/ThemeProvider'
 
 const aeonik = localFont({
+
   src: [
     { path: '../public/fonts/Aeonik_Pro_Regular.woff2', weight: '400', style: 'normal' },
     { path: '../public/fonts/Aeonik_Pro_Medium.woff2',  weight: '500', style: 'normal' },
@@ -25,17 +27,36 @@ export const metadata: Metadata = {
   // icon.svg and apple-icon.svg in /app are auto-detected by Next.js
 }
 
+export const viewport: Viewport = {
+  viewportFit: 'cover',
+}
+
 export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en" className={aeonik.variable}>
+      <head>
+        {/*
+          Anti-FOUC script: runs synchronously before first paint.
+          Reads localStorage and applies .dark to <html> instantly,
+          so the user never sees a flash of light mode on refresh.
+        */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var t=localStorage.getItem('theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}if(t==='dark'){document.documentElement.classList.add('dark');}}catch(e){}})();`,
+          }}
+        />
+      </head>
       <body>
-        <AppKitProvider>
-          <LoadingBar />
-          {children}
-        </AppKitProvider>
+        <ThemeProvider>
+          <AppKitProvider>
+            <LoadingBar />
+            {children}
+          </AppKitProvider>
+        </ThemeProvider>
       </body>
     </html>
   )
 }
+

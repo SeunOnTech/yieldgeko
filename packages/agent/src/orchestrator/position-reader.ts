@@ -77,6 +77,9 @@ const UNIV3_POOL_ABI = [
   'function slot0() view returns (uint160 sqrtPriceX96, int24 tick, uint16, uint16, uint16, uint8, bool)',
   'function token0() view returns (address)',
   'function token1() view returns (address)',
+  'function feeGrowthGlobal0X128() view returns (uint256)',
+  'function feeGrowthGlobal1X128() view returns (uint256)',
+  'function ticks(int24) view returns (uint128 liquidityGross, int128 liquidityNet, uint256 feeGrowthOutside0X128, uint256 feeGrowthOutside1X128, int56 tickCumulativeOutside, uint160 secondsPerLiquidityOutsideX128, uint32 secondsOutside, bool initialized)',
 ];
 
 const UNIV3_FACTORY_ABI = [
@@ -108,10 +111,23 @@ const ADDR = {
   PENDLE_ORACLE:  '0x9a9Fa8338dd5E5B2188006f1Cd2Ef26d921650C2',
   GMX_DATASTORE:  '0xFD70de6b91282D8017aA4E741e9Ae325CAb992d8',
   USDC:           '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
+  USDT:           '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9',
+  DAI:            '0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1',
+  USDC_E:         '0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8',
   WETH:           '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1',
   WBTC:           '0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f',
   ARB:            '0x912CE59144191C1204E64559FE8253a0e49E6548',
 } as const;
+
+const TOKEN_DECIMALS: Record<string, number> = {
+  [ADDR.USDC.toLowerCase()]:   6,
+  [ADDR.USDT.toLowerCase()]:   6,
+  [ADDR.USDC_E.toLowerCase()]: 6,
+  [ADDR.DAI.toLowerCase()]:    18,
+  [ADDR.WETH.toLowerCase()]:   18,
+  [ADDR.WBTC.toLowerCase()]:   8,
+  [ADDR.ARB.toLowerCase()]:    18,
+};
 
 // Pendle TWAP window (15 min — standard recommendation)
 const PENDLE_DURATION = 900;
@@ -122,8 +138,26 @@ export interface RealPositionRead {
   currentUSD:        number;
   incomeEarnedUSD:   number;   // currentUSD − entryUSD (positive = profit, negative = loss)
   pendingRewardsUSD: number;   // claimable right now without closing position (UniV3 tokensOwed, Pendle rewards)
+  currentUSDExact?:        string;
+  incomeEarnedUSDExact?:   string;
+  pendingRewardsUSDExact?: string;
   outOfRange:        boolean;  // UniV3: current tick outside [tickLower, tickUpper] → earning 0 fees
   healthFactor?:     number;   // LEVERAGED_LOOP only: Aave HF (1e18 = 1.0; <1.0 = liquidatable)
+  uniV3Fees?: {
+    token0:          string;
+    token1:          string;
+    token0Decimals:  number;
+    token1Decimals:  number;
+    tokensOwed0Raw:  string;
+    tokensOwed1Raw:  string;
+    tokensOwed0:     string;
+    tokensOwed1:     string;
+    fees0USD:        number;
+    fees1USD:        number;
+    fees0USDExact:   string;
+    fees1USDExact:   string;
+    feesUSDExact:    string;
+  };
   dataSource:        'on-chain';
 }
 
@@ -132,10 +166,44 @@ export interface RealPositionRead {
 function tokenPriceUSD(tokenAddress: string, prices: PriceMap): number {
   const addr = tokenAddress.toLowerCase();
   if (addr === ADDR.USDC.toLowerCase())  return 1.0;
+  if (addr === ADDR.USDT.toLowerCase())  return 1.0;
+  if (addr === ADDR.USDC_E.toLowerCase()) return 1.0;
+  if (addr === ADDR.DAI.toLowerCase())   return 1.0;
   if (addr === ADDR.WETH.toLowerCase())  return prices.get('WETH')?.priceUSD ?? prices.get('ETH')?.priceUSD ?? 3000;
   if (addr === ADDR.WBTC.toLowerCase())  return prices.get('WBTC')?.priceUSD ?? prices.get('BTC')?.priceUSD ?? 60000;
   if (addr === ADDR.ARB.toLowerCase())   return prices.get('ARB')?.priceUSD ?? 1.0;
   return 1.0;
+}
+
+function tokenDecimals(tokenAddress: string): number {
+  return TOKEN_DECIMALS[tokenAddress.toLowerCase()] ?? 18;
+}
+
+function isDollarLikeToken(tokenAddress: string): boolean {
+  const addr = tokenAddress.toLowerCase();
+  return addr === ADDR.USDC.toLowerCase()
+    || addr === ADDR.USDT.toLowerCase()
+    || addr === ADDR.USDC_E.toLowerCase()
+    || addr === ADDR.DAI.toLowerCase();
+}
+
+function addDecimalStrings(a: string, b: string): string {
+  const [ai, af = ''] = a.split('.');
+  const [bi, bf = ''] = b.split('.');
+  const scale = Math.max(af.length, bf.length);
+  const av = BigInt(ai || '0') * (10n ** BigInt(scale)) + BigInt((af.padEnd(scale, '0') || '0'));
+  const bv = BigInt(bi || '0') * (10n ** BigInt(scale)) + BigInt((bf.padEnd(scale, '0') || '0'));
+  const sum = av + bv;
+  const base = 10n ** BigInt(scale);
+  const intPart = sum / base;
+  const fracPart = (sum % base).toString().padStart(scale, '0').replace(/0+$/, '');
+  return fracPart ? `${intPart}.${fracPart}` : intPart.toString();
+}
+
+function feeUSDExactString(tokenAddress: string, amountRaw: bigint, decimals: number, numericUSD: number): string {
+  if (amountRaw === 0n) return '0';
+  if (isDollarLikeToken(tokenAddress)) return ethers.formatUnits(amountRaw, decimals);
+  return Number.isFinite(numericUSD) ? numericUSD.toString() : '0';
 }
 
 // ── 1. Aave V3 (AAVE_LENDING) ────────────────────────────────────────────────
@@ -161,10 +229,12 @@ async function readAaveValue(
     const entryIndex   = BigInt(entryLiquidityIndex);
     currentUSD = entryUSD * Number(currentIndex) / Number(entryIndex);
   } else {
-    // Fallback: read aUSDC balance directly (exact for single-user vault)
-    const aToken     = new ethers.Contract(ADDR.AUSDC, ATOKEN_ABI, provider);
-    const balanceRaw = await aToken.balanceOf(vaultAddress) as bigint;
-    currentUSD = Number(balanceRaw) / 1e6;
+    // Fix I-2: Per-user Aave balance requires entryLiquidityIndex to be known.
+    // Reading aUSDC.balanceOf(vaultAddress) is the AGGREGATE balance for ALL users —
+    // dangerous in multi-user vaults. Use entry allocation as the best per-user estimate.
+    // NOTE: This is a conservative fallback — accurate per-user tracking requires entryLiquidityIndex
+    // (captured at deposit time via getReserveNormalizedIncome and stored in position.entryLiquidityIndex).
+    currentUSD = entryUSD;
   }
 
   return { currentUSD, incomeEarnedUSD: currentUSD - entryUSD, pendingRewardsUSD: 0, outOfRange: false, dataSource: 'on-chain' };
@@ -188,6 +258,8 @@ async function readLeveragedLoopValue(
 ): Promise<RealPositionRead> {
   const pool = new ethers.Contract(ADDR.AAVE_POOL, AAVE_POOL_ABI, provider);
 
+  // NOTE: reads aggregate vault health factor — accurate only for single-user vault.
+  // Multi-user requires per-user collateral/debt tracking (separate sub-accounts per user).
   // Run both reads in parallel
   const [aaveBase, accountData] = await Promise.all([
     readAaveValue(provider, vaultAddress, entryUSD, entryLiquidityIndex),
@@ -201,9 +273,22 @@ async function readLeveragedLoopValue(
 
   // Net position value for leveraged loop = collateral - debt (both in USD, 8 dec from Aave)
   // Use this as currentUSD for accurate P&L — more precise than aUSDC balance alone
-  const totalCollateralUSD = Number(accountData[0] as bigint) / 1e8;
+  const totalCollateralBase: bigint = accountData[0] as bigint;
+  const totalCollateralUSD = Number(totalCollateralBase) / 1e8;
   const totalDebtUSD       = Number(accountData[1] as bigint) / 1e8;
   const netValueUSD        = totalCollateralUSD - totalDebtUSD;
+
+  // Fix B-5: if no collateral yet (position not settled or vault has no Aave position),
+  // fall back to entryUSD to prevent NaN/0 from propagating into drawdown calculations.
+  if (totalCollateralBase === 0n) {
+    return {
+      ...aaveBase,
+      currentUSD:      entryUSD,
+      incomeEarnedUSD: 0,
+      healthFactor,
+      dataSource:      'on-chain',
+    };
+  }
 
   // If no debt exists yet, fall back to the simple aToken read (position not yet looped)
   const currentUSD = totalDebtUSD > 0 ? netValueUSD : aaveBase.currentUSD;
@@ -234,11 +319,11 @@ async function readMorphoValue(
   const shares     = BigInt(morphoShares);
 
   if (shares === 0n) {
-    // Shares not yet captured — fall back to live balance
-    const liveShs = await vault.balanceOf(vaultAddress) as bigint;
-    const assets  = await vault.convertToAssets(liveShs) as bigint;
-    const currentUSD = Number(assets) / 1e6;
-    return { currentUSD, incomeEarnedUSD: currentUSD - entryUSD, pendingRewardsUSD: 0, outOfRange: false, dataSource: 'on-chain' };
+    // Fix I-3: Shares not yet captured. vault.balanceOf(vaultAddress) returns the AGGREGATE
+    // balance for ALL users — dangerous in multi-user vaults. Use entry allocation as the
+    // best per-user estimate until shares are captured on the next deposit confirmation.
+    // NOTE: morphoShares is captured at deposit time from Transfer mint events in execution.ts.
+    return { currentUSD: entryUSD, incomeEarnedUSD: 0, pendingRewardsUSD: 0, outOfRange: false, dataSource: 'on-chain' };
   }
 
   const assets     = await vault.convertToAssets(shares) as bigint;
@@ -258,12 +343,36 @@ async function readMorphoValue(
 //    Else in-range → split across both tokens
 
 async function readUniV3Value(
-  provider: JsonRpcProvider,
-  tokenId:  string,
-  prices:   PriceMap,
+  provider:     JsonRpcProvider,
+  tokenId:      string,
+  prices:       PriceMap,
+  userAddress?: string,
+  vaultAddress?: string,
 ): Promise<RealPositionRead> {
   const posMgr = new ethers.Contract(ADDR.UNIV3_POS_MGR, UNIV3_POS_MGR_ABI, provider);
-  const pos    = await posMgr.positions(BigInt(tokenId));
+
+  let pos: Awaited<ReturnType<typeof posMgr.positions>>;
+  try {
+    pos = await posMgr.positions(BigInt(tokenId));
+  } catch (err: any) {
+    // NFT was burned (position closed) — return zero NAV so caller can clean up.
+    // Fix H-2: return a properly-typed RealPositionRead with all required fields set to
+    // zero/default values. Remove `as any` cast — nftBurned is surfaced via the return value.
+    if (err?.reason === 'Invalid token ID' || String(err?.message ?? '').includes('Invalid token ID')) {
+      // Fix H-2: return a properly-typed RealPositionRead with all required fields at zero/default.
+      // nftBurned is added as an extension field so callers can detect and clean up burned positions.
+      const burned: RealPositionRead & { nftBurned: true } = {
+        currentUSD:        0,
+        incomeEarnedUSD:   0,
+        pendingRewardsUSD: 0,
+        outOfRange:        false,
+        dataSource:        'on-chain',
+        nftBurned:         true,
+      };
+      return burned;
+    }
+    throw err;
+  }
 
   const token0:      string  = pos.token0;
   const token1:      string  = pos.token1;
@@ -273,12 +382,20 @@ async function readUniV3Value(
   const liquidity:   bigint  = pos.liquidity;
   const tokensOwed0: bigint  = pos.tokensOwed0;
   const tokensOwed1: bigint  = pos.tokensOwed1;
+  const fg0Last:     bigint  = pos.feeGrowthInside0LastX128;
+  const fg1Last:     bigint  = pos.feeGrowthInside1LastX128;
 
-  // Get pool to read current sqrt price
+  // Get pool to read current sqrt price + fee growth data
   const factory     = new ethers.Contract(ADDR.UNIV3_FACTORY, UNIV3_FACTORY_ABI, provider);
   const poolAddress = await factory.getPool(token0, token1, fee) as string;
   const pool        = new ethers.Contract(poolAddress, UNIV3_POOL_ABI, provider);
-  const slot0       = await pool.slot0();
+  const [slot0, fg0Global, fg1Global, lowerTick, upperTick] = await Promise.all([
+    pool.slot0(),
+    pool.feeGrowthGlobal0X128() as Promise<bigint>,
+    pool.feeGrowthGlobal1X128() as Promise<bigint>,
+    pool.ticks(tickLower),
+    pool.ticks(tickUpper),
+  ]);
 
   const sqrtPriceX96: bigint = slot0[0];
   const currentTick:  number = Number(slot0[1]);
@@ -307,9 +424,11 @@ async function readUniV3Value(
     }
   }
 
-  // Token decimals
-  const dec0 = token0.toLowerCase() === ADDR.USDC.toLowerCase() ? 1e6 : 1e18;
-  const dec1 = token1.toLowerCase() === ADDR.USDC.toLowerCase() ? 1e6 : 1e18;
+  // Token decimals. Stable-stable LPs must value both sides, not just USDC.
+  const token0Decimals = tokenDecimals(token0);
+  const token1Decimals = tokenDecimals(token1);
+  const dec0 = 10 ** token0Decimals;
+  const dec1 = 10 ** token1Decimals;
 
   const price0 = tokenPriceUSD(token0, prices);
   const price1 = tokenPriceUSD(token1, prices);
@@ -319,12 +438,71 @@ async function readUniV3Value(
   const principal1USD = (rawAmount1 / dec1) * price1;
   const principalUSD  = principal0USD + principal1USD;
 
-  // Uncollected fees (these are claimable right now without closing the position)
-  const fees0USD = (Number(tokensOwed0) / dec0) * price0;
-  const fees1USD = (Number(tokensOwed1) / dec1) * price1;
-  const feesUSD  = fees0USD + fees1USD;
+  // Pending fees — computed from feeGrowthInside math (Uniswap V3 spec).
+  // tokensOwed is only updated on collect()/decreaseLiquidity() calls, so it reads 0
+  // for active positions that haven't been touched. The true accrued fees require reading
+  // feeGrowthGlobal and the tick's feeGrowthOutside values and computing the delta.
+  //
+  // Formula (uint256 wrapping arithmetic, intentional overflow):
+  //   feeGrowthInside = feeGrowthGlobal - feeGrowthBelow - feeGrowthAbove
+  //   pending = (feeGrowthInside - feeGrowthInside0LastX128) * liquidity / 2^128 + tokensOwed
+  const hasPrincipal = liquidity > 0n;
+  let fees0USD = 0;
+  let fees1USD = 0;
+  if (hasPrincipal) {
+    try {
+      const Q128  = 2n ** 128n;
+      const Q256  = 2n ** 256n;
+      const sub256 = (a: bigint, b: bigint): bigint => ((a - b) % Q256 + Q256) % Q256;
 
-  const currentUSD = principalUSD + feesUSD;
+      const fgGlobal0 = BigInt(fg0Global);
+      const fgGlobal1 = BigInt(fg1Global);
+      const fg0OutLower = BigInt(lowerTick[2]);
+      const fg1OutLower = BigInt(lowerTick[3]);
+      const fg0OutUpper = BigInt(upperTick[2]);
+      const fg1OutUpper = BigInt(upperTick[3]);
+
+      const fg0Below = currentTick >= tickLower ? fg0OutLower : sub256(fgGlobal0, fg0OutLower);
+      const fg1Below = currentTick >= tickLower ? fg1OutLower : sub256(fgGlobal1, fg1OutLower);
+      const fg0Above = currentTick <  tickUpper ? fg0OutUpper : sub256(fgGlobal0, fg0OutUpper);
+      const fg1Above = currentTick <  tickUpper ? fg1OutUpper : sub256(fgGlobal1, fg1OutUpper);
+
+      const fg0Inside = sub256(sub256(fgGlobal0, fg0Below), fg0Above);
+      const fg1Inside = sub256(sub256(fgGlobal1, fg1Below), fg1Above);
+
+      const pending0 = sub256(fg0Inside, BigInt(fg0Last)) * liquidity / Q128 + tokensOwed0;
+      const pending1 = sub256(fg1Inside, BigInt(fg1Last)) * liquidity / Q128 + tokensOwed1;
+
+      fees0USD = (Number(pending0) / dec0) * price0;
+      fees1USD = (Number(pending1) / dec1) * price1;
+    } catch {
+      // Fallback: use tokensOwed only (conservative — may show 0 until first collect)
+      fees0USD = (Number(tokensOwed0) / dec0) * price0;
+      fees1USD = (Number(tokensOwed1) / dec1) * price1;
+    }
+  }
+  const feesUSD  = fees0USD + fees1USD;
+  const fees0USDExact = hasPrincipal ? feeUSDExactString(token0, tokensOwed0, token0Decimals, fees0USD) : '0';
+  const fees1USDExact = hasPrincipal ? feeUSDExactString(token1, tokensOwed1, token1Decimals, fees1USD) : '0';
+  const feesUSDExact = isDollarLikeToken(token0) && isDollarLikeToken(token1)
+    ? addDecimalStrings(fees0USDExact, fees1USDExact)
+    : feesUSD.toString();
+
+  // When liquidity = 0, position is between close and remint — check vault idle balances.
+  // If WETH/ARB are sitting in balances[user][token] (from a successful close whose remint
+  // failed), count them as NAV so the drawdown circuit breaker doesn't fire a false alarm.
+  let idleNAV = 0;
+  if (!hasPrincipal && userAddress && vaultAddress) {
+    try {
+      const vaultC = new ethers.Contract(vaultAddress, ['function balances(address,address) view returns (uint256)'], provider);
+      const [idle0, idle1] = await Promise.all([
+        vaultC.balances(userAddress, token0).catch(() => 0n) as Promise<bigint>,
+        vaultC.balances(userAddress, token1).catch(() => 0n) as Promise<bigint>,
+      ]);
+      idleNAV = (Number(idle0) / dec0) * price0 + (Number(idle1) / dec1) * price1;
+    } catch { /* non-fatal */ }
+  }
+  const currentUSD = hasPrincipal ? principalUSD + feesUSD : idleNAV;
   // Out-of-range: position earns 0 fees until price re-enters the tick range
   const outOfRange = currentTick < tickLower || currentTick >= tickUpper;
 
@@ -332,7 +510,25 @@ async function readUniV3Value(
     currentUSD,
     incomeEarnedUSD:   feesUSD,   // fees = realised income, principal is NAV
     pendingRewardsUSD: feesUSD,   // tokensOwed = claimable via collect() right now
+    currentUSDExact:        currentUSD.toString(),
+    incomeEarnedUSDExact:   feesUSDExact,
+    pendingRewardsUSDExact: feesUSDExact,
     outOfRange,
+    uniV3Fees: {
+      token0,
+      token1,
+      token0Decimals,
+      token1Decimals,
+      tokensOwed0Raw: tokensOwed0.toString(),
+      tokensOwed1Raw: tokensOwed1.toString(),
+      tokensOwed0:    ethers.formatUnits(tokensOwed0, token0Decimals),
+      tokensOwed1:    ethers.formatUnits(tokensOwed1, token1Decimals),
+      fees0USD,
+      fees1USD,
+      fees0USDExact,
+      fees1USDExact,
+      feesUSDExact,
+    },
     dataSource: 'on-chain',
   };
 }
@@ -480,10 +676,15 @@ async function readGMXValue(
   const gmToken   = new ethers.Contract(marketAddress, GMX_MARKET_ABI, provider);
   const dataStore = new ethers.Contract(ADDR.GMX_DATASTORE, GMX_DATASTORE_ABI, provider);
 
+  // Fix I-3: If gmTokenAmount is not yet captured, gmToken.balanceOf(vaultAddress) returns the
+  // AGGREGATE GM token balance for ALL users — dangerous in multi-user vaults.
+  // Use entryUSD as the fallback until gmTokenAmount is populated (GMX async deposit settles).
+  // NOTE: gmTokenAmount is populated by position-reader.ts once the vault's GM balance appears.
+  const hasAmount = gmTokenAmount && gmTokenAmount !== '0';
   const [gmBalance, gmTotalSupply] = await Promise.all([
-    gmTokenAmount && gmTokenAmount !== '0'
+    hasAmount
       ? Promise.resolve(BigInt(gmTokenAmount))
-      : gmToken.balanceOf(vaultAddress) as Promise<bigint>,
+      : Promise.resolve(0n),   // fallback: use entryUSD below instead of aggregate balance
     gmToken.totalSupply() as Promise<bigint>,
   ]);
 
@@ -516,6 +717,7 @@ export async function readRealPositionValue(
   provider:     JsonRpcProvider,
   vaultAddress: string,
   prices:       PriceMap,
+  userAddress?: string,
 ): Promise<RealPositionRead | null> {
   try {
     switch (pos.strategyType) {
@@ -535,8 +737,8 @@ export async function readRealPositionValue(
         );
 
       case 'DELTA_NEUTRAL':
-        if (!pos.uniV3TokenId) return null;   // deposit not yet settled (async GMX order still pending?)
-        return await readUniV3Value(provider, pos.uniV3TokenId, prices);
+        if (!pos.uniV3TokenId) return null;
+        return await readUniV3Value(provider, pos.uniV3TokenId, prices, userAddress, vaultAddress);
 
       case 'PENDLE_LP':
         if (!pos.venueAddress) return null;

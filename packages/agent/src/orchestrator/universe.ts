@@ -2,6 +2,7 @@ import { JsonRpcProvider } from 'ethers';
 import type { Opportunity, RiskTier, OpportunityCosts, OpportunityRisk, Trend } from './types';
 import type { OnChainSnapshot } from './protocols';
 import { computeGeckoScore, applyTierMultiplier, computeRealYieldAPY } from './gecko-scorer';
+import { getTopScreenedPools } from './protocols/uniV3Screener';
 
 // ── Universe Engine ───────────────────────────────────────────────────────────
 //
@@ -143,41 +144,58 @@ function buildGMXOpps(pools: LlamaPool[], oc: OnChainSnapshot): Opportunity[] {
     });
 }
 
-// ── DELTA NEUTRAL ─────────────────────────────────────────────────────────────
+// ── DELTA NEUTRAL — LVR-screened via uniV3Screener ───────────────────────────
+//
+//  Replaces the old DeFiLlama-only filter with the full LVR intelligence stack:
+//  C/C_avg fee scaling, epoch ratio guard, optimal tick range pre-computed.
+//  All screener results are cached 15 minutes; no per-tick DeFiLlama calls.
 
-function buildDeltaNeutralOpps(pools: LlamaPool[], fundingRates: Map<string, number>): Opportunity[] {
-  return pools
-    .filter(p => {
-      const sym = p.symbol.toUpperCase();
-      return (p.project.toLowerCase().includes('uniswap') || p.project.toLowerCase().includes('camelot'))
-        && Object.keys(HEDGE_ASSET).some(k => sym.includes(k))
-        && (sym.includes('USDC') || sym.includes('USDT'))
-        && (p.volumeUsd7d ?? 0) > 0
-        && p.tvlUsd >= 1_000_000 && p.apy > 5;
-    })
-    .slice(0, 6)
-    .map((p, i): Opportunity => {
-      const sym     = p.symbol.toUpperCase();
-      const hedge   = HEDGE_ASSET[Object.keys(HEDGE_ASSET).find(k => sym.includes(k)) ?? 'WETH'];
-      const funding = fundingRates.get(hedge) ?? 6.5;
-      const emFrac  = emissionFraction(p);
-      const costs: OpportunityCosts = {
-        fundingAnnual: funding, executionPct: 0.20, gasAnnual: GAS_PCT + 2.0, oiPenalty: 0,
-      };
-      const netAPY = Math.max(0, p.apy - costs.fundingAnnual - costs.executionPct - costs.gasAnnual);
+async function buildDeltaNeutralOpps(
+  _pools:       LlamaPool[],
+  _fundingRates: Map<string, number>,
+  provider?:    JsonRpcProvider,
+): Promise<Opportunity[]> {
+  const screened = await getTopScreenedPools(10, provider);
+  if (screened.length === 0) return [];
 
-      return {
-        id: `dn-${i}`, strategyType: 'DELTA_NEUTRAL',
-        protocol: `${p.project.replace(/-/g, ' ')} + Perp Hedge`, pool: p.symbol, asset: sym,
-        tvlUSD: p.tvlUsd, grossAPY: p.apy, realYieldAPY: p.apy * (1 - emFrac),
-        emissionFraction: emFrac, netAPY, geckoScore: 0,
-        costs, risk: mkRisk({ counterpartyRisk: 'medium', liquidationRisk: true, rebalanceNeeded: true }),
-        history: { apy7d: p.apyBase7d, apy30d: p.apyMean30d, trend: calcTrend(p.apy, p.apyBase7d, p.apyMean30d), sigma: p.sigma },
-        minTier: 'balanced', verifiedOnChain: false,
-        // DeFiLlama uses the UniV3 pool address as its pool ID for on-chain pools
-        llamaPoolId: p.pool, address: p.pool, updatedAt: Date.now(),
-      };
-    });
+  return screened.map((sp, i): Opportunity => {
+    const costs: OpportunityCosts = {
+      fundingAnnual: 0,
+      executionPct:  0.10,
+      gasAnnual:     GAS_PCT + 1.0,
+      oiPenalty:     0,
+    };
+    return {
+      id:              `dn-lvr-${i}`,
+      strategyType:    'DELTA_NEUTRAL',
+      protocol:        'Uniswap V3 (LVR-screened)',
+      pool:            sp.symbol,
+      asset:           sp.symbol,
+      tvlUSD:          sp.tvlUSD,
+      grossAPY:        sp.adjFeeAPY,
+      realYieldAPY:    sp.adjFeeAPY,
+      emissionFraction: 0,
+      netAPY:          sp.netAPY,
+      geckoScore:      0,          // set by scorer below
+      costs,
+      risk: mkRisk({ counterpartyRisk: 'low', ilRisk: true, rebalanceNeeded: true }),
+      history: { apy7d: null, apy30d: null, trend: 'stable', sigma: sp.sigmaRatioDaily ?? null },
+      minTier:         'balanced',
+      verifiedOnChain: true,       // address resolved from on-chain factory
+      llamaPoolId:     sp.address,
+      address:         sp.address,
+      updatedAt:       Date.now(),
+      // LVR screener fields — used by execution for tick range and by screener display
+      lvrOptimalRangePct: sp.optimalRangePct,
+      lvrConcentrationC:  sp.concentrationC,
+      lvrCAvg:            sp.cAvg,
+      lvrAdjFeeAPY:       sp.adjFeeAPY,
+      lvrNetAPY:          sp.netAPY,
+      lvrSigmaDaily:      sp.sigmaRatioDaily,
+      lvrEpochRatio:      sp.epochRatio,
+      lvrScoredAt:        sp.scoredAt,
+    };
+  });
 }
 
 // ── MORPHO LENDING ────────────────────────────────────────────────────────────
@@ -228,7 +246,7 @@ interface PendleMarket {
 
 async function fetchPendleMarkets(chainId = 42161, limit = 8): Promise<PendleMarket[]> {
   try {
-    const url  = `https://api-v2.pendle.finance/core/v1/${chainId}/markets?limit=${limit}&is_active=true&order_by=liquidity:desc`;
+    const url  = `https://api-v2.pendle.finance/core/v1/${chainId}/markets?limit=${limit}&is_active=true`;
     const resp = await fetch(url, { signal: AbortSignal.timeout(8_000) });
     if (!resp.ok) return [];
     const data = await resp.json() as { results?: PendleMarket[] };
@@ -381,11 +399,14 @@ export async function fetchUniverse(
     fetchFundingRates(),
   ]);
 
-  const [pendleOpps] = await Promise.all([buildPendleOpps(llamaPools)]);
+  const [pendleOpps, deltaNeutralOpps] = await Promise.all([
+    buildPendleOpps(llamaPools),
+    buildDeltaNeutralOpps(llamaPools, fundingRates, _provider),
+  ]);
 
   const all = [
     ...buildGMXOpps(llamaPools, ocSnapshot),
-    ...buildDeltaNeutralOpps(llamaPools, fundingRates),
+    ...deltaNeutralOpps,
     ...buildMorphoOpps(llamaPools, ocSnapshot),
     ...pendleOpps,
     ...buildAaveOpps(llamaPools, ocSnapshot),

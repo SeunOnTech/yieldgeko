@@ -904,6 +904,230 @@ contract YieldGekoForkTest is Test {
     // Helpers
     // =========================================================================
 
+    // =========================================================================
+    // DELTA-NEUTRAL — targeted regression tests for the 3 failure modes
+    // =========================================================================
+
+    // Helper: mint a WETH/USDCE position and return (tokenId, liquidity, wethUsed, usdceUsed)
+    function _mintWethUsdcePosition()
+        internal
+        returns (uint256 tokenId, uint128 liquidity, uint256 wethUsed, uint256 usdceUsed)
+    {
+        (, int24 currentTick,,,,,) = IUniV3Pool(UNI_USDC_WETH_POOL).slot0();
+        int24 tickSpacing = 60;
+        int24 currentFloor = currentTick >= 0
+            ? (currentTick / tickSpacing) * tickSpacing
+            : ((currentTick - tickSpacing + 1) / tickSpacing) * tickSpacing;
+        int24 tickLower = currentFloor - tickSpacing * 5;
+        int24 tickUpper = currentFloor + tickSpacing * 5;
+
+        uint256 wethAmt = 0.05 ether;
+        uint256 usdceAmt = 150e6;
+        _depositToVault(WETH, wethAmt);
+        _depositToVault(USDCE, usdceAmt);
+
+        bytes memory mintData = abi.encodeWithSelector(
+            bytes4(
+                keccak256("mint((address,address,uint24,int24,int24,uint256,uint256,uint256,uint256,address,uint256))")
+            ),
+            WETH,
+            USDCE,
+            uint24(3000),
+            tickLower,
+            tickUpper,
+            wethAmt,
+            usdceAmt,
+            uint256(0),
+            uint256(0),
+            address(vault),
+            block.timestamp + 600
+        );
+
+        vm.startPrank(AGENT);
+        vault.approveToken(WETH, UNI_V3_POSITION_MGR, wethAmt);
+        vault.approveToken(USDCE, UNI_V3_POSITION_MGR, usdceAmt);
+        address[] memory assets = new address[](2);
+        assets[0] = WETH;
+        assets[1] = USDCE;
+        address[] memory targets = new address[](1);
+        targets[0] = UNI_V3_POSITION_MGR;
+        bytes[] memory data = new bytes[](1);
+        data[0] = mintData;
+        vault.executeBatchMulti(USER, assets, targets, data, keccak256("mint"));
+        vm.stopPrank();
+
+        tokenId = _getUniV3TokenId(address(vault));
+        (,,,,,,, liquidity,,,,) = _getUniV3Position(tokenId);
+        assertGt(liquidity, 0, "Mint produced no liquidity");
+
+        // weth/usdce consumed = deposit - remaining idle
+        wethUsed = wethAmt - vault.balances(USER, WETH);
+        usdceUsed = usdceAmt - vault.balances(USER, USDCE);
+    }
+
+    // Helper: build multicall([decreaseLiquidity, collect]) payload for the position manager
+    function _buildCloseMulticall(uint256 tokenId, uint128 liquidity)
+        internal
+        view
+        returns (bytes memory multicallData)
+    {
+        bytes memory decreaseData = abi.encodeWithSelector(
+            bytes4(keccak256("decreaseLiquidity((uint256,uint128,uint256,uint256,uint256))")),
+            tokenId,
+            liquidity,
+            uint256(0),
+            uint256(0),
+            block.timestamp + 600
+        );
+        bytes memory collectData = abi.encodeWithSelector(
+            bytes4(keccak256("collect((uint256,address,uint128,uint128))")),
+            tokenId,
+            address(vault),
+            type(uint128).max,
+            type(uint128).max
+        );
+        bytes[] memory inner = new bytes[](2);
+        inner[0] = decreaseData;
+        inner[1] = collectData;
+        multicallData = abi.encodeWithSignature("multicall(bytes[])", inner);
+    }
+
+    // ── Test 1: Close position using [0,0] deployedAmounts ──────────────────
+    // Regression: old code used executeWithdraw which required deployed[user][USDC] > 0.
+    // New code uses executeWithdrawMulti([token0,token1],[0,0]) — must work regardless.
+    function test_Fork_DeltaNeutral_CloseWithZeroDeployed() public {
+        (uint256 tokenId, uint128 liquidity,,) = _mintWethUsdcePosition();
+
+        bytes memory mcData = _buildCloseMulticall(tokenId, liquidity);
+
+        address[] memory assets = new address[](2);
+        assets[0] = WETH;
+        assets[1] = USDCE;
+        uint256[] memory deployedAmts = new uint256[](2);
+        // Deliberately pass 0 for both — the key regression
+        deployedAmts[0] = 0;
+        deployedAmts[1] = 0;
+
+        uint256 wethBefore = vault.balances(USER, WETH);
+        uint256 usdceBefore = vault.balances(USER, USDCE);
+
+        vm.prank(AGENT);
+        vault.executeWithdrawMulti(USER, assets, deployedAmts, UNI_V3_POSITION_MGR, mcData, keccak256("close-zero"));
+
+        uint256 wethAfter = vault.balances(USER, WETH);
+        uint256 usdceAfter = vault.balances(USER, USDCE);
+        assertGt(wethAfter + usdceAfter, wethBefore + usdceBefore, "No tokens credited after close");
+
+        // NFT should have 0 liquidity now
+        (,,,,,,, uint128 liqAfter,,,,) = _getUniV3Position(tokenId);
+        assertEq(liqAfter, 0, "Liquidity should be 0 after close");
+    }
+
+    // ── Test 2: Close works even when user is drawdown-paused ────────────────
+    // Regression: old executeWithdraw path checked _assertNotUserPaused → reverted.
+    // executeWithdrawMulti does NOT check userPaused — must succeed while paused.
+    function test_Fork_DeltaNeutral_CloseWhilePaused() public {
+        (uint256 tokenId, uint128 liquidity,,) = _mintWethUsdcePosition();
+
+        // Set peak value high first, then report collapse → triggers pause.
+        // Policy maxDrawdownBps = 5000 (50%), so reporting < peak/2 pauses the user.
+        vm.startPrank(AGENT);
+        vault.reportValue(USER, 1_000e6); // sets peakValueUSD = 1000 USD
+        vault.reportValue(USER, 1); // 1 < 500e6 threshold → pause
+        vm.stopPrank();
+
+        // Confirm user is now paused
+        assertTrue(vault.userPaused(USER), "User should be paused after drawdown");
+
+        bytes memory mcData = _buildCloseMulticall(tokenId, liquidity);
+        address[] memory assets = new address[](2);
+        assets[0] = WETH;
+        assets[1] = USDCE;
+        uint256[] memory deployedAmts = new uint256[](2);
+        deployedAmts[0] = 0;
+        deployedAmts[1] = 0;
+
+        // This must NOT revert even though the user is paused
+        vm.prank(AGENT);
+        vault.executeWithdrawMulti(USER, assets, deployedAmts, UNI_V3_POSITION_MGR, mcData, keccak256("close-paused"));
+
+        uint256 wethAfter = vault.balances(USER, WETH);
+        uint256 usdceAfter = vault.balances(USER, USDCE);
+        assertGt(wethAfter + usdceAfter, 0, "Tokens not returned while user paused");
+    }
+
+    // ── Test 3: Rebalance cycle — close then remint at new range ────────────
+    // Regression: migrate was non-atomic. New path: close (executeWithdrawMulti)
+    // → remint (executeBatchMulti from existing vault balances). No USDC roundtrip.
+    function test_Fork_DeltaNeutral_RebalanceCycle() public {
+        (uint256 tokenId, uint128 liquidity,,) = _mintWethUsdcePosition();
+
+        // ── Step 1: Close (executeWithdrawMulti [0,0]) ──────────────────────
+        bytes memory mcData = _buildCloseMulticall(tokenId, liquidity);
+        address[] memory assets = new address[](2);
+        assets[0] = WETH;
+        assets[1] = USDCE;
+        uint256[] memory deployedAmts = new uint256[](2);
+
+        vm.prank(AGENT);
+        vault.executeWithdrawMulti(USER, assets, deployedAmts, UNI_V3_POSITION_MGR, mcData, keccak256("rebal-close"));
+
+        uint256 wethIdle = vault.balances(USER, WETH);
+        uint256 usdceIdle = vault.balances(USER, USDCE);
+        assertGt(wethIdle + usdceIdle, 0, "No idle balance after close");
+
+        // ── Step 2: Remint at a different (wider) range ─────────────────────
+        (, int24 currentTick,,,,,) = IUniV3Pool(UNI_USDC_WETH_POOL).slot0();
+        int24 tickSpacing = 60;
+        int24 currentFloor = currentTick >= 0
+            ? (currentTick / tickSpacing) * tickSpacing
+            : ((currentTick - tickSpacing + 1) / tickSpacing) * tickSpacing;
+        int24 newTickLower = currentFloor - tickSpacing * 10; // wider range
+        int24 newTickUpper = currentFloor + tickSpacing * 10;
+
+        bytes memory remintData = abi.encodeWithSelector(
+            bytes4(
+                keccak256("mint((address,address,uint24,int24,int24,uint256,uint256,uint256,uint256,address,uint256))")
+            ),
+            WETH,
+            USDCE,
+            uint24(3000),
+            newTickLower,
+            newTickUpper,
+            wethIdle,
+            usdceIdle,
+            uint256(0),
+            uint256(0),
+            address(vault),
+            block.timestamp + 600
+        );
+
+        vm.startPrank(AGENT);
+        vault.approveToken(WETH, UNI_V3_POSITION_MGR, wethIdle);
+        vault.approveToken(USDCE, UNI_V3_POSITION_MGR, usdceIdle);
+        address[] memory remintTargets = new address[](1);
+        remintTargets[0] = UNI_V3_POSITION_MGR;
+        bytes[] memory remintData_ = new bytes[](1);
+        remintData_[0] = remintData;
+        vault.executeBatchMulti(USER, assets, remintTargets, remintData_, keccak256("rebal-remint"));
+        vm.stopPrank();
+
+        // Vault now owns 2 NFTs: old (empty) at index 0, new (with liquidity) at index 1
+        uint256 nftCount = IUniV3PositionMgr(UNI_V3_POSITION_MGR).balanceOf(address(vault));
+        assertEq(nftCount, 2, "Should have 2 NFTs after rebalance (old empty + new)");
+
+        // Get new tokenId at index 1
+        (bool ok2, bytes memory ret2) = UNI_V3_POSITION_MGR.staticcall(
+            abi.encodeWithSignature("tokenOfOwnerByIndex(address,uint256)", address(vault), 1)
+        );
+        require(ok2, "tokenOfOwnerByIndex(1) failed");
+        uint256 newTokenId = abi.decode(ret2, (uint256));
+
+        assertFalse(newTokenId == tokenId, "Should have a new tokenId after rebalance");
+        (,,,,,,, uint128 newLiquidity,,,,) = _getUniV3Position(newTokenId);
+        assertGt(newLiquidity, 0, "New position has no liquidity after remint");
+    }
+
     function _depositToVault(address token, uint256 amount) internal {
         deal(token, USER, amount);
         vm.startPrank(USER);
@@ -941,11 +1165,9 @@ contract YieldGekoForkTest is Test {
             abi.encodeWithSignature("positions(uint256)", tokenId)
         );
         require(ok, "positions() failed");
-        return
-            abi.decode(
-                ret,
-                (uint96, address, address, address, uint24, int24, int24, uint128, uint256, uint256, uint128, uint128)
-            );
+        return abi.decode(
+            ret, (uint96, address, address, address, uint24, int24, int24, uint128, uint256, uint256, uint128, uint128)
+        );
     }
 }
 

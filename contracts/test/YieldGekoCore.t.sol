@@ -153,8 +153,8 @@ contract YieldGekoTest is Test {
 
     function test_Constructor_Reverts_FeeTooHigh() public {
         vm.prank(OWNER);
-        vm.expectRevert(abi.encodeWithSelector(YieldGeko.FeeTooHigh.selector, 201, 200));
-        new YieldGeko(AGENT, TREASURY, 201);
+        vm.expectRevert(abi.encodeWithSelector(YieldGeko.FeeTooHigh.selector, 2001, 2000));
+        new YieldGeko(AGENT, TREASURY, 2001);
     }
 
     // =========================================================================
@@ -488,22 +488,47 @@ contract YieldGekoTest is Test {
 
     function test_ExecuteWithdraw_MeasuresActualReturn() public {
         address user = _registerUserPolicy();
-        // Seed deployed tracking manually (simulate prior deposit)
         _depositFor(user, 1_000e18);
         vm.startPrank(AGENT);
         core.approveToken(address(token), address(mockTarget), 1_000e18);
         bytes memory depData = abi.encodeWithSignature("absorb(address,uint256)", address(token), 1_000e18);
         core.executeDeposit(user, address(token), 1_000e18, 1000, address(mockTarget), depData, bytes32(0));
 
-        // Fund mock so it can return tokens
         token.mint(address(mockTarget), 50e18); // simulate 5% yield
         bytes memory wdData = abi.encodeWithSignature("release(address,uint256)", address(token), 1_050e18);
         core.executeWithdraw(user, address(token), 1_000e18, address(mockTarget), wdData, keccak256("r2"));
         vm.stopPrank();
 
-        // Idle should reflect ACTUAL return (1050), not the deployed amount (1000)
-        assertEq(core.balances(user, address(token)), 1_050e18);
+        // surplus = 1050 - 1000 = 50, feeBps = 10, fee = 50e18 * 10 / 10_000 = 5e16
+        uint256 fee = (50e18 * 10) / 10_000;
+        assertEq(core.balances(user, address(token)), 1_050e18 - fee);
         assertEq(core.deployed(user, address(token)), 0);
+        assertEq(token.balanceOf(TREASURY), fee);
+    }
+
+    function test_ExecuteWithdraw_NoFeeOnIL() public {
+        address user = _registerUserPolicy();
+        _depositFor(user, 1_000e18);
+        vm.startPrank(AGENT);
+        core.approveToken(address(token), address(mockTarget), 1_000e18);
+        core.executeDeposit(
+            user,
+            address(token),
+            1_000e18,
+            1000,
+            address(mockTarget),
+            abi.encodeWithSignature("absorb(address,uint256)", address(token), 1_000e18),
+            bytes32(0)
+        );
+
+        // Protocol only returns 900 (10% IL) — no fee charged, full return credited
+        bytes memory wdData = abi.encodeWithSignature("release(address,uint256)", address(token), 900e18);
+        core.executeWithdraw(user, address(token), 1_000e18, address(mockTarget), wdData, keccak256("il"));
+        vm.stopPrank();
+
+        assertEq(core.balances(user, address(token)), 900e18);
+        assertEq(core.deployed(user, address(token)), 0);
+        assertEq(token.balanceOf(TREASURY), 0);
     }
 
     function test_ExecuteWithdraw_OpenDuringEmergency() public {
@@ -721,8 +746,12 @@ contract YieldGekoTest is Test {
 
         assertEq(core.deployed(user, address(token)), 0);
         assertEq(core.deployed(user, address(tokenB)), 0);
-        assertEq(core.balances(user, address(token)), 1_100e18);
-        assertEq(core.balances(user, address(tokenB)), 3e18);
+        // token: surplus=100e18, feeBps=10 → fee=1e16
+        // tokenB: surplus=1e18, feeBps=10 → fee=1e14
+        uint256 feeToken = (100e18 * 10) / 10_000;
+        uint256 feeTokenB = (1e18 * 10) / 10_000;
+        assertEq(core.balances(user, address(token)), 1_100e18 - feeToken);
+        assertEq(core.balances(user, address(tokenB)), 3e18 - feeTokenB);
     }
 
     function test_ExecuteWithdrawMulti_Reverts_DuplicateAsset() public {
@@ -840,8 +869,8 @@ contract YieldGekoTest is Test {
 
     function test_SetDefaultFeeBps_Reverts_TooHigh() public {
         vm.prank(OWNER);
-        vm.expectRevert(abi.encodeWithSelector(YieldGeko.FeeTooHigh.selector, 201, 200));
-        core.setDefaultFeeBps(201);
+        vm.expectRevert(abi.encodeWithSelector(YieldGeko.FeeTooHigh.selector, 2001, 2000));
+        core.setDefaultFeeBps(2001);
     }
 
     function test_OnlyOwner_CanApproveTarget() public {
@@ -900,7 +929,10 @@ contract YieldGekoTest is Test {
 
         // Ghost deployed must be zero — max(deployedAmount=1, returned=1000) was used.
         assertEq(core.deployed(user, address(token)), 0, "ghost deployed balance");
-        assertEq(core.balances(user, address(token)), 1_000e18, "idle balance");
+        // surplus ≈ 1000e18, feeBps=10 → fee ≈ 1e18 (exact: (1000e18-1)*10/10000)
+        uint256 returned_ = 1_000e18;
+        uint256 fee = ((returned_ - 1) * 10) / 10_000;
+        assertEq(core.balances(user, address(token)), 1_000e18 - fee, "idle balance after fee");
     }
 
     /// Finding 2: drawdown pause must block execute() as well, not only fund-moving paths.
@@ -995,6 +1027,105 @@ contract YieldGekoTest is Test {
         vm.prank(AGENT);
         vm.expectRevert(YieldGeko.PolicyNotActive.selector);
         core.collectFee(address(token), user, 1_000e18);
+    }
+
+    // =========================================================================
+    // EXECUTE HARVEST — auto-fee on harvested yield
+    // =========================================================================
+
+    function test_ExecuteHarvest_AutoFeeOnHarvested() public {
+        address user = _registerUserPolicy();
+        // Fund mock to simulate reward collection (e.g. UniV3 fee income)
+        token.mint(address(mockTarget), 100e18);
+
+        address[] memory targets = new address[](1);
+        bytes[] memory data = new bytes[](1);
+        targets[0] = address(mockTarget);
+        data[0] = abi.encodeWithSignature("release(address,uint256)", address(token), 100e18);
+
+        vm.prank(AGENT);
+        core.executeHarvest(user, address(token), targets, data, keccak256("harvest1"));
+
+        // harvested=100e18, feeBps=10 → fee=1e16
+        uint256 fee = (100e18 * 10) / 10_000;
+        assertEq(core.balances(user, address(token)), 100e18 - fee);
+        assertEq(token.balanceOf(TREASURY), fee);
+    }
+
+    function test_ExecuteHarvest_NoFeeWhenZeroHarvested() public {
+        address user = _registerUserPolicy();
+
+        address[] memory targets = new address[](1);
+        bytes[] memory data = new bytes[](1);
+        targets[0] = address(mockTarget);
+        data[0] = abi.encodeWithSignature("ping()"); // no token movement
+
+        vm.prank(AGENT);
+        core.executeHarvest(user, address(token), targets, data, keccak256("harvest-noop"));
+
+        assertEq(core.balances(user, address(token)), 0);
+        assertEq(token.balanceOf(TREASURY), 0);
+    }
+
+    function test_ExecuteHarvest_BlockedDuringEmergency() public {
+        address user = _registerUserPolicy();
+        vm.prank(OWNER);
+        core.setEmergencyMode(true);
+
+        address[] memory targets = new address[](1);
+        bytes[] memory data = new bytes[](1);
+        targets[0] = address(mockTarget);
+        data[0] = abi.encodeWithSignature("ping()");
+
+        vm.prank(AGENT);
+        vm.expectRevert();
+        core.executeHarvest(user, address(token), targets, data, bytes32(0));
+    }
+
+    function test_ExecuteHarvest_Reverts_UnapprovedTarget() public {
+        address user = _registerUserPolicy();
+
+        address[] memory targets = new address[](1);
+        bytes[] memory data = new bytes[](1);
+        targets[0] = address(0xBAD);
+        data[0] = abi.encodeWithSignature("ping()");
+
+        vm.prank(AGENT);
+        vm.expectRevert(abi.encodeWithSelector(YieldGeko.TargetNotApproved.selector, address(0xBAD)));
+        core.executeHarvest(user, address(token), targets, data, bytes32(0));
+    }
+
+    function test_ExecuteHarvest_Reverts_NoPolicy() public {
+        address[] memory targets = new address[](1);
+        bytes[] memory data = new bytes[](1);
+        targets[0] = address(mockTarget);
+        data[0] = abi.encodeWithSignature("ping()");
+
+        vm.prank(AGENT);
+        vm.expectRevert(YieldGeko.PolicyNotActive.selector);
+        core.executeHarvest(USER, address(token), targets, data, bytes32(0));
+    }
+
+    function test_ExecuteHarvest_MultiStep_AtomicCollectAndSwap() public {
+        address user = _registerUserPolicy();
+        // Simulate: step1 absorbs tokenB (volatile), step2 releases token (USDC normalised)
+        tokenB.mint(address(core), 1e18); // vault "receives" volatile from collect
+        token.mint(address(mockTarget), 3_000e6); // mock "returns" USDC after swap
+
+        address[] memory targets = new address[](2);
+        bytes[] memory data = new bytes[](2);
+        targets[0] = address(mockTarget);
+        data[0] = abi.encodeWithSignature("absorb(address,uint256)", address(tokenB), 1e18); // consume volatile
+        targets[1] = address(mockTarget);
+        data[1] = abi.encodeWithSignature("release(address,uint256)", address(token), 3_000e6); // emit USDC
+        vm.startPrank(AGENT);
+        core.approveToken(address(tokenB), address(mockTarget), 1e18);
+        core.executeHarvest(user, address(token), targets, data, keccak256("harvest-swap"));
+        vm.stopPrank();
+
+        uint256 fee = (3_000e6 * 10) / 10_000;
+        assertEq(core.balances(user, address(token)), 3_000e6 - fee);
+        assertEq(token.balanceOf(TREASURY), fee);
     }
 }
 

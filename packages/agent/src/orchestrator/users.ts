@@ -47,6 +47,7 @@ export const DEMO_POLICIES: UserPolicy[] = [
 // ── Fresh user state factory ───────────────────────────────────────────────────
 
 export function createUserState(policy: UserPolicy): UserState {
+  const now = Date.now();
   return {
     userId:     policy.id,
     policy,
@@ -56,7 +57,9 @@ export function createUserState(policy: UserPolicy): UserState {
     pnlHistory: [],
     executions: [],
     log:        [],
-    updatedAt:  Date.now(),
+    activeSessionId:        `session-${now}`,
+    activeSessionStartedAt: now,
+    updatedAt:  now,
     tickErrors: 0,
   };
 }
@@ -101,6 +104,8 @@ export class UserRegistry {
       ...persisted,
       // Fresh runtime fields — these are rebuilt each session
       log:        persisted.log.slice(0, 20),   // keep last 20 log entries
+      activeSessionId:        persisted.activeSessionId ?? `session-${Date.now()}`,
+      activeSessionStartedAt: persisted.activeSessionStartedAt ?? Date.now(),
       tickErrors: 0,
       updatedAt:  Date.now(),
     };

@@ -142,6 +142,7 @@ export async function updatePortfolioPositionsReal(
   prices:       PriceMap,
   provider:     JsonRpcProvider,
   vaultAddress: string,
+  userAddress?: string,
 ): Promise<Portfolio> {
   const updated = await Promise.all(
     portfolio.positions.map(async (pos) => {
@@ -153,7 +154,7 @@ export async function updatePortfolioPositionsReal(
       // 2. Attempt real on-chain value read
       let realRead: Awaited<ReturnType<typeof readRealPositionValue>> = null;
       try {
-        realRead = await readRealPositionValue(pos, provider, vaultAddress, prices);
+        realRead = await readRealPositionValue(pos, provider, vaultAddress, prices, userAddress);
       } catch (err: any) {
         console.warn(`[Monitor] Real read failed for ${pos.strategyType} — using formula. ${err.message}`);
       }
@@ -183,18 +184,41 @@ export async function updatePortfolioPositionsReal(
         effectiveAPY,
         peakUSD,
         drawdownPct,
+        currentUSDExact:        realRead.currentUSDExact ?? currentUSD.toString(),
+        incomeEarnedUSDExact:   realRead.incomeEarnedUSDExact ?? incomeEarnedUSD.toString(),
+        pendingRewardsUSDExact: realRead.pendingRewardsUSDExact ?? realRead.pendingRewardsUSD.toString(),
         // Real pending rewards drives the harvest decision (not formula estimate)
         pendingRewardsUSD: realRead.pendingRewardsUSD,
         // UniV3: real fees owed = actual income; for other protocols income is NAV delta
         feesEarnedUSD: pos.strategyType === 'DELTA_NEUTRAL'
           ? realRead.incomeEarnedUSD
           : formulaPos.feesEarnedUSD,
+        feesEarnedUSDExact: pos.strategyType === 'DELTA_NEUTRAL'
+          ? (realRead.incomeEarnedUSDExact ?? realRead.incomeEarnedUSD.toString())
+          : formulaPos.feesEarnedUSD.toString(),
         // Track consecutive out-of-range ticks for UniV3 range circuit breaker
         uniV3OutOfRangeTicks: pos.strategyType === 'DELTA_NEUTRAL'
           ? (realRead.outOfRange ? (pos.uniV3OutOfRangeTicks ?? 0) + 1 : 0)
           : pos.uniV3OutOfRangeTicks,
         // LEVERAGED_LOOP: persist health factor for circuit breaker
         ...(realRead.healthFactor != null ? { healthFactor: realRead.healthFactor } : {}),
+        // UniV3 exact fee state: keep raw token units so tiny fees do not
+        // disappear behind USD rounding or JS number formatting.
+        ...(realRead.uniV3Fees ? {
+          uniV3Token0:          realRead.uniV3Fees.token0,
+          uniV3Token1:          realRead.uniV3Fees.token1,
+          uniV3Token0Decimals:  realRead.uniV3Fees.token0Decimals,
+          uniV3Token1Decimals:  realRead.uniV3Fees.token1Decimals,
+          uniV3TokensOwed0Raw:  realRead.uniV3Fees.tokensOwed0Raw,
+          uniV3TokensOwed1Raw:  realRead.uniV3Fees.tokensOwed1Raw,
+          uniV3TokensOwed0:     realRead.uniV3Fees.tokensOwed0,
+          uniV3TokensOwed1:     realRead.uniV3Fees.tokensOwed1,
+          uniV3PendingFees0USD: realRead.uniV3Fees.fees0USD,
+          uniV3PendingFees1USD: realRead.uniV3Fees.fees1USD,
+          uniV3PendingFees0USDExact: realRead.uniV3Fees.fees0USDExact,
+          uniV3PendingFees1USDExact: realRead.uniV3Fees.fees1USDExact,
+          uniV3PendingFeesUSDExact:  realRead.uniV3Fees.feesUSDExact,
+        } : {}),
       };
     }),
   );
@@ -218,8 +242,18 @@ export function checkCircuitBreakers(
   const m = portfolio.metrics;
 
   // ── 1. Portfolio NAV drawdown ────────────────────────────────────────────
-  const dd     = m.drawdownPct;
-  const maxDD  = policy.maxDrawdownPct;
+  // Sanity cap: peak cannot exceed 1.5× entry unless genuinely earned.
+  // Rebalance floor: when all positions have liquidity=0 (between close and remint),
+  // funds exist as idle WETH/ARB in vault balances. IL from market movement is real
+  // but should not exceed 15% of entry — if it does, cap the peak to current value
+  // to avoid a false circuit breaker during the transitional state.
+  const sanePeak = m.totalEntryUSD * 1.5;
+  const allPositionsEmpty = portfolio.positions.every(p => p.currentUSD === 0 || p.uniV3Liquidity === '0');
+  const rebalanceFloor   = allPositionsEmpty ? m.totalEntryUSD * 0.85 : 0;
+  const cappedPeak       = m.peakValueUSD <= sanePeak ? m.peakValueUSD : m.totalValueUSD;
+  const truePeak         = m.totalValueUSD >= rebalanceFloor ? cappedPeak : m.totalValueUSD;
+  const dd       = truePeak > 0 ? Math.max(0, ((truePeak - m.totalValueUSD) / truePeak) * 100) : 0;
+  const maxDD    = policy.maxDrawdownPct;
   breakers.push({
     id: 'portfolio-drawdown', name: 'Portfolio Drawdown',
     status: dd >= maxDD ? 'RED' : dd >= maxDD * 0.60 ? 'YELLOW' : 'GREEN',

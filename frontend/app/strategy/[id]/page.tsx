@@ -1,253 +1,496 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { useReadContract } from 'wagmi'
-import { formatUnits } from 'viem'
+import { useReadContract, useWriteContract } from 'wagmi'
+import { formatUnits, parseUnits } from 'viem'
 import { VAULT_ADDRESS, USDC_ADDRESS } from '@/config'
 import { yieldGekoAbi } from '@/src/generated'
 import { AppNav, StatusPill, ChainChip, ProtocolMark } from '../../components/ui'
 
-// ─── Agent state fetch ────────────────────────────────────────────────────────
+// ── Agent state ───────────────────────────────────────────────────────────────
+
+const AGENT_BASE = (process.env.NEXT_PUBLIC_AGENT_SSE_URL ?? 'http://localhost:3001/events').replace('/events', '')
+const AGENT_KEY  = process.env.NEXT_PUBLIC_AGENT_API_KEY ?? ''
+const authHdr: Record<string, string> = AGENT_KEY ? { Authorization: `Bearer ${AGENT_KEY}` } : {}
 
 async function fetchAgentUser(address: string): Promise<any | null> {
-  const base = (process.env.NEXT_PUBLIC_AGENT_SSE_URL ?? 'http://localhost:3001/events').replace('/events', '')
   try {
-    const res = await fetch(`${base}/state`, { signal: AbortSignal.timeout(3000) })
+    const res = await fetch(`${AGENT_BASE}/state`, { signal: AbortSignal.timeout(3000) })
     if (!res.ok) return null
     const state = await res.json()
     const users = Object.values(state.users ?? {}) as any[]
-    return users.find(u =>
-      u.policy?.userAddress?.toLowerCase() === address.toLowerCase()
-    ) ?? null
-  } catch {
-    return null
-  }
+    return users.find(u => u.policy?.userAddress?.toLowerCase() === address.toLowerCase()) ?? null
+  } catch { return null }
 }
 
-// ─── Performance chart ────────────────────────────────────────────────────────
+async function agentPost(path: string, body: object): Promise<any> {
+  const res = await fetch(`${AGENT_BASE}${path}`, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json', ...authHdr },
+    body:    JSON.stringify(body),
+  })
+  return res.json()
+}
 
-function PerfChart({ data, floorUSD, height = 180 }: { data: number[]; floorUSD?: number; height?: number }) {
-  const w = 600, h = height, pad = 8
-  const min = Math.min(...data) - 10
-  const max = Math.max(...data) + 10
-  const range = max - min || 1
-  const pts = data.map((v, i) => [
-    pad + (i / (data.length - 1)) * (w - pad * 2),
-    h - pad - ((v - min) / range) * (h - pad * 2),
-  ])
-  const d    = pts.map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${x.toFixed(1)} ${y.toFixed(1)}`).join(' ')
-  const fillD = `${d} L ${w - pad} ${h - pad} L ${pad} ${h - pad} Z`
+// ── Orbital loading spinner ───────────────────────────────────────────────────
 
-  const refUSD = floorUSD ?? (data[0] ?? 0)
-  const refY   = h - pad - ((refUSD - min) / range) * (h - pad * 2)
-
+function OrbitalSpinner({ label }: { label: string }) {
   return (
-    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" style={{ width: '100%', height, display: 'block' }}>
-      <defs>
-        <linearGradient id="perf-fill" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%"   stopColor="#EA580C" stopOpacity="0.16" />
-          <stop offset="100%" stopColor="#EA580C" stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      {[0.25, 0.5, 0.75].map((p) => (
-        <line key={p} x1={pad} x2={w - pad} y1={pad + p * (h - pad * 2)} y2={pad + p * (h - pad * 2)}
-          stroke="#F5F5F4" strokeWidth="1" />
-      ))}
-      <line x1={pad} x2={w - pad} y1={refY} y2={refY} stroke="#D6D3D1" strokeDasharray="4 4" strokeWidth="1" />
-      <path d={fillD} fill="url(#perf-fill)" />
-      <path d={d} fill="none" stroke="#EA580C" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-        vectorEffect="non-scaling-stroke" />
-    </svg>
+    <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:16, padding:'32px 0' }}>
+      <div style={{ position:'relative', width:56, height:56 }}>
+        {/* outer ring */}
+        <div style={{
+          position:'absolute', inset:0, borderRadius:'50%',
+          border:'2px solid rgba(255,255,255,0.08)',
+        }} />
+        {/* spinning arc */}
+        <div style={{
+          position:'absolute', inset:0, borderRadius:'50%',
+          border:'2px solid transparent',
+          borderTopColor:'var(--orange)',
+          animation:'spin 1.1s linear infinite',
+        }} />
+        {/* inner pulse */}
+        <div style={{
+          position:'absolute', inset:10, borderRadius:'50%',
+          background:'var(--orange)',
+          opacity:0.15,
+          animation:'pulse 1.1s ease-in-out infinite',
+        }} />
+        {/* center dot */}
+        <div style={{
+          position:'absolute', inset:'50%', transform:'translate(-50%,-50%)',
+          width:6, height:6, borderRadius:'50%',
+          background:'var(--orange)',
+        }} />
+      </div>
+      <span style={{ fontSize:13, color:'var(--text-2)', letterSpacing:'0.04em' }}>{label}</span>
+      <style>{`
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes pulse { 0%,100% { opacity:.08; } 50% { opacity:.28; } }
+      `}</style>
+    </div>
   )
 }
 
-// ─── Activity feed ────────────────────────────────────────────────────────────
+// ── Withdraw modal ────────────────────────────────────────────────────────────
 
-type ExecRecord = {
-  action:      string
-  from:        string | null
-  to:          string
-  amountUSD:   number
-  simulated:   boolean
-  receiptHash: string
-  txHash?:     string
-  timestamp:   number
-}
+// ── Shared confirm modal ──────────────────────────────────────────────────────
 
-const ACTION_KIND: Record<string, 'migrate' | 'harvest' | 'hold' | 'safety'> = {
-  MIGRATE:     'migrate',
-  HARVEST:     'harvest',
-  HOLD:        'hold',
-  SAFETY_EXIT: 'safety',
-  GENESIS:     'migrate',
-  REBALANCE:   'migrate',
-}
-
-const KIND_LABEL: Record<string, string> = {
-  migrate: 'MIGRATE',
-  harvest: 'HARVEST',
-  hold:    'HOLD',
-  safety:  'SAFETY EXIT',
-}
-
-function relativeTime(ts: number): string {
-  const diff = (Date.now() - ts) / 1000
-  if (diff < 60)   return 'just now'
-  if (diff < 3600) return `${Math.floor(diff / 60)} min ago`
-  if (diff < 86400) return `${Math.floor(diff / 3600)} hours ago`
-  return `${Math.floor(diff / 86400)} days ago`
-}
-
-function ActivityFeed({
-  executions,
-  onVerify,
+function ConfirmModal({
+  title, body, confirmLabel, confirmStyle = 'danger',
+  onConfirm, onCancel,
 }: {
-  executions: ExecRecord[]
-  onVerify: (hash: string) => void
+  title: string; body: React.ReactNode; confirmLabel: string
+  confirmStyle?: 'danger' | 'warn'; onConfirm: () => void; onCancel: () => void
 }) {
-  if (executions.length === 0) {
-    return (
-      <div style={{ background: '#FFFFFF', border: '1px solid #E7E5E4', borderRadius: 20, padding: 28 }}>
-        <div style={{ fontSize: 15, fontWeight: 600, color: '#1C1917', marginBottom: 16 }}>Agent activity</div>
-        <div style={{ fontSize: 14, color: '#A8A29E', padding: '24px 0', textAlign: 'center' }}>
-          No actions yet — your agent is scanning for opportunities.
+  return (
+    <div style={{
+      position:'fixed', inset:0, zIndex:999,
+      background:'rgba(0,0,0,0.72)', backdropFilter:'blur(6px)',
+      display:'flex', alignItems:'center', justifyContent:'center',
+    }} onClick={onCancel}>
+      <div style={{
+        background:'var(--surface-1)', border:'1px solid var(--border)',
+        borderRadius:16, padding:28, width:380, maxWidth:'calc(100vw - 48px)',
+      }} onClick={e => e.stopPropagation()}>
+        <div style={{ fontWeight:600, fontSize:16, marginBottom:12 }}>{title}</div>
+        <div style={{ fontSize:13, color:'var(--text-2)', lineHeight:1.6, marginBottom:24 }}>{body}</div>
+        <div style={{ display:'flex', gap:10 }}>
+          <button className="btn-ghost" style={{ flex:1 }} onClick={onCancel}>Cancel</button>
+          <button
+            style={{
+              flex:1, padding:'10px 0', borderRadius:10, border:'none', cursor:'pointer',
+              fontWeight:600, fontSize:14,
+              background: confirmStyle === 'danger' ? 'var(--red, #ef4444)' : 'var(--amber, #f59e0b)',
+              color: '#fff',
+            }}
+            onClick={onConfirm}
+          >{confirmLabel}</button>
         </div>
       </div>
+    </div>
+  )
+}
+
+// ── Withdraw modal ────────────────────────────────────────────────────────────
+
+type WithdrawPhase = 'confirm' | 'agent-closing' | 'ready-to-sign' | 'signing-tx' | 'done' | 'error'
+
+function WithdrawModal({
+  userAddress, onClose, onDone,
+}: { userAddress: string; onClose: () => void; onDone: () => void }) {
+  const [phase,   setPhase]   = useState<WithdrawPhase>('confirm')
+  const [idleRaw, setIdleRaw] = useState<bigint>(BigInt(0))
+  const [errMsg,  setErrMsg]  = useState('')
+  const { writeContract } = useWriteContract()
+
+  const idleUSDC = Number(idleRaw) / 1e6
+
+  function startWithdraw() {
+    setPhase('agent-closing')
+  }
+
+  useEffect(() => {
+    if (phase !== 'agent-closing') return
+    let cancelled = false
+    agentPost('/api/withdraw', { userAddress })
+      .then((res: any) => {
+        if (cancelled) return
+        if (res.ok || res.status === 'IDLE_ONLY') {
+          setIdleRaw(BigInt(res.idleUSDCRaw ?? '0'))
+          setPhase('ready-to-sign')
+        } else {
+          setErrMsg(res.error ?? 'Agent could not unwind the position.')
+          setPhase('error')
+        }
+      })
+      .catch((e: any) => {
+        if (!cancelled) { setErrMsg(e.message); setPhase('error') }
+      })
+    return () => { cancelled = true }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase])
+
+  function signWithdraw() {
+    if (!VAULT_ADDRESS || idleRaw === BigInt(0)) return
+    setPhase('signing-tx')
+    writeContract({
+      address: VAULT_ADDRESS,
+      abi:     yieldGekoAbi,
+      functionName: 'withdraw',
+      args:    [USDC_ADDRESS, idleRaw],
+    }, {
+      onSuccess: () => { setPhase('done') },
+      onError:   (e: any) => { setErrMsg(e.shortMessage ?? e.message); setPhase('error') },
+    })
+  }
+
+  if (phase === 'confirm') {
+    return (
+      <ConfirmModal
+        title="Withdraw all funds?"
+        body={
+          <>
+            This will close your active position and convert everything to USDC.
+            You&apos;ll then sign a wallet transaction to receive the funds.
+            <br /><br />
+            <strong>This stops the agent from earning yield on your behalf.</strong>
+          </>
+        }
+        confirmLabel="Yes, withdraw"
+        confirmStyle="danger"
+        onConfirm={startWithdraw}
+        onCancel={onClose}
+      />
     )
   }
 
   return (
-    <div style={{ background: '#FFFFFF', border: '1px solid #E7E5E4', borderRadius: 20, padding: 28 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div style={{ fontSize: 15, fontWeight: 600, color: '#1C1917' }}>Agent activity</div>
-        <span style={{ fontSize: 12, color: '#A8A29E' }}>{executions.length} actions</span>
-      </div>
-
-      <div style={{ marginTop: 8 }}>
-        {executions.slice(0, 10).map((e, i) => {
-          const kind = ACTION_KIND[e.action] ?? 'hold'
-          return (
-            <div key={i} className="act-entry" data-kind={kind}>
-              <div className="act-entry-ts">
-                <span className="act-entry-dot" />
-                <span>{relativeTime(e.timestamp)}</span>
-              </div>
-              <div className="act-entry-kind">{KIND_LABEL[kind] ?? e.action}</div>
-              <div className="act-entry-title">
-                {e.from ? `${e.from} → ${e.to}` : e.to}
-              </div>
-
-              {e.amountUSD > 0 && (
-                <div className="act-entry-row">
-                  Amount: <span style={{ color: '#1C1917', fontWeight: 500 }}>
-                    ${e.amountUSD.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </span>
-                </div>
-              )}
-
-              {kind !== 'hold' && (
-                <div className="act-entry-foot">
-                  <button
-                    className="act-entry-verify"
-                    onClick={() => onVerify(e.receiptHash)}
-                  >
-                    Verify this action →
-                  </button>
-                  <span className="act-entry-anchor">
-                    {e.txHash
-                      ? <span style={{ color: '#16A34A' }}>✓ On-chain</span>
-                      : e.simulated
-                      ? <span style={{ color: '#A8A29E' }}>Simulated</span>
-                      : <span style={{ color: '#A8A29E' }}>⟳ Anchoring…</span>
-                    }
-                  </span>
-                </div>
-              )}
-            </div>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
-
-// ─── APY bar ──────────────────────────────────────────────────────────────────
-
-function ApyBar({ apy, floor, max = 30 }: { apy: number; floor: number; max?: number }) {
-  const fillPct  = Math.min(100, (apy / max) * 100)
-  const floorPct = (floor / max) * 100
-  return (
-    <div style={{ marginTop: 8, position: 'relative', height: 24 }}>
-      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 6, borderRadius: 999, background: '#E7E5E4', overflow: 'hidden' }}>
-        <div style={{ width: `${fillPct}%`, height: '100%', background: 'linear-gradient(90deg, #16A34A, #4ADE80)', borderRadius: 999 }} />
-      </div>
-      <div style={{ position: 'absolute', top: -2, left: `${floorPct}%`, width: 1, height: 10, background: '#A8A29E' }} />
-      <div style={{ position: 'absolute', top: 12, left: `calc(${floorPct}% - 8px)`, fontSize: 11, color: '#A8A29E' }}>
-        {floor.toFixed(1)}%
-      </div>
-    </div>
-  )
-}
-
-// ─── Loading skeleton ─────────────────────────────────────────────────────────
-
-function Skeleton({ width = '100%', height = 16, radius = 6 }: { width?: string | number; height?: number; radius?: number }) {
-  return (
     <div style={{
-      width, height, borderRadius: radius,
-      background: 'linear-gradient(90deg, #F5F5F4 25%, #E7E5E4 50%, #F5F5F4 75%)',
-      backgroundSize: '200% 100%',
-      animation: 'shimmer 1.4s ease infinite',
-    }} />
+      position:'fixed', inset:0, zIndex:999,
+      background:'rgba(0,0,0,0.7)', backdropFilter:'blur(6px)',
+      display:'flex', alignItems:'center', justifyContent:'center',
+    }}
+      onClick={phase === 'agent-closing' ? undefined : onClose}
+    >
+      <div style={{
+        background:'var(--surface-1)', border:'1px solid var(--border)',
+        borderRadius:16, padding:32, width:400, maxWidth:'calc(100vw - 48px)',
+      }}
+        onClick={e => e.stopPropagation()}
+      >
+        {/* header */}
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:24 }}>
+          <span style={{ fontWeight:600, fontSize:16 }}>Withdraw funds</span>
+          {phase !== 'agent-closing' && (
+            <button onClick={onClose} style={{ background:'none', border:'none', color:'var(--text-2)', cursor:'pointer', fontSize:18 }}>✕</button>
+          )}
+        </div>
+
+        {phase === 'agent-closing' && (
+          <>
+            <OrbitalSpinner label="Agent closing position on-chain…" />
+            <p style={{ textAlign:'center', fontSize:12, color:'var(--text-2)', marginTop:8 }}>
+              Unwinding UniV3 LP and converting to USDC. This takes 30–90 seconds.
+            </p>
+          </>
+        )}
+
+        {phase === 'ready-to-sign' && (
+          <>
+            <div style={{ textAlign:'center', marginBottom:24 }}>
+              <div style={{ fontSize:32, fontWeight:700, color:'var(--green)' }}>
+                {idleUSDC.toFixed(6)} USDC
+              </div>
+              <div style={{ fontSize:13, color:'var(--text-2)', marginTop:4 }}>
+                ready in vault — sign to receive in your wallet
+              </div>
+            </div>
+            {/* step indicator */}
+            <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:24 }}>
+              <div style={{ width:20, height:20, borderRadius:'50%', background:'var(--green)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:11, fontWeight:700 }}>✓</div>
+              <div style={{ fontSize:12, color:'var(--text-2)', flex:1 }}>Position closed by agent</div>
+              <div style={{ width:20, height:20, borderRadius:'50%', border:'2px solid var(--orange)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:11, fontWeight:700, color:'var(--orange)' }}>2</div>
+              <div style={{ fontSize:12, color:'var(--text-1)', flex:1 }}>Sign wallet transfer</div>
+            </div>
+            <button className="btn-primary" style={{ width:'100%' }} onClick={signWithdraw}>
+              Sign &amp; receive {idleUSDC.toFixed(4)} USDC
+            </button>
+          </>
+        )}
+
+        {phase === 'signing-tx' && (
+          <OrbitalSpinner label="Waiting for wallet signature…" />
+        )}
+
+        {phase === 'done' && (
+          <div style={{ textAlign:'center' }}>
+            <div style={{ fontSize:40, marginBottom:12 }}>🎉</div>
+            <div style={{ fontWeight:600, marginBottom:6 }}>Withdrawal complete</div>
+            <div style={{ fontSize:13, color:'var(--text-2)', marginBottom:24 }}>
+              {idleUSDC.toFixed(6)} USDC is now in your wallet.
+            </div>
+            <button className="btn-primary" style={{ width:'100%' }} onClick={() => { onDone(); onClose() }}>
+              Done
+            </button>
+          </div>
+        )}
+
+        {phase === 'error' && (
+          <div style={{ textAlign:'center' }}>
+            <div style={{ fontSize:13, color:'var(--red)', background:'rgba(239,68,68,0.08)', borderRadius:8, padding:'12px 16px', marginBottom:20 }}>
+              {errMsg || 'Something went wrong.'}
+            </div>
+            <button className="btn-ghost" style={{ width:'100%' }} onClick={onClose}>Close</button>
+          </div>
+        )}
+      </div>
+    </div>
   )
 }
 
-// ─── Page ─────────────────────────────────────────────────────────────────────
+// ── Animated counter ──────────────────────────────────────────────────────────
 
-export default function StrategyPage({ params }: { params: { id: string } }) {
-  const router = useRouter()
-  const userAddress = params.id   // wallet address passed from dashboard link
+function useCountUp(target: number, duration = 900): number {
+  const [val, setVal] = useState(target)
+  const prev = useRef(target)
+  useEffect(() => {
+    const from = prev.current
+    prev.current = target
+    if (Math.abs(from - target) < 0.001) { setVal(target); return }
+    const start = performance.now()
+    const tick = (now: number) => {
+      const t = Math.min(1, (now - start) / duration)
+      const ease = 1 - Math.pow(1 - t, 3)
+      setVal(from + (target - from) * ease)
+      if (t < 1) requestAnimationFrame(tick)
+    }
+    requestAnimationFrame(tick)
+  }, [target, duration])
+  return val
+}
+
+// ── Animated SVG performance chart ───────────────────────────────────────────
+
+function PerfChart({ data, floorUSD, height = 200 }: { data: number[]; floorUSD?: number; height?: number }) {
+  const svgRef   = useRef<SVGSVGElement>(null)
+  const pathRef  = useRef<SVGPathElement>(null)
+  const [pathLen, setPathLen] = useState<number | null>(null)
+
+  const W = 600, H = height, PAD = 12
+  const min   = Math.min(...data)
+  const max   = Math.max(...data)
+  const range = (max - min) || 1
+  const pts   = data.map((v, i) => [
+    PAD + (i / (data.length - 1)) * (W - PAD * 2),
+    H - PAD - ((v - min) / range) * (H - PAD * 2),
+  ])
+
+  const linePath = pts.map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${x.toFixed(1)} ${y.toFixed(1)}`).join(' ')
+  const fillPath = `${linePath} L${W - PAD} ${H - PAD} L${PAD} ${H - PAD} Z`
+
+  const refUSD = floorUSD ?? (data[0] ?? 0)
+  const refY   = H - PAD - ((refUSD - min) / range) * (H - PAD * 2)
+
+  // Compute total value change
+  const startVal = data[0] ?? 0
+  const endVal   = data[data.length - 1] ?? 0
+  const isUp     = endVal >= startVal
+  const lineColor = isUp ? '#22C55E' : '#EF4444'
+
+  useEffect(() => {
+    if (pathRef.current) setPathLen(pathRef.current.getTotalLength())
+  }, [data])
+
+  return (
+    <div style={{ position:'relative' }}>
+      <svg
+        ref={svgRef}
+        viewBox={`0 0 ${W} ${H}`}
+        preserveAspectRatio="none"
+        style={{ width:'100%', height, display:'block' }}
+      >
+        <defs>
+          <linearGradient id="fill-up"   x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%"   stopColor="#22C55E" stopOpacity="0.20" />
+            <stop offset="100%" stopColor="#22C55E" stopOpacity="0.01" />
+          </linearGradient>
+          <linearGradient id="fill-down" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%"   stopColor="#EF4444" stopOpacity="0.16" />
+            <stop offset="100%" stopColor="#EF4444" stopOpacity="0.01" />
+          </linearGradient>
+        </defs>
+
+        {/* Grid lines */}
+        {[0.25, 0.5, 0.75].map(p => (
+          <line key={p} x1={PAD} x2={W - PAD}
+            y1={PAD + p * (H - PAD * 2)} y2={PAD + p * (H - PAD * 2)}
+            stroke="rgba(255,255,255,0.05)" strokeWidth="1" />
+        ))}
+
+        {/* Floor reference */}
+        <line x1={PAD} x2={W - PAD} y1={refY} y2={refY}
+          stroke="rgba(255,255,255,0.12)" strokeDasharray="4 4" strokeWidth="1" />
+
+        {/* Fill area */}
+        <path d={fillPath} fill={isUp ? 'url(#fill-up)' : 'url(#fill-down)'} />
+
+        {/* Animated line */}
+        <path
+          ref={pathRef}
+          d={linePath}
+          fill="none"
+          stroke={lineColor}
+          strokeWidth="2.2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          vectorEffect="non-scaling-stroke"
+          style={pathLen != null ? {
+            strokeDasharray: pathLen,
+            strokeDashoffset: 0,
+            animation: `chartIn 1.2s cubic-bezier(0.16,1,0.3,1) both`,
+          } as React.CSSProperties : undefined}
+        />
+
+        {/* End dot */}
+        {pts.length > 0 && (
+          <circle
+            cx={pts[pts.length - 1][0]}
+            cy={pts[pts.length - 1][1]}
+            r="4" fill={lineColor}
+            style={{ filter:`drop-shadow(0 0 6px ${lineColor})`, animation:'fadeIn 600ms 1s both' }}
+          />
+        )}
+      </svg>
+
+      {/* Axis labels */}
+      {data.length > 0 && (
+        <div style={{ display:'flex', justifyContent:'space-between', marginTop:8 }}>
+          <span className="chart-label">${Math.round(startVal).toLocaleString()}</span>
+          <span className="chart-label">${Math.round(endVal).toLocaleString()}</span>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Activity types ────────────────────────────────────────────────────────────
+
+type ExecRecord = {
+  action: string; from: string | null; to: string
+  amountUSD: number; simulated: boolean; receiptHash: string
+  txHash?: string; timestamp: number
+}
+
+const KIND_MAP: Record<string, string> = {
+  MIGRATE: 'migrate', HARVEST: 'harvest', HOLD: 'hold',
+  SAFETY_EXIT: 'safety', GENESIS: 'migrate', REBALANCE: 'migrate', REBALANCE_UNIV3: 'migrate',
+}
+const KIND_LABELS: Record<string, string> = {
+  migrate: 'DEPLOY', harvest: 'HARVEST', hold: 'HOLD', safety: 'SAFETY EXIT',
+}
+
+function relativeTime(ts: number): string {
+  const d = (Date.now() - ts) / 1000
+  if (d < 60)    return 'just now'
+  if (d < 3600)  return `${Math.floor(d / 60)}m ago`
+  if (d < 86400) return `${Math.floor(d / 3600)}h ago`
+  return `${Math.floor(d / 86400)}d ago`
+}
+
+// ── Guardrail bar ─────────────────────────────────────────────────────────────
+
+function Guardrail({
+  label, value, displayVal, color, max = 100,
+}: {
+  label: string; value: number; displayVal: string; color: string; max?: number
+}) {
+  const pct = Math.min(100, (value / max) * 100)
+  return (
+    <div className="guardrail">
+      <div className="guardrail-header">
+        <span className="guardrail-label">{label}</span>
+        <span className="guardrail-value">{displayVal}</span>
+      </div>
+      <div className="guardrail-track">
+        <div className="guardrail-fill" style={{ width:`${pct}%`, background:color }} />
+      </div>
+    </div>
+  )
+}
+
+// ── Skeleton ──────────────────────────────────────────────────────────────────
+
+function Skel({ h = 16, w = '100%', r = 6 }: { h?: number; w?: string | number; r?: number }) {
+  return <div className="skel" style={{ height:h, width:w, borderRadius:r }} />
+}
+
+// ── Page ──────────────────────────────────────────────────────────────────────
+
+export default function StrategyPage({ params }: { params: Promise<{ id: string }> }) {
+  const router      = useRouter()
+  const { id: userAddress } = React.use(params)
 
   const [agentUser, setAgentUser]   = useState<any>(null)
   const [agentReady, setAgentReady] = useState(false)
   const [range, setRange]           = useState('1M')
 
-  // On-chain reads
+  const [showWithdraw, setShowWithdraw]       = useState(false)
+  const [showPauseConfirm, setShowPauseConfirm] = useState(false)
+  const [pauseLoading, setPauseLoading]         = useState(false)
+
   const { data: availableRaw } = useReadContract({
-    address: VAULT_ADDRESS || undefined,
-    abi: yieldGekoAbi,
-    functionName: 'balances',
+    address: VAULT_ADDRESS || undefined, abi: yieldGekoAbi, functionName: 'balances',
     args: userAddress && VAULT_ADDRESS ? [userAddress as `0x${string}`, USDC_ADDRESS] : undefined,
     query: { enabled: Boolean(userAddress && VAULT_ADDRESS), refetchInterval: 30_000 },
   })
-
   const { data: workingRaw } = useReadContract({
-    address: VAULT_ADDRESS || undefined,
-    abi: yieldGekoAbi,
-    functionName: 'deployed',
+    address: VAULT_ADDRESS || undefined, abi: yieldGekoAbi, functionName: 'deployed',
     args: userAddress && VAULT_ADDRESS ? [userAddress as `0x${string}`, USDC_ADDRESS] : undefined,
     query: { enabled: Boolean(userAddress && VAULT_ADDRESS), refetchInterval: 30_000 },
   })
-
   const { data: policyRaw } = useReadContract({
-    address: VAULT_ADDRESS || undefined,
-    abi: yieldGekoAbi,
-    functionName: 'policies',
+    address: VAULT_ADDRESS || undefined, abi: yieldGekoAbi, functionName: 'policies',
     args: userAddress && VAULT_ADDRESS ? [userAddress as `0x${string}`] : undefined,
     query: { enabled: Boolean(userAddress && VAULT_ADDRESS), refetchInterval: 60_000 },
   })
 
-  const available  = availableRaw ? Number(formatUnits(availableRaw as bigint, 6)) : 0
-  const working    = workingRaw   ? Number(formatUnits(workingRaw as bigint, 6))   : 0
-  const totalValue = available + working
+  // Use !== undefined to handle 0n correctly (0n is falsy but means "read resolved with 0")
+  const available  = availableRaw !== undefined ? Number(formatUnits(availableRaw as bigint, 6)) : null
+  const working    = workingRaw   !== undefined ? Number(formatUnits(workingRaw as bigint, 6))   : null
+  const readsLoaded = available !== null && working !== null
+  const totalValue  = (available ?? 0) + (working ?? 0)
 
-  const policy    = policyRaw as { active: boolean; minAPY: bigint; maxDrawdownBps: bigint } | undefined
-  const minAPY    = policy?.minAPY    ? Number(policy.minAPY) / 100 : 0
-  const maxDD     = policy?.maxDrawdownBps ? Number(policy.maxDrawdownBps) / 100 : 0
-  const paused    = policy ? !policy.active : false
+  // policyRaw may be returned as a named tuple or positional array depending on wagmi version.
+  // Access both ways to avoid !undefined = true triggering a false paused banner.
+  const policy  = policyRaw as { active: boolean; minAPY: bigint; maxDrawdownBps: bigint; 0: boolean; 2: bigint; 3: bigint } | undefined
+  const policyActive = policy ? (policy.active ?? (policy as any)[0]) : undefined
+  const minAPY  = policy ? Number((policy.minAPY ?? (policy as any)[2]) ?? BigInt(0)) / 100 : null
+  const maxDD   = policy ? Number((policy.maxDrawdownBps ?? (policy as any)[3]) ?? BigInt(0)) / 100 : null
+  const paused  = policyActive === false  // only true when explicitly false, not undefined
 
-  // Agent state
   useEffect(() => {
     if (!userAddress) return
     fetchAgentUser(userAddress).then(u => { setAgentUser(u); setAgentReady(true) })
@@ -255,214 +498,465 @@ export default function StrategyPage({ params }: { params: { id: string } }) {
     return () => clearInterval(id)
   }, [userAddress])
 
+  const executePauseResume = useCallback(async () => {
+    if (!userAddress || pauseLoading) return
+    setShowPauseConfirm(false)
+    setPauseLoading(true)
+    try {
+      const endpoint = paused ? '/api/resume-user' : '/api/pause-user'
+      await agentPost(endpoint, { userAddress })
+      const updated = await fetchAgentUser(userAddress)
+      if (updated) setAgentUser(updated)
+    } finally {
+      setPauseLoading(false)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userAddress, paused, pauseLoading])
+
+  const handlePauseResume = useCallback(() => {
+    if (!userAddress || pauseLoading) return
+    if (paused) {
+      // Resume: no confirmation needed — safe action
+      executePauseResume()
+    } else {
+      // Pause: show confirmation first
+      setShowPauseConfirm(true)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userAddress, paused, pauseLoading, executePauseResume])
+
   const metrics    = agentUser?.portfolio?.metrics
-  const currentAPY = (metrics?.weightedNetAPY  as number | undefined) ?? 0
+  const currentAPY = (metrics?.weightedNetAPY as number | undefined) ?? 0
   const earned     = (metrics?.incomeEarnedUSD as number | undefined) ?? 0
   const positions: any[] = agentUser?.portfolio?.positions ?? []
   const executions: ExecRecord[] = agentUser?.executions ?? []
+  const pnlHistory: { ts: number; totalUSD: number; navUSD: number }[] = agentUser?.pnlHistory ?? []
 
-  // PnL history for the chart
-  const pnlHistory: { timestamp: number; valueUSD: number }[] = agentUser?.pnlHistory ?? []
+  const phase       = (agentUser?.phase as string | undefined) ?? 'INITIALIZING'
+  const displayName = agentUser?.policy?.displayName?.split('—')[0]?.trim() ?? 'My Strategy'
+  const updatedAgo  = agentUser?.updatedAt ? relativeTime(agentUser.updatedAt) : null
+  const isRunning   = ['ALLOCATED','MONITORING','SCANNING','MIGRATING'].includes(phase)
+
+  const animTotal = useCountUp(totalValue)
+  const animEarned = useCountUp(earned)
+
+  // Session start time — filter chart to current session only so testing
+  // history from previous runs doesn't pollute the chart for real users.
+  const sessionStart: number = (agentUser?.activeSessionStartedAt as number | undefined) ?? 0
 
   const chartData = useMemo(() => {
     const lengths: Record<string, number> = { '1W': 7, '1M': 30, '3M': 90 }
     const n = lengths[range] ?? 30
-
-    if (pnlHistory.length >= 2) {
-      // Use real history, sampled to n points
-      const step = Math.max(1, Math.floor(pnlHistory.length / n))
-      return pnlHistory.filter((_, i) => i % step === 0).slice(-n).map(p => p.valueUSD)
+    // Only show history from the current active session
+    const sessionHistory = sessionStart > 0
+      ? pnlHistory.filter(p => p.ts >= sessionStart)
+      : pnlHistory
+    if (sessionHistory.length >= 2) {
+      const step = Math.max(1, Math.floor(sessionHistory.length / n))
+      return sessionHistory.filter((_, i) => i % step === 0).slice(-n)
+        .map(p => p.totalUSD ?? 0)
     }
-
-    // Fallback: flat line at current total value (no history yet)
-    return Array.from({ length: Math.min(n, 7) }, () => totalValue || 0)
-  }, [range, pnlHistory, totalValue])
-
-  const phase = (agentUser?.phase as string | undefined) ?? 'INITIALIZING'
-  const displayName: string = agentUser?.policy?.displayName?.split('—')[0]?.trim() ?? 'My strategy'
-  const updatedAgo = agentUser?.updatedAt
-    ? relativeTime(agentUser.updatedAt)
-    : null
+    // Flat line at current value while history builds up
+    if (totalValue > 0) {
+      return Array.from({ length: 7 }, () => totalValue)
+    }
+    return []
+  }, [range, pnlHistory, totalValue, sessionStart])
 
   return (
     <>
+      {showWithdraw && userAddress && (
+        <WithdrawModal
+          userAddress={userAddress}
+          onClose={() => setShowWithdraw(false)}
+          onDone={() => fetchAgentUser(userAddress).then(u => u && setAgentUser(u))}
+        />
+      )}
+      {showPauseConfirm && (
+        <ConfirmModal
+          title="Pause the agent?"
+          body={
+            <>
+              The agent will stop managing your position. Your funds stay in the vault and
+              your LP position remains open — no swaps or closures happen.
+              <br /><br />
+              You can resume at any time.
+            </>
+          }
+          confirmLabel="Yes, pause agent"
+          confirmStyle="warn"
+          onConfirm={executePauseResume}
+          onCancel={() => setShowPauseConfirm(false)}
+        />
+      )}
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       <AppNav />
-      <div className="app-page" style={{ paddingBottom: 96 }}>
+      <div className="db-page">
+        <div className="app-page">
 
-        {paused && (
-          <div className="paused-banner">
-            <div className="paused-banner-left">
-              <span style={{ fontSize: 16 }}>⚠</span>
-              <div>Agent paused — drawdown limit reached.<br />Your capital is secured. Resume when ready.</div>
-            </div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button className="btn-sm" style={{ background: '#D97706', color: '#fff', border: 'none' }}>
-                Resume agent
-              </button>
-              <button className="btn-sm" style={{ background: 'transparent', color: '#D97706', border: '1px solid #D97706' }}>
-                Withdraw all
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Back */}
-        <div style={{ padding: '32px 0 8px' }}>
-          <button
-            className="act-entry-verify"
-            onClick={() => router.push('/dashboard')}
-            style={{ fontSize: 14, color: '#A8A29E' }}
-          >
-            ← Back to dashboard
-          </button>
-        </div>
-
-        {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginTop: 8 }}>
-          <h1 style={{ fontSize: 40, fontWeight: 600, color: '#1C1917', letterSpacing: '-0.02em', margin: 0, lineHeight: 1.1 }}>
-            {displayName}
-          </h1>
-          <StatusPill state={paused ? 'paused' : 'running'} />
-          <ChainChip chain="arbitrum" />
-        </div>
-
-        {/* Value */}
-        <div style={{ marginTop: 24 }}>
-          <div style={{ fontSize: 56, fontWeight: 700, color: '#1C1917', letterSpacing: '-0.025em', lineHeight: 1 }}>
-            ${totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </div>
-          {earned > 0 && (
-            <div style={{ fontSize: 16, marginTop: 8 }}>
-              <span style={{ color: '#16A34A', fontWeight: 600 }}>+${earned.toFixed(2)}</span>
-              <span style={{ color: '#78716C' }}> earned</span>
+          {/* Paused banner */}
+          {paused && (
+            <div className="paused-banner">
+              <div className="paused-banner-left">
+                <span style={{ fontSize:18 }}>⚠</span>
+                <div>
+                  <div style={{ fontWeight:600 }}>Agent paused — drawdown limit reached.</div>
+                  <div style={{ fontSize:13, opacity:.8 }}>Your capital is secured in the vault.</div>
+                </div>
+              </div>
+              <div style={{ display:'flex', gap:8 }}>
+                <button
+                  className="btn-sm btn-warn-sm"
+                  onClick={handlePauseResume}
+                  disabled={pauseLoading}
+                >
+                  {pauseLoading ? 'Resuming…' : 'Resume agent'}
+                </button>
+                <button className="btn-sm btn-ghost-sm" onClick={() => setShowWithdraw(true)}>
+                  Withdraw all
+                </button>
+              </div>
             </div>
           )}
-        </div>
 
-        {/* APY bar */}
-        {currentAPY > 0 && minAPY > 0 && (
-          <div style={{ marginTop: 32, maxWidth: 720 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
-              <span>
-                <span style={{ color: '#78716C' }}>Earning at </span>
-                <span style={{ color: '#1C1917', fontWeight: 600, fontSize: 14 }}>{currentAPY.toFixed(1)}% APY</span>
-              </span>
-              <span style={{ color: '#A8A29E' }}>Your floor: {minAPY.toFixed(1)}%</span>
+          {/* Back nav */}
+          <div style={{ padding:'32px 0 0' }}>
+            <button
+              onClick={() => router.push('/dashboard')}
+              style={{
+                background:'none', border:'none', padding:0,
+                fontSize:13, color:'var(--t3)', cursor:'pointer',
+                display:'flex', alignItems:'center', gap:6,
+                transition:'color 150ms', fontFamily:'inherit',
+              }}
+              onMouseEnter={e => (e.currentTarget.style.color = 'var(--t1)')}
+              onMouseLeave={e => (e.currentTarget.style.color = 'var(--t3)')}
+            >
+              ← Dashboard
+            </button>
+          </div>
+
+          {/* Header */}
+          <div style={{ marginTop:20, animation:'fadeUp 500ms cubic-bezier(0.16,1,0.3,1) both' }}>
+            <div style={{ display:'flex', alignItems:'center', gap:12, flexWrap:'wrap' }}>
+              <h1 style={{ fontSize:clamp(28, 36), fontWeight:800, color:'var(--t1)', letterSpacing:'-.025em', margin:0, lineHeight:1.1 }}>
+                {displayName}
+              </h1>
+              <StatusPill state={paused ? 'paused' : 'running'} />
+              <ChainChip chain="arbitrum" />
             </div>
-            <ApyBar apy={currentAPY} floor={minAPY} />
+
+            {/* Value row */}
+            <div style={{ marginTop:20 }}>
+              {!readsLoaded ? (
+                <div style={{ marginTop:4 }}><Skel h={56} w={200} r={10} /></div>
+              ) : (
+              <div style={{ fontSize:clamp(40, 64), fontWeight:800, color:'var(--t1)', letterSpacing:'-.035em', lineHeight:1, fontVariantNumeric:'tabular-nums' }}>
+                ${animTotal.toLocaleString(undefined, { minimumFractionDigits:2, maximumFractionDigits:2 })}
+              </div>
+              )}
+              <div style={{ display:'flex', alignItems:'center', gap:12, marginTop:12, flexWrap:'wrap' }}>
+                {earned > 0 && (
+                  <span style={{ fontSize:16, fontWeight:600, color:'var(--green)' }}>
+                    +${animEarned.toFixed(4)} earned
+                  </span>
+                )}
+                {currentAPY > 0 && (
+                  <span style={{
+                    fontSize:13, fontWeight:600, color:'var(--orange)',
+                    background:'var(--orange-dim)', border:'1px solid rgba(234,88,12,.22)',
+                    borderRadius:999, padding:'4px 12px',
+                  }}>
+                    {currentAPY.toFixed(1)}% APY
+                  </span>
+                )}
+                {agentReady && currentAPY === 0 && (
+                  <div className="phase-badge">
+                    <span className="phase-badge-icon">⟳</span>
+                    Agent {phase.toLowerCase().replace(/_/g,' ')} — first action within 60s
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Action buttons */}
+            <div style={{ display:'flex', gap:10, marginTop:24, flexWrap:'wrap' }}>
+              <button
+                className="btn-sm btn-ghost-sm"
+                onClick={() => setShowWithdraw(true)}
+              >
+                Withdraw
+              </button>
+              <button
+                className="btn-sm btn-warn-sm"
+                onClick={handlePauseResume}
+                disabled={pauseLoading}
+                style={{ minWidth:120, position:'relative' }}
+              >
+                {pauseLoading ? (
+                  <span style={{ display:'flex', alignItems:'center', gap:6 }}>
+                    <span style={{
+                      display:'inline-block', width:12, height:12, borderRadius:'50%',
+                      border:'2px solid transparent', borderTopColor:'currentColor',
+                      animation:'spin 0.8s linear infinite',
+                    }} />
+                    {paused ? 'Resuming…' : 'Pausing…'}
+                  </span>
+                ) : (paused ? 'Resume agent' : 'Pause agent')}
+              </button>
+              <button className="btn-sm btn-primary-sm" onClick={() => router.push('/onboard')}>
+                Add funds
+              </button>
+            </div>
           </div>
-        )}
 
-        {/* Agent activating state */}
-        {agentReady && currentAPY === 0 && (
-          <div style={{ marginTop: 24, fontSize: 14, color: '#78716C', background: '#FFF7ED', borderRadius: 10, padding: '12px 16px', display: 'inline-block' }}>
-            Agent is {phase.toLowerCase().replace('_', ' ')} — first action within the next 60 seconds.
-          </div>
-        )}
+          {/* Main grid */}
+          <div className="strat-grid">
 
-        {/* Action buttons */}
-        <div style={{ marginTop: 24, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-          <button className="btn-sm btn-ghost-sm">Withdraw</button>
-          <button className="btn-sm btn-warn-sm">{paused ? 'Resume agent' : 'Pause agent'}</button>
-          <button className="btn-sm btn-primary-sm" onClick={() => router.push('/onboard')}>
-            Add funds
-          </button>
-        </div>
+            {/* Left column */}
+            <div style={{ display:'flex', flexDirection:'column', gap:20 }}>
 
-        {/* Two-column grid */}
-        <div className="strat-grid">
-          <div>
-            {/* Allocation */}
-            <div style={{ background: '#FAFAF9', border: '1px solid #E7E5E4', borderRadius: 20, padding: 28, marginBottom: 20 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div style={{ fontSize: 15, fontWeight: 600, color: '#1C1917' }}>Where your money is</div>
-                {updatedAgo && (
-                  <div style={{ fontSize: 12, color: '#A8A29E' }}>Updated {updatedAgo}</div>
+              {/* Performance chart */}
+              <div className="db-card db-card-p" style={{ animation:'fadeUp 500ms 60ms cubic-bezier(0.16,1,0.3,1) both' }}>
+                <div className="sec-head">
+                  <div style={{ display:'flex', flexDirection:'column', gap:3 }}>
+                    <span className="sec-title">Portfolio performance</span>
+                    {updatedAgo && <span className="sec-meta">Updated {updatedAgo}</span>}
+                  </div>
+                  <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+                    {isRunning && (
+                      <span className="live-dot">
+                        <span className="live-dot-ring" />
+                        Live
+                      </span>
+                    )}
+                    <div className="range-tabs">
+                      {['1W', '1M', '3M'].map(r => (
+                        <button key={r} data-active={range === r} onClick={() => setRange(r)}>{r}</button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                {chartData.length >= 2 ? (
+                  <PerfChart data={chartData} floorUSD={totalValue * (1 - (maxDD ?? 0) / 100)} />
+                ) : (
+                  <div style={{ padding:'40px 0', textAlign:'center', fontSize:14, color:'var(--t3)' }}>
+                    {agentReady ? 'Performance history appears after the first agent tick.' : <Skel h={160} />}
+                  </div>
                 )}
               </div>
 
-              {positions.length > 0 ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 16 }}>
-                  {positions.map((pos: any, i: number) => {
-                    const protocol = (pos.protocol as string ?? '').toLowerCase()
-                    const protoId = protocol.includes('aave') ? 'aave'
-                      : protocol.includes('morpho') ? 'morpho'
-                      : protocol.includes('pendle') ? 'pendle'
-                      : protocol.includes('gmx')    ? 'gmx'
-                      : protocol.includes('uni')     ? 'uniswap'
-                      : 'aave'
-                    return (
-                      <div key={i} className="alloc-card">
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-                          <ProtocolMark id={protoId} size={36} />
-                          <div>
-                            <div style={{ fontSize: 15, fontWeight: 600, color: '#1C1917' }}>{pos.venueName ?? pos.protocol}</div>
-                            <div style={{ fontSize: 13, color: '#A8A29E' }}>{pos.strategyType?.replace('_', ' ')} · Arbitrum</div>
-                          </div>
-                        </div>
-                        <div style={{ textAlign: 'right' }}>
-                          <div style={{ fontSize: 20, fontWeight: 700, color: '#1C1917', letterSpacing: '-0.01em' }}>
-                            ${(pos.currentUSD as number ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                          </div>
-                          <div style={{ fontSize: 13, color: '#A8A29E' }}>
-                            {(pos.allocationPct as number ?? 0).toFixed(0)}%{' '}
-                            <span style={{ color: '#16A34A', fontWeight: 600 }}>{(pos.currentNetAPY as number ?? 0).toFixed(1)}% APY</span>
-                          </div>
-                        </div>
-                      </div>
-                    )
-                  })}
+              {/* Positions */}
+              <div className="db-card db-card-p" style={{ animation:'fadeUp 500ms 120ms cubic-bezier(0.16,1,0.3,1) both' }}>
+                <div className="sec-head">
+                  <span className="sec-title">Where your capital is deployed</span>
+                  {positions.length > 0 && (
+                    <span className="sec-meta">{positions.length} position{positions.length > 1 ? 's' : ''}</span>
+                  )}
                 </div>
-              ) : (
-                <div style={{ fontSize: 14, color: '#A8A29E', marginTop: 16, padding: '16px 0', textAlign: 'center' }}>
-                  {agentReady ? 'Agent is deploying your capital…' : <Skeleton height={14} />}
-                </div>
-              )}
 
-              <div style={{ height: 1, background: '#E7E5E4', margin: '20px 0 14px' }} />
-              <div style={{ fontSize: 13, color: '#A8A29E' }}>
-                Available (not working):{' '}
-                <span style={{ color: '#1C1917', fontWeight: 500 }}>
-                  ${available.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </span>
+                {positions.length > 0 ? (
+                  <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+                    {positions.map((pos: any, i: number) => {
+                      const protocol = (pos.protocol as string ?? '').toLowerCase()
+                      const protoId  = protocol.includes('aave') ? 'aave'
+                        : protocol.includes('morpho') ? 'morpho'
+                        : protocol.includes('pendle') ? 'pendle'
+                        : protocol.includes('gmx')    ? 'gmx'
+                        : 'uniswap'
+                      const apy          = (pos.currentNetAPY as number ?? 0)
+                      const usd          = (pos.currentUSD as number ?? 0)
+                      const feesEarned   = (pos.feesEarnedUSD as number ?? 0)
+                      const pendingFees  = ((pos.uniV3PendingFees0USD ?? 0) + (pos.uniV3PendingFees1USD ?? 0)) as number
+                      const ilUSD        = Math.abs(pos.ilUSD as number ?? 0)
+                      const totalReturn  = (pos.totalReturnUSD as number ?? 0)
+                      const drawdown     = (pos.drawdownPct as number ?? 0)
+                      const daysHeld     = (pos.daysHeld as number ?? 0)
+                      const entryUSD     = (pos.entryUSD as number ?? 0)
+
+                      return (
+                        <div key={i} style={{ animation:`fadeUp 400ms ${i * 60}ms cubic-bezier(0.16,1,0.3,1) both` }}>
+                          <div className="alloc-card">
+                            <div style={{ display:'flex', alignItems:'center', gap:14 }}>
+                              <ProtocolMark id={protoId} size={40} />
+                              <div>
+                                <div style={{ fontSize:14, fontWeight:700, color:'var(--t1)', letterSpacing:'-.005em' }}>
+                                  {pos.venueName ?? pos.protocol}
+                                </div>
+                                <div style={{ fontSize:12, color:'var(--t3)', marginTop:2 }}>
+                                  {pos.strategyType?.replace(/_/g,' ')} · Arbitrum
+                                  {daysHeld > 0 && ` · ${daysHeld < 1 ? `${Math.round(daysHeld * 24)}h` : `${daysHeld.toFixed(1)}d`} held`}
+                                </div>
+                              </div>
+                            </div>
+                            <div style={{ textAlign:'right', flexShrink:0 }}>
+                              <div style={{ fontSize:18, fontWeight:700, color:'var(--t1)', letterSpacing:'-.01em', fontVariantNumeric:'tabular-nums' }}>
+                                ${usd.toLocaleString(undefined, { minimumFractionDigits:2, maximumFractionDigits:2 })}
+                              </div>
+                              <div style={{ fontSize:12, marginTop:3 }}>
+                                <span style={{ color:'var(--t3)' }}>{(pos.allocationPct ?? 0).toFixed(0)}%{' '}</span>
+                                <span style={{ color:'var(--green)', fontWeight:600 }}>{apy.toFixed(1)}% APY</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Position metrics breakdown */}
+                          <div style={{
+                            display:'grid', gridTemplateColumns:'repeat(4, 1fr)', gap:1,
+                            background:'var(--border)', borderRadius:12, overflow:'hidden', marginTop:8,
+                          }}>
+                            {[
+                              { label:'Entry', val:`$${entryUSD.toFixed(2)}`, color:'var(--t2)' },
+                              { label:'Fees earned', val: feesEarned > 0 ? `+$${feesEarned.toFixed(6)}` : '—', color:'var(--green)' },
+                              { label:'Pending fees', val: pendingFees > 0.000001 ? `$${pendingFees.toFixed(6)}` : '—', color:'var(--orange)' },
+                              { label:'IL impact', val: ilUSD > 0.000001 ? `-$${ilUSD.toFixed(6)}` : '—', color: ilUSD > 0.01 ? 'var(--amber)' : 'var(--t3)' },
+                              { label:'Total return', val: `${totalReturn >= 0 ? '+' : ''}$${totalReturn.toFixed(6)}`, color: totalReturn >= 0 ? 'var(--green)' : 'var(--red)' },
+                              { label:'Drawdown', val: drawdown > 0 ? `-${drawdown.toFixed(2)}%` : '0%', color: drawdown > 5 ? 'var(--amber)' : 'var(--t3)' },
+                              { label:'Current APY', val:`${apy.toFixed(1)}%`, color:'var(--orange)' },
+                              { label:'Entry APY', val:`${(pos.entryAPY as number ?? 0).toFixed(1)}%`, color:'var(--t2)' },
+                            ].map(({ label, val, color }) => (
+                              <div key={label} style={{ background:'var(--bg)', padding:'10px 14px' }}>
+                                <div style={{ fontSize:10, color:'var(--t3)', textTransform:'uppercase', letterSpacing:'.07em', fontWeight:600 }}>{label}</div>
+                                <div style={{ fontSize:13, color, fontWeight:600, marginTop:4, fontVariantNumeric:'tabular-nums' }}>{val}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                ) : (
+                  <div style={{ padding:'24px 0', textAlign:'center', fontSize:14, color:'var(--t3)' }}>
+                    {!agentReady
+                      ? <><Skel h={14} /><div style={{height:10}}/><Skel h={14} w="60%" /></>
+                      : 'Agent is deploying your capital — check back shortly.'}
+                  </div>
+                )}
+
+                {/* Idle balance footer */}
+                <div className="db-divider" />
+                <div style={{ display:'flex', justifyContent:'space-between', fontSize:13 }}>
+                  <span style={{ color:'var(--t3)' }}>Idle (not working)</span>
+                  {available === null
+                    ? <Skel h={13} w={60} />
+                    : <span style={{ color:'var(--t1)', fontWeight:600, fontVariantNumeric:'tabular-nums' }}>
+                        ${available.toLocaleString(undefined, { minimumFractionDigits:2, maximumFractionDigits:2 })}
+                      </span>
+                  }
+                </div>
               </div>
             </div>
 
-            {/* Performance */}
-            <div style={{ background: '#FAFAF9', border: '1px solid #E7E5E4', borderRadius: 20, padding: 28 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div style={{ fontSize: 15, fontWeight: 600, color: '#1C1917' }}>Performance</div>
-                <div className="range-tabs">
-                  {['1W', '1M', '3M'].map((r) => (
-                    <button key={r} data-active={range === r} onClick={() => setRange(r)}>{r}</button>
-                  ))}
+            {/* Right column */}
+            <div style={{ display:'flex', flexDirection:'column', gap:20 }}>
+
+              {/* Guardrails */}
+              <div className="db-card db-card-p" style={{ animation:'fadeUp 500ms 80ms cubic-bezier(0.16,1,0.3,1) both' }}>
+                <div className="sec-head" style={{ marginBottom:20 }}>
+                  <span className="sec-title">Your guardrails</span>
                 </div>
-              </div>
-              <div style={{ marginTop: 20 }}>
-                {chartData.length >= 2 ? (
-                  <>
-                    <PerfChart data={chartData} floorUSD={totalValue * (1 - maxDD / 100)} />
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, fontSize: 12, color: '#A8A29E' }}>
-                      <span>${Math.round(chartData[0]).toLocaleString()}</span>
-                      <span>${Math.round(chartData[chartData.length - 1]).toLocaleString()}</span>
-                    </div>
-                  </>
+                {minAPY === null ? (
+                  <><Skel h={14} /><div style={{height:12}}/><Skel h={5} /><div style={{height:16}}/><Skel h={14} /><div style={{height:12}}/><Skel h={5} /></>
                 ) : (
-                  <div style={{ textAlign: 'center', padding: '32px 0', fontSize: 14, color: '#A8A29E' }}>
-                    Performance history will appear after the first agent tick.
+                  <>
+                    <Guardrail
+                      label="APY floor"
+                      value={minAPY}
+                      displayVal={`${minAPY.toFixed(1)}%`}
+                      color="linear-gradient(90deg, #16A34A, #22C55E)"
+                      max={50}
+                    />
+                    <Guardrail
+                      label="Max drawdown"
+                      value={maxDD ?? 0}
+                      displayVal={`${(maxDD ?? 0).toFixed(1)}%`}
+                      color="linear-gradient(90deg, #F59E0B, #FBBF24)"
+                      max={50}
+                    />
+                    {currentAPY > 0 && (
+                      <Guardrail
+                        label="Current APY"
+                        value={currentAPY}
+                        displayVal={`${currentAPY.toFixed(1)}%`}
+                        color="linear-gradient(90deg, #EA580C, #FB923C)"
+                        max={100}
+                      />
+                    )}
+                  </>
+                )}
+              </div>
+
+              {/* Activity feed */}
+              <div className="db-card db-card-p" style={{ animation:'fadeUp 500ms 140ms cubic-bezier(0.16,1,0.3,1) both' }}>
+                <div className="sec-head">
+                  <span className="sec-title">Agent activity</span>
+                  {executions.length > 0 && (
+                    <span className="sec-meta">{executions.length} actions</span>
+                  )}
+                </div>
+
+                {executions.length === 0 ? (
+                  <div style={{ padding:'28px 0', textAlign:'center', fontSize:14, color:'var(--t3)' }}>
+                    {agentReady
+                      ? 'No actions yet — scanning for opportunities.'
+                      : <><Skel h={14} /><div style={{height:12}}/><Skel h={14} w="70%" /></>}
+                  </div>
+                ) : (
+                  <div>
+                    {executions.slice(0, 8).map((e, i) => {
+                      const kind = KIND_MAP[e.action] ?? 'hold'
+                      return (
+                        <div
+                          key={i}
+                          className="act-entry"
+                          data-kind={kind}
+                          style={{ animation:`fadeUp 350ms ${i * 40}ms cubic-bezier(0.16,1,0.3,1) both` }}
+                        >
+                          <div className="act-entry-ts">
+                            <span className="act-entry-dot" />
+                            <span>{relativeTime(e.timestamp)}</span>
+                          </div>
+                          <div className="act-entry-kind">{KIND_LABELS[kind] ?? e.action}</div>
+                          <div className="act-entry-title">
+                            {e.from ? `${e.from.split(' ')[0]} → ${e.to.split(' ')[0]}` : e.to}
+                          </div>
+                          {e.amountUSD > 0 && (
+                            <div className="act-entry-row">
+                              ${e.amountUSD.toLocaleString(undefined, { minimumFractionDigits:2, maximumFractionDigits:2 })}
+                            </div>
+                          )}
+                          {kind !== 'hold' && (
+                            <div className="act-entry-foot">
+                              <button
+                                className="act-entry-verify"
+                                onClick={() => router.push(`/proof/${e.receiptHash}`)}
+                              >
+                                Verify on-chain →
+                              </button>
+                              <span className="act-entry-anchor">
+                                {e.txHash
+                                  ? <span style={{ color:'var(--green)' }}>✓ Confirmed</span>
+                                  : e.simulated
+                                  ? <span style={{ color:'var(--t3)' }}>Simulated</span>
+                                  : <span style={{ color:'var(--t3)' }}>⟳ Anchoring…</span>}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
                   </div>
                 )}
               </div>
             </div>
           </div>
-
-          {/* Activity feed */}
-          <ActivityFeed
-            executions={executions}
-            onVerify={(hash) => router.push(`/proof/${hash}`)}
-          />
         </div>
       </div>
     </>
   )
+}
+
+// Utility — CSS clamp fallback
+function clamp(min: number, preferred: number): string {
+  return `clamp(${min}px, ${preferred * 0.035}vw + ${min * 0.6}px, ${preferred}px)`
 }

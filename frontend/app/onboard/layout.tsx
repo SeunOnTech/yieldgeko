@@ -1,0 +1,7 @@
+/** Avoid stale CDN / router cache for onboarding during iteration */
+export const dynamic = 'force-dynamic'
+export const revalidate = 0
+
+export default function OnboardLayout({ children }: { children: React.ReactNode }) {
+  return children
+}

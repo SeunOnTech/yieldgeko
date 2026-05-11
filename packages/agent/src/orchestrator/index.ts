@@ -32,6 +32,7 @@ import { broadcast, setLatestState, startSSEServer, setRegisterCallback, setRese
 import { OnChainProvider }                                   from './protocols';
 import { PersistenceStore, uploadExecutionTrace }            from './persistence';
 import { anchorExecutionProof }                              from './zgChain';
+import { generateTEEAttestation }                           from './teeIntelligence';
 import { UserRegistry, DEMO_POLICIES }                       from './users';
 import { openPortfolio, planAllocation, buildPnLPoint }      from './portfolio';
 import { evaluatePortfolioHarvests }                         from './compounder';
@@ -514,6 +515,67 @@ async function tickUser(
             userLog(userId, 'SUCCESS',
               `Rebalanced ${pos.venueName}: new tokenId ${rebalResult.uniV3TokenId?.toString() ?? '?'} tx:${rebalResult.txHash.slice(0, 10)}…`,
             );
+
+            // ── 0G Proof trail for REBALANCE (non-blocking, full TEE) ────────
+            if (policy.userAddress && rebalResult.receiptHash) {
+              const rebalReceiptHash  = rebalResult.receiptHash;
+              const rebalOpportunities = opportunities;
+              // Synthetic decision: TEE validates rebalance timing + range given current market
+              const rebalDecision = {
+                action:              'REBALANCE' as const,
+                targetOpportunity:   opportunities.find(o => o.id === pos.venueId) ?? opportunities[0] ?? null,
+                currentOpportunity:  opportunities.find(o => o.id === pos.venueId) ?? null,
+                reason:              `Price drift ${((drift?.driftPct ?? 0) * 100).toFixed(0)}% ≥ ${(DRIFT_TRIGGER * 100).toFixed(0)}% threshold — TEE validates timing`,
+                upliftPct:           0,
+              };
+              ;(async () => {
+                try {
+                  const traceCID = await uploadExecutionTrace({
+                    action:         'REBALANCE',
+                    userId,
+                    userAddress:    policy.userAddress!,
+                    receiptHash:    rebalReceiptHash,
+                    arbitrumTxHash: rebalResult.txHash,
+                    timestamp:      Date.now(),
+                    poolAddress:    pos.venueAddress,
+                    amountUSD:      pos.allocationUSD,
+                    screenerTop5:   rebalOpportunities.slice(0, 5),
+                    teeDecision:    { action: 'REBALANCE', reason: rebalDecision.reason, upliftPct: 0 },
+                  });
+                  const teeResult = await generateTEEAttestation({
+                    opportunities: rebalOpportunities,
+                    decision:      rebalDecision,
+                    userId,
+                    userAddress:   policy.userAddress!,
+                    receiptHash:   rebalReceiptHash,
+                  });
+                  const anchor = await anchorExecutionProof({
+                    receiptHash: rebalReceiptHash,
+                    userAddress: policy.userAddress!,
+                    action:      'REBALANCE',
+                    traceCID:    traceCID ?? '',
+                    attestCID:   teeResult?.attestCID ?? '',
+                  });
+                  if (anchor || traceCID || teeResult) {
+                    rebalanceRecord.zgChainTxHash   = anchor?.txHash;
+                    rebalanceRecord.zgChainExplorer = anchor?.explorerUrl;
+                    rebalanceRecord.zgTraceCID      = traceCID  ?? undefined;
+                    rebalanceRecord.zgAttestCID     = teeResult?.attestCID ?? undefined;
+                    const cur = registry.get(userId);
+                    if (cur) {
+                      registry.update(userId, {
+                        executions: cur.executions.map(e =>
+                          e.receiptHash === rebalReceiptHash ? { ...e, ...rebalanceRecord } : e,
+                        ),
+                      });
+                      pushState();
+                    }
+                  }
+                } catch (e: any) {
+                  console.warn('[0G] Rebalance proof trail failed (non-fatal):', e.message?.slice(0, 80));
+                }
+              })();
+            }
           }
         } catch (err: any) {
           // Fix E-4: detect vault drawdown pause in rebalance path
@@ -752,11 +814,14 @@ async function tickUser(
               userLog(userId, 'SUCCESS', `On-chain tx confirmed: ${result.txHash.slice(0, 10)}…`, `Gas: ${result.gasUsed}`);
 
               // ── 0G Proof trail (non-blocking, non-fatal) ──────────────────
-              // Upload execution trace to 0G Storage, then anchor receipt on
-              // 0G Chain. Both run in background — Arbitrum execution is done.
+              // Three components run in background after Arbitrum TX confirms:
+              //   1. 0G Storage  — upload execution trace JSON → traceCID
+              //   2. 0G Compute  — TEE-sign screener+decision → attestCID
+              //   3. 0G Chain    — anchor both CIDs in YieldGekoRegistry
               if (policy.userAddress && result.receiptHash) {
                 (async () => {
                   try {
+                    // Component 1: execution trace on 0G Storage
                     const traceCID = await uploadExecutionTrace({
                       action:         decision.action as string,
                       userId,
@@ -766,19 +831,33 @@ async function tickUser(
                       timestamp:      Date.now(),
                       poolAddress:    toInput.marketAddress,
                       amountUSD:      toInput.amountUSD,
+                      screenerTop5:   decisionOpportunities.slice(0, 5),
+                      teeDecision:    { action: decision.action, reason: decision.reason, upliftPct: decision.upliftPct },
                     });
 
+                    // Component 2: TEE-attested decision blob on 0G Storage
+                    const teeResult = await generateTEEAttestation({
+                      opportunities: decisionOpportunities,
+                      decision,
+                      userId,
+                      userAddress:  policy.userAddress!,
+                      receiptHash:  result.receiptHash,
+                    });
+
+                    // Component 3: anchor trace + attestation CIDs on 0G Chain
                     const anchor = await anchorExecutionProof({
                       receiptHash: result.receiptHash,
                       userAddress: policy.userAddress!,
                       action:      decision.action as 'GENESIS' | 'MIGRATE' | 'REBALANCE' | 'WITHDRAW',
                       traceCID:    traceCID ?? '',
+                      attestCID:   teeResult?.attestCID ?? '',
                     });
 
-                    if (anchor) {
-                      record.zgChainTxHash  = anchor.txHash;
-                      record.zgChainExplorer = anchor.explorerUrl;
-                      record.zgTraceCID     = traceCID ?? undefined;
+                    if (anchor || traceCID || teeResult) {
+                      record.zgChainTxHash   = anchor?.txHash;
+                      record.zgChainExplorer = anchor?.explorerUrl;
+                      record.zgTraceCID      = traceCID  ?? undefined;
+                      record.zgAttestCID     = teeResult?.attestCID ?? undefined;
                       // Patch the stored record with 0G links
                       const current = registry.get(userId);
                       if (current) {

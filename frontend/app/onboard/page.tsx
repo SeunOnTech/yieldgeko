@@ -1259,6 +1259,7 @@ export default function OnboardPage() {
               method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeader },
               body: JSON.stringify({
                 userAddress: address,
+                displayName: name || undefined,
                 policy: {
                   user: policyMessage.user,
                   managedUSD: policyMessage.managedUSD.toString(),

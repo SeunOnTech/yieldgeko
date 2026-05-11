@@ -88,6 +88,66 @@ function timeAgo(ts: number): string {
   return `${Math.floor(h / 24)}d ago`
 }
 
+// ── Logo helpers ──────────────────────────────────────────────────────────────
+
+const PROTOCOL_LOGOS: Record<string, string> = {
+  // UNI token logo = Uniswap protocol logo (verified 200)
+  uniswap:  'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984/logo.png',
+  // AAVE token on Ethereum (verified 200)
+  aave:     'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9/logo.png',
+  // Morpho GitHub avatar (no token logo available)
+  morpho:   'https://avatars.githubusercontent.com/u/97085409?s=64&v=4',
+  // PENDLE token on Arbitrum (verified 200)
+  pendle:   'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/arbitrum/assets/0x0c880f6761F1af8d9Aa9C466984b80DAb9a8c9e8/logo.png',
+  // GMX token on Arbitrum (verified 200)
+  gmx:      'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/arbitrum/assets/0xfc5A1A6EB076a2C7aD06eD22C90d7E710E35ad0a/logo.png',
+}
+
+const TOKEN_LOGOS: Record<string, string> = {
+  WETH:  'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2/logo.png',
+  USDC:  'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48/logo.png',
+  USDT:  'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0xdAC17F958D2ee523a2206206994597C13D831ec7/logo.png',
+  WBTC:  'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599/logo.png',
+  ARB:   'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/arbitrum/assets/0x912CE59144191C1204E64559FE8253a0e49E6548/logo.png',
+  DAI:   'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0x6B175474E89094C44Da98b954EedeAC495271d0F/logo.png',
+  PENDLE:'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/arbitrum/assets/0x0c880f6761F1af8d9Aa9C466984b80DAb9a8c9e8/logo.png',
+}
+
+const CHAIN_LOGO_ARB = 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/arbitrum/info/logo.png'
+
+function getProtocolLogo(venueName: string, protocol: string): string | null {
+  const s = `${venueName} ${protocol}`.toLowerCase()
+  for (const [key, url] of Object.entries(PROTOCOL_LOGOS)) {
+    if (s.includes(key)) return url
+  }
+  return null
+}
+
+function parseTokenPair(venueName: string): [string, string] | null {
+  const m = venueName.match(/\b([A-Z]{2,6})-([A-Z]{2,6})\b/)
+  return m ? [m[1], m[2]] : null
+}
+
+function cleanStrategyName(venueName: string): string {
+  return venueName.replace(/\(LVR-screened\)/gi, '').replace(/\s+/g, ' ').trim()
+}
+
+function strategyTag(ex: any): string {
+  const label = (raw: string | null) => {
+    if (!raw) return ''
+    const clean = cleanStrategyName(raw)
+    const pair  = parseTokenPair(clean)
+    // Extract short protocol name (first meaningful word, skip "V3/V2" suffixes)
+    const proto = clean.split(' ').find(w => w.length > 2 && !['V2','V3','LP','PT','YT'].includes(w)) ?? ''
+    if (pair) return proto ? `${proto} · ${pair[0]}/${pair[1]}` : `${pair[0]}/${pair[1]}`
+    return clean.split(' ').slice(0, 3).join(' ')
+  }
+  const to   = label(ex.to)
+  const from = label(ex.from)
+  if (from && to && from !== to) return `${from} → ${to}`
+  return to || from
+}
+
 // ── Bot icon ──────────────────────────────────────────────────────────────────
 
 const IcoBot = () => (
@@ -147,21 +207,27 @@ export default function AppPage() {
   const positions: any[]  = agentUser?.portfolio?.positions ?? []
   const pnlHistory: any[] = agentUser?.pnlHistory ?? []
 
+  // Prefer agent's portfolio NAV (sum of all positions, accurate for multi-strategy)
+  // Fall back to vault contract read (USDC only) when agent state not loaded yet
+  const agentTotalUSD = (metrics?.totalValueUSD as number | undefined) ?? null
+  const displayTotal  = agentTotalUSD !== null ? agentTotalUSD : (available + working)
+
   const isRunning = ['ALLOCATED', 'MONITORING', 'SCANNING', 'MIGRATING'].includes(phase)
-  const entryUSD  = agentUser?.portfolio?.metrics?.totalEntryUSD ?? totalValue
-  const pnlUSD    = totalValue > 0 ? totalValue - entryUSD : 0
+  const entryUSD  = metrics?.totalEntryUSD ?? displayTotal
+  // True total return = unrealized capital change + all fees/yield earned
+  const pnlUSD    = displayTotal > 0 ? (displayTotal - entryUSD) + earned : 0
   const pnlPct    = entryUSD > 0 ? (pnlUSD / entryUSD) * 100 : 0
 
-  const animTotal = useCountUp(address ? totalValue : 0)
+  const animTotal = useCountUp(address ? displayTotal : 0)
   const shortAddr = address ? `${address.slice(0, 6)}...${address.slice(-4)}` : ''
 
   const chartData = useMemo(() => {
     const lens: Record<string, number> = { '1W': 7, '1M': 30, 'All': 999 }
     const hist = pnlHistory.slice(-lens[chartRange])
     if (hist.length >= 2) return hist.map((p: any) => p.totalUSD ?? 0)
-    if (totalValue > 0) return Array(8).fill(totalValue)
+    if (displayTotal > 0) return Array(8).fill(displayTotal)
     return []
-  }, [chartRange, pnlHistory, totalValue])
+  }, [chartRange, pnlHistory, displayTotal])
 
   // ── JSX ────────────────────────────────────────────────────────────────────
   return (
@@ -244,7 +310,7 @@ export default function AppPage() {
               <div className="profile-balance-text" style={{ fontSize: 34, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-.03em', lineHeight: 1.2, fontVariantNumeric: 'tabular-nums', margin: '2px 0' }}>
                 ${animTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
-              {totalValue > 0 && entryUSD > 0 && (
+              {displayTotal > 0 && entryUSD > 0 && (
                 <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginTop: 4 }}>
                   <span style={{ fontSize: 14, fontWeight: 600, color: pnlPct >= 0 ? '#22C55E' : '#EF4444' }}>
                     {pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(2)}% (${Math.abs(pnlUSD).toFixed(4)})
@@ -272,13 +338,15 @@ export default function AppPage() {
               }}>
                 + Add funds
               </button>
-              <button onClick={() => router.push(`/app/strategy/${address}`)} style={{
-                height: 36, padding: '0 14px', borderRadius: 10, border: '1px solid var(--border)',
-                background: 'var(--surface)', color: 'var(--text-primary)',
-                fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit',
-              }}>
-                Strategy →
-              </button>
+              {positions.length > 0 && (
+                <button onClick={() => router.push(`/app/strategy/${address}`)} style={{
+                  height: 36, padding: '0 14px', borderRadius: 10, border: '1px solid var(--border)',
+                  background: 'var(--surface)', color: 'var(--text-primary)',
+                  fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit',
+                }}>
+                  {positions.length === 1 ? 'Strategy →' : `Strategies (${positions.length}) →`}
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -364,9 +432,9 @@ export default function AppPage() {
               {/* Stat cards */}
               <div className="stats-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
                 {[
-                  { label: 'Total value',  val: `$${totalValue.toFixed(4)}`,                   sub: 'USDC',        color: 'var(--text-primary)' },
-                  { label: 'Yield earned', val: earned > 0 ? `+$${earned.toFixed(6)}` : '—',  sub: 'since start', color: earned > 0 ? '#22C55E' : 'var(--text-muted)' },
-                  { label: 'Current APY', val: currentAPY != null ? `${currentAPY.toFixed(1)}%` : '—', sub: 'net of IL', color: '#EA580C' },
+                  { label: 'Total value',  val: `$${displayTotal.toFixed(4)}`,                  sub: positions.length > 1 ? 'all strategies' : 'USDC', color: 'var(--text-primary)' },
+                  { label: 'Yield earned', val: earned > 0 ? `+$${earned.toFixed(6)}` : '—',  sub: positions.length > 1 ? 'all strategies · since start' : 'since start', color: earned > 0 ? '#22C55E' : 'var(--text-muted)' },
+                  { label: 'Current APY', val: currentAPY != null ? `${currentAPY.toFixed(1)}%` : '—', sub: positions.length > 1 ? 'weighted avg · net of IL' : 'net of IL', color: '#EA580C' },
                 ].map(s => (
                   <div key={s.label} style={{ background: 'var(--surface)', borderRadius: 12, border: '1px solid var(--border)', padding: '12px 14px' }}>
                     <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '.05em' }}>{s.label}</div>
@@ -377,19 +445,100 @@ export default function AppPage() {
               </div>
             </div>
 
-            {/* Capital */}
+            {/* Active Strategies */}
             <div>
-              <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 12 }}>Capital</div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 12 }}>
+                Active Strategies
+                {positions.length > 0 && (
+                  <span style={{ marginLeft: 8, fontSize: 12, fontWeight: 500, color: 'var(--text-muted)' }}>
+                    {positions.length} running
+                  </span>
+                )}
+              </div>
               <div style={{ background: 'var(--surface)', borderRadius: 14, border: '1px solid var(--border)', overflow: 'hidden' }}>
 
                 {/* Table header */}
                 <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', padding: '9px 16px', borderBottom: '1px solid var(--border)' }}>
-                  {['Protocol', 'Value', 'Status'].map(h => (
+                  {['Strategy', 'Value', 'Status'].map(h => (
                     <div key={h} style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.05em', fontWeight: 500 }}>{h}</div>
                   ))}
                 </div>
 
-                {working > 0 && (
+                {/* One row per position — supports multiple strategies */}
+                {positions.map((pos: any, i: number) => {
+                  const isLast = i === positions.length - 1 && available === 0
+                  const venueName   = pos.venueName ?? ''
+                  const protocolLogo = getProtocolLogo(venueName, pos.protocol ?? '')
+                  const tokenPair   = parseTokenPair(venueName)
+                  const displayName = tokenPair ? tokenPair.join(' / ') : cleanStrategyName(venueName)
+                  const strategyType = pos.strategyType?.replace(/_/g, ' ').toLowerCase() ?? 'LP position'
+                  const cleanProto  = (pos.protocol ?? venueName.split(' ')[0] ?? 'Protocol')
+                    .replace(/\(LVR-screened\)/gi, '').trim()
+                  return (
+                    <div
+                      key={pos.id ?? i}
+                      onClick={() => router.push(`/app/strategy/${address}`)}
+                      style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', padding: '13px 16px', borderBottom: isLast ? 'none' : '1px solid var(--border)', cursor: 'pointer', transition: 'background 100ms' }}
+                      onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'rgba(128,128,128,0.04)'}
+                      onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+
+                        {/* Protocol icon + Arbitrum chain badge */}
+                        <div style={{ position: 'relative', width: 32, height: 32, flexShrink: 0 }}>
+                          {protocolLogo ? (
+                            <img
+                              src={protocolLogo} alt={cleanProto}
+                              style={{ width: 32, height: 32, borderRadius: 8, objectFit: 'cover', background: 'rgba(40,160,240,0.12)' }}
+                              onError={e => { (e.currentTarget as HTMLImageElement).replaceWith(Object.assign(document.createElement('div'), { textContent: '⬡', style: 'width:32px;height:32px;border-radius:8px;background:rgba(40,160,240,0.12);display:flex;align-items:center;justify-content:center;font-size:14px' })) }}
+                            />
+                          ) : (
+                            <div style={{ width: 32, height: 32, borderRadius: 8, background: 'rgba(40,160,240,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14 }}>⬡</div>
+                          )}
+                          {/* Arbitrum chain badge */}
+                          <img
+                            src={CHAIN_LOGO_ARB} alt="Arbitrum"
+                            style={{ position: 'absolute', bottom: -3, right: -3, width: 14, height: 14, borderRadius: '50%', border: '1.5px solid var(--background)', objectFit: 'cover' }}
+                          />
+                        </div>
+
+                        <div>
+                          {/* Token pair logos + name */}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                            {tokenPair && (
+                              <div style={{ position: 'relative', width: 26, height: 18, flexShrink: 0 }}>
+                                {TOKEN_LOGOS[tokenPair[0]] && (
+                                  <img src={TOKEN_LOGOS[tokenPair[0]]} alt={tokenPair[0]}
+                                    style={{ width: 18, height: 18, borderRadius: '50%', position: 'absolute', left: 0, top: 0, border: '1.5px solid var(--background)', objectFit: 'cover' }}
+                                  />
+                                )}
+                                {TOKEN_LOGOS[tokenPair[1]] && (
+                                  <img src={TOKEN_LOGOS[tokenPair[1]]} alt={tokenPair[1]}
+                                    style={{ width: 18, height: 18, borderRadius: '50%', position: 'absolute', left: 8, top: 0, border: '1.5px solid var(--background)', objectFit: 'cover' }}
+                                  />
+                                )}
+                              </div>
+                            )}
+                            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{displayName}</span>
+                          </div>
+                          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>
+                            {cleanProto} · {strategyType}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
+                        ${(pos.currentUSD ?? 0).toFixed(4)}
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center' }}>
+                        <span style={{ fontSize: 11, fontWeight: 600, color: '#22C55E', background: 'rgba(34,197,94,0.10)', borderRadius: 999, padding: '3px 8px' }}>Active</span>
+                      </div>
+                    </div>
+                  )
+                })}
+
+                {/* Fallback: vault says capital is deployed but agent state not loaded yet */}
+                {positions.length === 0 && working > 0 && (
                   <div
                     onClick={() => router.push(`/app/strategy/${address}`)}
                     style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', padding: '13px 16px', borderBottom: available > 0 ? '1px solid var(--border)' : 'none', cursor: 'pointer', transition: 'background 100ms' }}
@@ -399,12 +548,8 @@ export default function AppPage() {
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                       <div style={{ width: 32, height: 32, borderRadius: 8, background: 'rgba(40,160,240,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14 }}>⬡</div>
                       <div>
-                        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
-                          {positions[0]?.venueName?.split(' ')[0] ?? 'Uniswap V3'}
-                        </div>
-                        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>
-                          Arbitrum · LP position
-                        </div>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>Strategy</div>
+                        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>Arbitrum · loading…</div>
                       </div>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
@@ -434,9 +579,9 @@ export default function AppPage() {
                   </div>
                 )}
 
-                {working === 0 && available === 0 && (
+                {positions.length === 0 && working === 0 && available === 0 && (
                   <div style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
-                    No capital deployed.{' '}
+                    No strategies running.{' '}
                     <button onClick={() => router.push('/onboard')} style={{ color: '#EA580C', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600, fontFamily: 'inherit', fontSize: 13 }}>
                       Start a strategy →
                     </button>
@@ -476,7 +621,11 @@ export default function AppPage() {
               <div style={{ fontSize: 13, color: 'var(--text-muted)', textAlign: 'center', padding: '40px 0' }}>No agent actions yet</div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                {executions.slice(0, 20).map((ex: any, i: number) => (
+                {executions.slice(0, 20).map((ex: any, i: number) => {
+                  const tag = agentUser?.policy?.displayName
+                    ? agentUser.policy.displayName
+                    : strategyTag(ex)
+                  return (
                   <div key={i}
                     style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px', borderRadius: 10, cursor: 'pointer', transition: 'background 100ms' }}
                     onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--surface)'}
@@ -490,9 +639,17 @@ export default function AppPage() {
                         <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{actionLabel(ex.action)}</span>
                         <span style={{ fontSize: 11, color: 'var(--text-muted)', flexShrink: 0 }}>{ex.timestamp ? timeAgo(ex.timestamp) : ''}</span>
                       </div>
-                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {ex.from ? ex.from.split(' ').slice(0, 4).join(' ') : ''}
-                        {ex.amountUSD ? ` · $${Number(ex.amountUSD).toFixed(2)}` : ''}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 3, flexWrap: 'wrap' }}>
+                        {tag && (
+                          <span style={{ fontSize: 10, fontWeight: 600, padding: '1px 6px', borderRadius: 4, background: `${actionColor(ex.action)}18`, color: actionColor(ex.action), flexShrink: 0 }}>
+                            {tag}
+                          </span>
+                        )}
+                        {ex.amountUSD != null && (
+                          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                            ${Number(ex.amountUSD).toFixed(2)}
+                          </span>
+                        )}
                       </div>
                     </div>
                     {ex.amountUSD != null && (
@@ -501,12 +658,13 @@ export default function AppPage() {
                       </span>
                     )}
                   </div>
-                ))}
+                  )
+                })}
                 <button
                   onClick={() => router.push(`/app/strategy/${address}`)}
                   style={{ marginTop: 8, width: '100%', padding: '9px', borderRadius: 10, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)', fontSize: 12, fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit' }}
                 >
-                  View all in strategy →
+                  View all in {positions.length > 1 ? 'strategies' : 'strategy'} →
                 </button>
               </div>
             )}
@@ -532,7 +690,16 @@ export default function AppPage() {
                     <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>{actionLabel(ex.action)}</span>
                     <span style={{ fontSize: 12, color: 'var(--text-muted)', flexShrink: 0 }}>{ex.timestamp ? timeAgo(ex.timestamp) : ''}</span>
                   </div>
-                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>{ex.from || ''}</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
+                    {strategyTag(ex) && (
+                      <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 7px', borderRadius: 5, background: `${actionColor(ex.action)}18`, color: actionColor(ex.action) }}>
+                        {strategyTag(ex)}
+                      </span>
+                    )}
+                    {ex.amountUSD != null && (
+                      <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>${Number(ex.amountUSD).toFixed(2)}</span>
+                    )}
+                  </div>
                   {ex.txHash && (
                     <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2, fontFamily: 'monospace' }}>{ex.txHash.slice(0, 20)}…</div>
                   )}

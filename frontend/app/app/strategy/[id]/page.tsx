@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { useReadContract, useWriteContract } from 'wagmi'
-import { formatUnits, parseUnits } from 'viem'
+import { formatUnits } from 'viem'
 import { VAULT_ADDRESS, USDC_ADDRESS } from '@/config'
 import { yieldGekoAbi } from '@/src/generated'
 import { StatusPill, ChainChip, ProtocolMark } from '../../../components/ui'
@@ -26,249 +26,81 @@ async function fetchAgentUser(address: string): Promise<any | null> {
 
 async function agentPost(path: string, body: object): Promise<any> {
   const res = await fetch(`${AGENT_BASE}${path}`, {
-    method:  'POST',
+    method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHdr },
-    body:    JSON.stringify(body),
+    body: JSON.stringify(body),
   })
   return res.json()
 }
 
-// ── Orbital loading spinner ───────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
-function OrbitalSpinner({ label }: { label: string }) {
-  return (
-    <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:16, padding:'32px 0' }}>
-      <div style={{ position:'relative', width:56, height:56 }}>
-        {/* outer ring */}
-        <div style={{
-          position:'absolute', inset:0, borderRadius:'50%',
-          border:'2px solid rgba(255,255,255,0.08)',
-        }} />
-        {/* spinning arc */}
-        <div style={{
-          position:'absolute', inset:0, borderRadius:'50%',
-          border:'2px solid transparent',
-          borderTopColor:'var(--orange)',
-          animation:'spin 1.1s linear infinite',
-        }} />
-        {/* inner pulse */}
-        <div style={{
-          position:'absolute', inset:10, borderRadius:'50%',
-          background:'var(--orange)',
-          opacity:0.15,
-          animation:'pulse 1.1s ease-in-out infinite',
-        }} />
-        {/* center dot */}
-        <div style={{
-          position:'absolute', inset:'50%', transform:'translate(-50%,-50%)',
-          width:6, height:6, borderRadius:'50%',
-          background:'var(--orange)',
-        }} />
-      </div>
-      <span style={{ fontSize:13, color:'var(--text-2)', letterSpacing:'0.04em' }}>{label}</span>
-      <style>{`
-        @keyframes spin { to { transform: rotate(360deg); } }
-        @keyframes pulse { 0%,100% { opacity:.08; } 50% { opacity:.28; } }
-      `}</style>
-    </div>
-  )
+function relativeTime(ts: number): string {
+  const d = (Date.now() - ts) / 1000
+  if (d < 60)    return 'just now'
+  if (d < 3600)  return `${Math.floor(d / 60)}m ago`
+  if (d < 86400) return `${Math.floor(d / 3600)}h ago`
+  return `${Math.floor(d / 86400)}d ago`
 }
 
-// ── Withdraw modal ────────────────────────────────────────────────────────────
-
-// ── Shared confirm modal ──────────────────────────────────────────────────────
-
-function ConfirmModal({
-  title, body, confirmLabel, confirmStyle = 'danger',
-  onConfirm, onCancel,
-}: {
-  title: string; body: React.ReactNode; confirmLabel: string
-  confirmStyle?: 'danger' | 'warn'; onConfirm: () => void; onCancel: () => void
-}) {
-  return (
-    <div style={{
-      position:'fixed', inset:0, zIndex:999,
-      background:'rgba(0,0,0,0.72)', backdropFilter:'blur(6px)',
-      display:'flex', alignItems:'center', justifyContent:'center',
-    }} onClick={onCancel}>
-      <div style={{
-        background:'var(--surface-1)', border:'1px solid var(--border)',
-        borderRadius:16, padding:28, width:380, maxWidth:'calc(100vw - 48px)',
-      }} onClick={e => e.stopPropagation()}>
-        <div style={{ fontWeight:600, fontSize:16, marginBottom:12 }}>{title}</div>
-        <div style={{ fontSize:13, color:'var(--text-2)', lineHeight:1.6, marginBottom:24 }}>{body}</div>
-        <div style={{ display:'flex', gap:10 }}>
-          <button className="btn-ghost" style={{ flex:1 }} onClick={onCancel}>Cancel</button>
-          <button
-            style={{
-              flex:1, padding:'10px 0', borderRadius:10, border:'none', cursor:'pointer',
-              fontWeight:600, fontSize:14,
-              background: confirmStyle === 'danger' ? 'var(--red, #ef4444)' : 'var(--amber, #f59e0b)',
-              color: '#fff',
-            }}
-            onClick={onConfirm}
-          >{confirmLabel}</button>
-        </div>
-      </div>
-    </div>
-  )
+function formatDate(ts: number): string {
+  return new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
-// ── Withdraw modal ────────────────────────────────────────────────────────────
+function actionColor(a: string) {
+  if (a === 'GENESIS')  return '#22C55E'
+  if (a === 'WITHDRAW') return '#EF4444'
+  if (a === 'MIGRATE')  return '#3B82F6'
+  if (a?.includes('REBALANCE')) return '#8B5CF6'
+  if (a === 'SAFETY_EXIT') return '#EF4444'
+  return '#EA580C'
+}
 
-type WithdrawPhase = 'confirm' | 'agent-closing' | 'ready-to-sign' | 'signing-tx' | 'done' | 'error'
+function actionLabel(a: string) {
+  if (a === 'GENESIS')       return 'Deployed'
+  if (a === 'WITHDRAW')      return 'Withdrew'
+  if (a === 'MIGRATE')       return 'Migrated'
+  if (a === 'SAFETY_EXIT')   return 'Safety exit'
+  if (a?.includes('REBALANCE')) return 'Rebalanced'
+  if (a === 'HARVEST')       return 'Harvested'
+  return a
+}
 
-function WithdrawModal({
-  userAddress, onClose, onDone,
-}: { userAddress: string; onClose: () => void; onDone: () => void }) {
-  const [phase,   setPhase]   = useState<WithdrawPhase>('confirm')
-  const [idleRaw, setIdleRaw] = useState<bigint>(BigInt(0))
-  const [errMsg,  setErrMsg]  = useState('')
-  const { writeContract } = useWriteContract()
+function actionEmoji(a: string) {
+  if (a === 'GENESIS')       return '🌱'
+  if (a === 'WITHDRAW')      return '📤'
+  if (a === 'MIGRATE')       return '🔄'
+  if (a === 'SAFETY_EXIT')   return '🛡️'
+  if (a?.includes('REBALANCE')) return '⚖️'
+  if (a === 'HARVEST')       return '🌾'
+  return '⚡'
+}
 
-  const idleUSDC = Number(idleRaw) / 1e6
+function parseTokenPair(raw: string): [string, string] | null {
+  const m = raw.match(/\b([A-Z]{2,6})-([A-Z]{2,6})\b/)
+  return m ? [m[1], m[2]] : null
+}
 
-  function startWithdraw() {
-    setPhase('agent-closing')
+function cleanVenueName(raw: string): string {
+  return raw.replace(/\(LVR-screened\)/gi, '').replace(/\s+/g, ' ').trim()
+}
+
+function strategyTag(ex: any): string {
+  const label = (raw: string | null) => {
+    if (!raw) return ''
+    const pair = parseTokenPair(raw)
+    if (pair) return `${pair[0]}/${pair[1]}`
+    return cleanVenueName(raw).split(' ').slice(0, 3).join(' ')
   }
+  const to = label(ex.to); const from = label(ex.from)
+  if (from && to && from !== to) return `${from} → ${to}`
+  return to || from
+}
 
-  useEffect(() => {
-    if (phase !== 'agent-closing') return
-    let cancelled = false
-    agentPost('/api/withdraw', { userAddress })
-      .then((res: any) => {
-        if (cancelled) return
-        if (res.ok || res.status === 'IDLE_ONLY') {
-          setIdleRaw(BigInt(res.idleUSDCRaw ?? '0'))
-          setPhase('ready-to-sign')
-        } else {
-          setErrMsg(res.error ?? 'Agent could not unwind the position.')
-          setPhase('error')
-        }
-      })
-      .catch((e: any) => {
-        if (!cancelled) { setErrMsg(e.message); setPhase('error') }
-      })
-    return () => { cancelled = true }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase])
+// ── Skeleton ──────────────────────────────────────────────────────────────────
 
-  function signWithdraw() {
-    if (!VAULT_ADDRESS || idleRaw === BigInt(0)) return
-    setPhase('signing-tx')
-    writeContract({
-      address: VAULT_ADDRESS,
-      abi:     yieldGekoAbi,
-      functionName: 'withdraw',
-      args:    [USDC_ADDRESS, idleRaw],
-    }, {
-      onSuccess: () => { setPhase('done') },
-      onError:   (e: any) => { setErrMsg(e.shortMessage ?? e.message); setPhase('error') },
-    })
-  }
-
-  if (phase === 'confirm') {
-    return (
-      <ConfirmModal
-        title="Withdraw all funds?"
-        body={
-          <>
-            This will close your active position and convert everything to USDC.
-            You&apos;ll then sign a wallet transaction to receive the funds.
-            <br /><br />
-            <strong>This stops the agent from earning yield on your behalf.</strong>
-          </>
-        }
-        confirmLabel="Yes, withdraw"
-        confirmStyle="danger"
-        onConfirm={startWithdraw}
-        onCancel={onClose}
-      />
-    )
-  }
-
-  return (
-    <div style={{
-      position:'fixed', inset:0, zIndex:999,
-      background:'rgba(0,0,0,0.7)', backdropFilter:'blur(6px)',
-      display:'flex', alignItems:'center', justifyContent:'center',
-    }}
-      onClick={phase === 'agent-closing' ? undefined : onClose}
-    >
-      <div style={{
-        background:'var(--surface-1)', border:'1px solid var(--border)',
-        borderRadius:16, padding:32, width:400, maxWidth:'calc(100vw - 48px)',
-      }}
-        onClick={e => e.stopPropagation()}
-      >
-        {/* header */}
-        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:24 }}>
-          <span style={{ fontWeight:600, fontSize:16 }}>Withdraw funds</span>
-          {phase !== 'agent-closing' && (
-            <button onClick={onClose} style={{ background:'none', border:'none', color:'var(--text-2)', cursor:'pointer', fontSize:18 }}>✕</button>
-          )}
-        </div>
-
-        {phase === 'agent-closing' && (
-          <>
-            <OrbitalSpinner label="Agent closing position on-chain…" />
-            <p style={{ textAlign:'center', fontSize:12, color:'var(--text-2)', marginTop:8 }}>
-              Unwinding UniV3 LP and converting to USDC. This takes 30–90 seconds.
-            </p>
-          </>
-        )}
-
-        {phase === 'ready-to-sign' && (
-          <>
-            <div style={{ textAlign:'center', marginBottom:24 }}>
-              <div style={{ fontSize:32, fontWeight:700, color:'var(--green)' }}>
-                {idleUSDC.toFixed(6)} USDC
-              </div>
-              <div style={{ fontSize:13, color:'var(--text-2)', marginTop:4 }}>
-                ready in vault — sign to receive in your wallet
-              </div>
-            </div>
-            {/* step indicator */}
-            <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:24 }}>
-              <div style={{ width:20, height:20, borderRadius:'50%', background:'var(--green)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:11, fontWeight:700 }}>✓</div>
-              <div style={{ fontSize:12, color:'var(--text-2)', flex:1 }}>Position closed by agent</div>
-              <div style={{ width:20, height:20, borderRadius:'50%', border:'2px solid var(--orange)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:11, fontWeight:700, color:'var(--orange)' }}>2</div>
-              <div style={{ fontSize:12, color:'var(--text-1)', flex:1 }}>Sign wallet transfer</div>
-            </div>
-            <button className="btn-primary" style={{ width:'100%' }} onClick={signWithdraw}>
-              Sign &amp; receive {idleUSDC.toFixed(4)} USDC
-            </button>
-          </>
-        )}
-
-        {phase === 'signing-tx' && (
-          <OrbitalSpinner label="Waiting for wallet signature…" />
-        )}
-
-        {phase === 'done' && (
-          <div style={{ textAlign:'center' }}>
-            <div style={{ fontSize:40, marginBottom:12 }}>🎉</div>
-            <div style={{ fontWeight:600, marginBottom:6 }}>Withdrawal complete</div>
-            <div style={{ fontSize:13, color:'var(--text-2)', marginBottom:24 }}>
-              {idleUSDC.toFixed(6)} USDC is now in your wallet.
-            </div>
-            <button className="btn-primary" style={{ width:'100%' }} onClick={() => { onDone(); onClose() }}>
-              Done
-            </button>
-          </div>
-        )}
-
-        {phase === 'error' && (
-          <div style={{ textAlign:'center' }}>
-            <div style={{ fontSize:13, color:'var(--red)', background:'rgba(239,68,68,0.08)', borderRadius:8, padding:'12px 16px', marginBottom:20 }}>
-              {errMsg || 'Something went wrong.'}
-            </div>
-            <button className="btn-ghost" style={{ width:'100%' }} onClick={onClose}>Close</button>
-          </div>
-        )}
-      </div>
-    </div>
-  )
+function Skel({ h = 16, w = '100%', r = 6 }: { h?: number; w?: string | number; r?: number }) {
+  return <div className="skel" style={{ height: h, width: w, borderRadius: r }} />
 }
 
 // ── Animated counter ──────────────────────────────────────────────────────────
@@ -283,8 +115,7 @@ function useCountUp(target: number, duration = 900): number {
     const start = performance.now()
     const tick = (now: number) => {
       const t = Math.min(1, (now - start) / duration)
-      const ease = 1 - Math.pow(1 - t, 3)
-      setVal(from + (target - from) * ease)
+      setVal(from + (target - from) * (1 - Math.pow(1 - t, 3)))
       if (t < 1) requestAnimationFrame(tick)
     }
     requestAnimationFrame(tick)
@@ -292,174 +123,459 @@ function useCountUp(target: number, duration = 900): number {
   return val
 }
 
-// ── Animated SVG performance chart ───────────────────────────────────────────
+// ── Mini chart ────────────────────────────────────────────────────────────────
 
-function PerfChart({ data, floorUSD, height = 200 }: { data: number[]; floorUSD?: number; height?: number }) {
-  const svgRef   = useRef<SVGSVGElement>(null)
-  const pathRef  = useRef<SVGPathElement>(null)
-  const [pathLen, setPathLen] = useState<number | null>(null)
-
-  const W = 600, H = height, PAD = 12
-  const min   = Math.min(...data)
-  const max   = Math.max(...data)
-  const range = (max - min) || 1
-  const pts   = data.map((v, i) => [
+function MiniChart({ data, height = 180 }: { data: number[]; height?: number }) {
+  if (data.length < 2) return null
+  const W = 600; const H = height; const PAD = 8
+  const min = Math.min(...data); const max = Math.max(...data); const range = (max - min) || 1
+  const pts = data.map((v, i) => [
     PAD + (i / (data.length - 1)) * (W - PAD * 2),
     H - PAD - ((v - min) / range) * (H - PAD * 2),
   ])
+  const line = pts.map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${x.toFixed(1)} ${y.toFixed(1)}`).join(' ')
+  const fill = `${line} L${W - PAD} ${H - PAD} L${PAD} ${H - PAD} Z`
+  const isUp = (data[data.length - 1] ?? 0) >= (data[0] ?? 0)
+  const c = isUp ? '#22C55E' : '#EF4444'
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height }} preserveAspectRatio="none">
+      <defs>
+        <linearGradient id="sg" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={c} stopOpacity="0.18" />
+          <stop offset="100%" stopColor={c} stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <path d={fill} fill="url(#sg)" />
+      <path d={line} fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      {pts.length > 0 && (
+        <circle cx={pts[pts.length - 1][0]} cy={pts[pts.length - 1][1]}
+          r="4" fill={c} style={{ filter: `drop-shadow(0 0 5px ${c})` }} />
+      )}
+    </svg>
+  )
+}
 
-  const linePath = pts.map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${x.toFixed(1)} ${y.toFixed(1)}`).join(' ')
-  const fillPath = `${linePath} L${W - PAD} ${H - PAD} L${PAD} ${H - PAD} Z`
+// ── OrbitalSpinner ────────────────────────────────────────────────────────────
 
-  const refUSD = floorUSD ?? (data[0] ?? 0)
-  const refY   = H - PAD - ((refUSD - min) / range) * (H - PAD * 2)
+function OrbitalSpinner({ label }: { label: string }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16, padding: '32px 0' }}>
+      <div style={{ position: 'relative', width: 56, height: 56 }}>
+        <div style={{ position: 'absolute', inset: 0, borderRadius: '50%', border: '2px solid rgba(255,255,255,0.08)' }} />
+        <div style={{ position: 'absolute', inset: 0, borderRadius: '50%', border: '2px solid transparent', borderTopColor: 'var(--orange)', animation: 'spin 1.1s linear infinite' }} />
+        <div style={{ position: 'absolute', inset: 10, borderRadius: '50%', background: 'var(--orange)', opacity: 0.15, animation: 'pulse 1.1s ease-in-out infinite' }} />
+        <div style={{ position: 'absolute', inset: '50%', transform: 'translate(-50%,-50%)', width: 6, height: 6, borderRadius: '50%', background: 'var(--orange)' }} />
+      </div>
+      <span style={{ fontSize: 13, color: 'var(--text-muted)', letterSpacing: '0.04em' }}>{label}</span>
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}@keyframes pulse{0%,100%{opacity:.08}50%{opacity:.28}}`}</style>
+    </div>
+  )
+}
 
-  // Compute total value change
-  const startVal = data[0] ?? 0
-  const endVal   = data[data.length - 1] ?? 0
-  const isUp     = endVal >= startVal
-  const lineColor = isUp ? '#22C55E' : '#EF4444'
+// ── Agent Intelligence Feed (real data) ──────────────────────────────────────
 
+type FeedEntry =
+  | { id: string; type: 'log';  level: string; message: string; detail?: string; ts: number }
+  | { id: string; type: 'exec'; data: any; ts: number }
+
+function levelColor(level: string) {
+  if (level === 'SUCCESS') return '#22C55E'
+  if (level === 'WARN')    return '#F59E0B'
+  if (level === 'ERROR')   return '#EF4444'
+  return 'var(--text-muted)'
+}
+
+function levelIcon(level: string) {
+  if (level === 'SUCCESS') return '✓'
+  if (level === 'WARN')    return '⚠'
+  if (level === 'ERROR')   return '✗'
+  return '🧠'
+}
+
+function phaseStatus(phase: string) {
+  if (phase === 'SCANNING')    return 'Scanning for yield opportunities…'
+  if (phase === 'MIGRATING')   return 'Executing position migration…'
+  if (phase === 'WITHDRAWING') return 'Unwinding position…'
+  if (phase === 'PAUSED')      return 'Agent paused — position held open'
+  if (phase === 'IDLE')        return 'Idle — awaiting deployment'
+  if (phase === 'SAFETY_EXIT') return 'Safety exit triggered'
+  return 'Actively monitoring position…'
+}
+
+function LiveAgentFeed({ agentUser, executions, phase }: {
+  agentUser: any;
+  executions: any[];
+  phase: string;
+}) {
+  const [feed, setFeed] = useState<FeedEntry[]>([])
+  const userId = agentUser?.userId as string | undefined
+
+  // Build feed from polled agentUser state (refreshes every 30s)
   useEffect(() => {
-    if (pathRef.current) setPathLen(pathRef.current.getTotalLength())
-  }, [data])
+    const logs: FeedEntry[] = (agentUser?.log ?? []).slice(0, 25).map((l: any) => ({
+      id: l.id,
+      type: 'log' as const,
+      level: l.level ?? 'INFO',
+      message: l.message,
+      detail: l.detail,
+      ts: l.timestamp,
+    }))
+    const execs: FeedEntry[] = executions.slice(0, 5).map((e: any) => ({
+      id: `exec-${e.receiptHash ?? e.timestamp}`,
+      type: 'exec' as const,
+      data: e,
+      ts: e.timestamp,
+    }))
+    setFeed([...logs, ...execs].sort((a, b) => b.ts - a.ts).slice(0, 30))
+  }, [agentUser?.log, executions])
+
+  // SSE for real-time additions — new entries appear instantly on each tick
+  useEffect(() => {
+    if (!userId) return
+    const sseUrl = process.env.NEXT_PUBLIC_AGENT_SSE_URL ?? 'http://localhost:3001/events'
+    const es = new EventSource(sseUrl)
+
+    es.onmessage = (event) => {
+      try {
+        const evt = JSON.parse(event.data)
+        if (!evt) return
+
+        if (evt.type === 'LOG' && evt.payload?.userId === userId) {
+          const entry = evt.payload?.entry
+          if (!entry) return
+          const newLog: FeedEntry = {
+            id: entry.id ?? `log-${Date.now()}`,
+            type: 'log',
+            level: entry.level ?? 'INFO',
+            message: entry.message,
+            detail: entry.detail,
+            ts: entry.timestamp ?? Date.now(),
+          }
+          setFeed(prev => [newLog, ...prev].slice(0, 30))
+        }
+
+        if (evt.type === 'EXECUTION' && evt.payload?.userId === userId) {
+          const ex = evt.payload
+          const newExec: FeedEntry = {
+            id: `exec-${ex.receiptHash ?? Date.now()}`,
+            type: 'exec',
+            data: ex,
+            ts: ex.timestamp ?? Date.now(),
+          }
+          setFeed(prev => [newExec, ...prev].slice(0, 30))
+        }
+      } catch { /* ignore malformed events */ }
+    }
+
+    return () => es.close()
+  }, [userId])
 
   return (
-    <div style={{ position:'relative' }}>
-      <svg
-        ref={svgRef}
-        viewBox={`0 0 ${W} ${H}`}
-        preserveAspectRatio="none"
-        style={{ width:'100%', height, display:'block' }}
-      >
-        <defs>
-          <linearGradient id="fill-up"   x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%"   stopColor="#22C55E" stopOpacity="0.20" />
-            <stop offset="100%" stopColor="#22C55E" stopOpacity="0.01" />
-          </linearGradient>
-          <linearGradient id="fill-down" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%"   stopColor="#EF4444" stopOpacity="0.16" />
-            <stop offset="100%" stopColor="#EF4444" stopOpacity="0.01" />
-          </linearGradient>
-        </defs>
-
-        {/* Grid lines */}
-        {[0.25, 0.5, 0.75].map(p => (
-          <line key={p} x1={PAD} x2={W - PAD}
-            y1={PAD + p * (H - PAD * 2)} y2={PAD + p * (H - PAD * 2)}
-            stroke="rgba(255,255,255,0.05)" strokeWidth="1" />
-        ))}
-
-        {/* Floor reference */}
-        <line x1={PAD} x2={W - PAD} y1={refY} y2={refY}
-          stroke="rgba(255,255,255,0.12)" strokeDasharray="4 4" strokeWidth="1" />
-
-        {/* Fill area */}
-        <path d={fillPath} fill={isUp ? 'url(#fill-up)' : 'url(#fill-down)'} />
-
-        {/* Animated line */}
-        <path
-          ref={pathRef}
-          d={linePath}
-          fill="none"
-          stroke={lineColor}
-          strokeWidth="2.2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          vectorEffect="non-scaling-stroke"
-          style={pathLen != null ? {
-            strokeDasharray: pathLen,
-            strokeDashoffset: 0,
-            animation: `chartIn 1.2s cubic-bezier(0.16,1,0.3,1) both`,
-          } as React.CSSProperties : undefined}
-        />
-
-        {/* End dot */}
-        {pts.length > 0 && (
-          <circle
-            cx={pts[pts.length - 1][0]}
-            cy={pts[pts.length - 1][1]}
-            r="4" fill={lineColor}
-            style={{ filter:`drop-shadow(0 0 6px ${lineColor})`, animation:'fadeIn 600ms 1s both' }}
-          />
-        )}
-      </svg>
-
-      {/* Axis labels */}
-      {data.length > 0 && (
-        <div style={{ display:'flex', justifyContent:'space-between', marginTop:8 }}>
-          <span className="chart-label">${Math.round(startVal).toLocaleString()}</span>
-          <span className="chart-label">${Math.round(endVal).toLocaleString()}</span>
+    <div style={{ display: 'flex', flexDirection: 'column' }}>
+      {/* Real phase status */}
+      <div style={{ marginBottom: 16, padding: '10px 14px', borderRadius: 10, background: 'rgba(234,88,12,0.05)', border: '1px solid rgba(234,88,12,0.1)', display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ position: 'relative', width: 20, height: 20, flexShrink: 0 }}>
+          <div style={{ position: 'absolute', inset: 0, borderRadius: '50%', border: '2px solid rgba(234,88,12,0.2)' }} />
+          <div style={{ position: 'absolute', inset: 0, borderRadius: '50%', border: '2px solid transparent', borderTopColor: '#EA580C', animation: 'spin 1s linear infinite' }} />
         </div>
+        <span style={{ fontSize: 12, color: 'var(--text-primary)', fontWeight: 500 }}>{phaseStatus(phase)}</span>
+      </div>
+
+      {/* Feed */}
+      {feed.length === 0 ? (
+        <div style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', padding: '24px 0' }}>
+          Waiting for agent activity…
+        </div>
+      ) : feed.map((entry, i) => (
+        <div key={entry.id} style={{ animation: i === 0 ? 'fadeInSlide 0.35s ease-out both' : undefined }}>
+          {entry.type === 'exec' ? (
+            <ExecRow ex={entry.data} compact />
+          ) : (
+            <div style={{ display: 'flex', gap: 10, padding: '5px 0', borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+              <div style={{ width: 28, height: 28, borderRadius: 7, background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: 11, color: levelColor(entry.level), fontWeight: 700 }}>
+                {levelIcon(entry.level)}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 11, color: entry.level === 'INFO' ? 'var(--text-muted)' : levelColor(entry.level), lineHeight: 1.45, fontFamily: 'monospace', wordBreak: 'break-word' }}>
+                  {entry.message}
+                </div>
+                {entry.detail && (
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 1, opacity: 0.55, fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {entry.detail}
+                  </div>
+                )}
+                <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 2, opacity: 0.4 }}>
+                  {new Date(entry.ts).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      ))}
+      <style>{`@keyframes fadeInSlide{from{opacity:0;transform:translateY(-5px)}to{opacity:1;transform:translateY(0)}}`}</style>
+    </div>
+  )
+}
+
+// ── ConfirmModal ──────────────────────────────────────────────────────────────
+
+function ConfirmModal({ title, body, confirmLabel, confirmStyle = 'danger', onConfirm, onCancel }: {
+  title: string; body: React.ReactNode; confirmLabel: string
+  confirmStyle?: 'danger' | 'warn'; onConfirm: () => void; onCancel: () => void
+}) {
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 999, background: 'rgba(0,0,0,0.72)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={onCancel}>
+      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16, padding: 28, width: 380, maxWidth: 'calc(100vw - 48px)' }} onClick={e => e.stopPropagation()}>
+        <div style={{ fontWeight: 600, fontSize: 16, marginBottom: 12 }}>{title}</div>
+        <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.6, marginBottom: 24 }}>{body}</div>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button className="btn-ghost" style={{ flex: 1 }} onClick={onCancel}>Cancel</button>
+          <button style={{ flex: 1, padding: '10px 0', borderRadius: 10, border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: 14, background: confirmStyle === 'danger' ? '#ef4444' : '#f59e0b', color: '#fff' }} onClick={onConfirm}>{confirmLabel}</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── WithdrawModal ─────────────────────────────────────────────────────────────
+
+type WithdrawPhase = 'confirm' | 'agent-closing' | 'ready-to-sign' | 'signing-tx' | 'done' | 'error'
+
+function WithdrawModal({ userAddress, onClose, onDone }: { userAddress: string; onClose: () => void; onDone: () => void }) {
+  const [phase, setPhase] = useState<WithdrawPhase>('confirm')
+  const [idleRaw, setIdleRaw] = useState<bigint>(BigInt(0))
+  const [errMsg, setErrMsg] = useState('')
+  const { writeContract } = useWriteContract()
+  const idleUSDC = Number(idleRaw) / 1e6
+
+  useEffect(() => {
+    if (phase !== 'agent-closing') return
+    let cancelled = false
+    agentPost('/api/withdraw', { userAddress }).then((res: any) => {
+      if (cancelled) return
+      if (res.ok || res.status === 'IDLE_ONLY') {
+        setIdleRaw(BigInt(res.idleUSDCRaw ?? '0')); setPhase('ready-to-sign')
+      } else { setErrMsg(res.error ?? 'Agent could not unwind the position.'); setPhase('error') }
+    }).catch((e: any) => { if (!cancelled) { setErrMsg(e.message); setPhase('error') } })
+    return () => { cancelled = true }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase])
+
+  function signWithdraw() {
+    if (!VAULT_ADDRESS || idleRaw === BigInt(0)) return
+    setPhase('signing-tx')
+    writeContract({ address: VAULT_ADDRESS, abi: yieldGekoAbi, functionName: 'withdraw', args: [USDC_ADDRESS, idleRaw] }, {
+      onSuccess: () => setPhase('done'),
+      onError: (e: any) => { setErrMsg(e.shortMessage ?? e.message); setPhase('error') },
+    })
+  }
+
+  if (phase === 'confirm') return <ConfirmModal title="Withdraw all funds?" body={<>This will close your active position and convert everything to USDC. You&apos;ll then sign a wallet transaction to receive the funds.<br /><br /><strong>This stops the agent from earning yield on your behalf.</strong></>} confirmLabel="Yes, withdraw" confirmStyle="danger" onConfirm={() => setPhase('agent-closing')} onCancel={onClose} />
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 999, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={phase === 'agent-closing' ? undefined : onClose}>
+      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16, padding: 32, width: 400, maxWidth: 'calc(100vw - 48px)' }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+          <span style={{ fontWeight: 600, fontSize: 16 }}>Withdraw funds</span>
+          {phase !== 'agent-closing' && <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 18 }}>✕</button>}
+        </div>
+        {phase === 'agent-closing' && <><OrbitalSpinner label="Agent closing position on-chain…" /><p style={{ textAlign: 'center', fontSize: 12, color: 'var(--text-muted)', marginTop: 8 }}>Unwinding LP and converting to USDC. 30–90 seconds.</p></>}
+        {phase === 'ready-to-sign' && <><div style={{ textAlign: 'center', marginBottom: 24 }}><div style={{ fontSize: 32, fontWeight: 700, color: '#22C55E' }}>{idleUSDC.toFixed(6)} USDC</div><div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>ready in vault — sign to receive</div></div><div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 24 }}><div style={{ width: 20, height: 20, borderRadius: '50%', background: '#22C55E', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700 }}>✓</div><div style={{ fontSize: 12, color: 'var(--text-muted)', flex: 1 }}>Position closed by agent</div><div style={{ width: 20, height: 20, borderRadius: '50%', border: '2px solid #EA580C', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, color: '#EA580C' }}>2</div><div style={{ fontSize: 12, color: 'var(--text-primary)', flex: 1 }}>Sign wallet transfer</div></div><button className="btn-primary" style={{ width: '100%' }} onClick={signWithdraw}>Sign &amp; receive {idleUSDC.toFixed(4)} USDC</button></>}
+        {phase === 'signing-tx' && <OrbitalSpinner label="Waiting for wallet signature…" />}
+        {phase === 'done' && <div style={{ textAlign: 'center' }}><div style={{ fontSize: 40, marginBottom: 12 }}>🎉</div><div style={{ fontWeight: 600, marginBottom: 6 }}>Withdrawal complete</div><div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 24 }}>{idleUSDC.toFixed(6)} USDC is now in your wallet.</div><button className="btn-primary" style={{ width: '100%' }} onClick={() => { onDone(); onClose() }}>Done</button></div>}
+        {phase === 'error' && <div style={{ textAlign: 'center' }}><div style={{ fontSize: 13, color: '#ef4444', background: 'rgba(239,68,68,0.08)', borderRadius: 8, padding: '12px 16px', marginBottom: 20 }}>{errMsg || 'Something went wrong.'}</div><button className="btn-ghost" style={{ width: '100%' }} onClick={onClose}>Close</button></div>}
+      </div>
+    </div>
+  )
+}
+
+// ── Guardrail bar ─────────────────────────────────────────────────────────────
+
+// ── Autonomous Radar HUD ──────────────────────────────────────────────────────
+
+function PolicyHUD({ minAPY, maxDD, currentAPY, totalValue, earned }: { minAPY: number; maxDD: number; currentAPY: number; totalValue: number; earned: number }) {
+  // We use a 3-axis radar: Performance (APY), Safety (Drawdown), and Stability
+  // Normalized to 0-100 for the SVG
+  const apyPct = Math.min(100, (currentAPY / (minAPY || 1)) * 50) 
+  const safetyPct = Math.min(100, (1 - (maxDD / 50)) * 100)
+  const stability = 85 
+
+  const size = 180; const center = size / 2; const radius = (size / 2) - 20
+  const getPoint = (pct: number, angleDeg: number) => {
+    const r = (pct / 100) * radius
+    const angleRad = (angleDeg - 90) * (Math.PI / 180)
+    return { x: center + r * Math.cos(angleRad), y: center + r * Math.sin(angleRad) }
+  }
+  const p1 = getPoint(apyPct, 0); const p2 = getPoint(safetyPct, 120); const p3 = getPoint(stability, 240)
+  const polygon = `${p1.x},${p1.y} ${p2.x},${p2.y} ${p3.x},${p3.y}`
+  const a1 = getPoint(100, 0); const a2 = getPoint(100, 120); const a3 = getPoint(100, 240)
+
+  return (
+    <div className="strategy-hub-content" style={{ display: 'flex', alignItems: 'center', gap: 32, padding: '10px 0' }}>
+      {/* Radar Section */}
+      <div style={{ position: 'relative', width: size, height: size, flexShrink: 0 }}>
+        <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ filter: 'drop-shadow(0 0 8px rgba(234,88,12,0.15))' }}>
+          <circle cx={center} cy={center} r={radius} fill="none" stroke="var(--border)" strokeWidth="1" strokeDasharray="4 4" opacity="0.5" />
+          <circle cx={center} cy={center} r={radius * 0.66} fill="none" stroke="var(--border)" strokeWidth="1" strokeDasharray="4 4" opacity="0.3" />
+          <line x1={center} y1={center} x2={a1.x} y2={a1.y} stroke="var(--border)" strokeWidth="1" opacity="0.4" />
+          <line x1={center} y1={center} x2={a2.x} y2={a2.y} stroke="var(--border)" strokeWidth="1" opacity="0.4" />
+          <line x1={center} y1={center} x2={a3.x} y2={a3.y} stroke="var(--border)" strokeWidth="1" opacity="0.4" />
+          <polygon points={polygon} fill="rgba(234,88,12,0.12)" stroke="#EA580C" strokeWidth="2" strokeLinejoin="round" />
+          <circle cx={p1.x} cy={p1.y} r="3" fill="#EA580C" />
+          <circle cx={p2.x} cy={p2.y} r="3" fill="#EA580C" />
+          <circle cx={p3.x} cy={p3.y} r="3" fill="#EA580C" />
+        </svg>
+        <div style={{ position: 'absolute', top: center - 4, left: center - 4, width: 8, height: 8, borderRadius: '50%', background: '#EA580C', boxShadow: '0 0 10px #EA580C', animation: 'pulse 2s infinite' }} />
+      </div>
+
+      {/* Metrics Section */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 20 }}>
+        {/* Main Balance Row */}
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>Total Strategy Value</div>
+          <div style={{ fontSize: 32, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-.02em', fontVariantNumeric: 'tabular-nums' }}>
+            ${totalValue.toLocaleString(undefined, { minimumFractionDigits: 4, maximumFractionDigits: 4 })}
+          </div>
+        </div>
+
+        {/* Secondary Grid */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 16 }}>
+          <div>
+            <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 4 }}>Yield Earned</div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: earned > 0 ? '#22C55E' : 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
+              {earned > 0 ? `+$${earned.toFixed(6)}` : '—'}
+            </div>
+          </div>
+          <div>
+            <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 4 }}>Current APY</div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: '#EA580C', fontVariantNumeric: 'tabular-nums' }}>
+              {currentAPY.toFixed(1)}%
+            </div>
+          </div>
+          <div>
+            <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 4 }}>APY Floor</div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>{minAPY.toFixed(1)}%</div>
+          </div>
+          <div>
+            <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 4 }}>Risk Buffer</div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: maxDD > 15 ? '#F59E0B' : '#22C55E' }}>{(50 - maxDD).toFixed(1)}% left</div>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 12px', background: 'var(--background)', borderRadius: 10, border: '1px solid var(--border)' }}>
+          <div style={{ fontSize: 12, color: '#3B82F6', fontWeight: 700 }}>✓ 0G PROOF</div>
+          <div style={{ width: 1, height: 12, background: 'var(--border)' }} />
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', fontStyle: 'italic' }}>Policy strictly enforced by TEE environment.</div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── 0G Proof badges ───────────────────────────────────────────────────────────
+
+function ProofBadges({ ex }: { ex: any }) {
+  const hasChain  = Boolean(ex.zgChainExplorer)
+  const hasTrace  = Boolean(ex.zgTraceCID)
+  const hasAttest = Boolean(ex.zgAttestCID)
+  if (!hasChain && !hasTrace && !hasAttest) return null
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
+      {hasChain && (
+        <a href={ex.zgChainExplorer} target="_blank" rel="noopener noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 4, background: 'rgba(34,197,94,0.10)', color: '#22C55E', textDecoration: 'none', border: '1px solid rgba(34,197,94,0.2)' }}>
+          ✓ 0G Chain
+        </a>
+      )}
+      {hasTrace && (
+        <a href={`https://storagescan.0g.ai/submission/${ex.zgTraceCID}`} target="_blank" rel="noopener noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 4, background: 'rgba(59,130,246,0.10)', color: '#3B82F6', textDecoration: 'none', border: '1px solid rgba(59,130,246,0.2)' }}>
+          ✓ Trace
+        </a>
+      )}
+      {hasAttest && (
+        <a href={`https://storagescan.0g.ai/submission/${ex.zgAttestCID}`} target="_blank" rel="noopener noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 4, background: 'rgba(139,92,246,0.10)', color: '#8B5CF6', textDecoration: 'none', border: '1px solid rgba(139,92,246,0.2)' }}>
+          🔒 TEE
+        </a>
       )}
     </div>
   )
 }
 
-// ── Activity types ────────────────────────────────────────────────────────────
+// ── Execution row ─────────────────────────────────────────────────────────────
 
-type ExecRecord = {
-  action: string; from: string | null; to: string
-  amountUSD: number; simulated: boolean; receiptHash: string
-  txHash?: string; timestamp: number
-}
-
-const KIND_MAP: Record<string, string> = {
-  MIGRATE: 'migrate', HARVEST: 'harvest', HOLD: 'hold',
-  SAFETY_EXIT: 'safety', GENESIS: 'migrate', REBALANCE: 'migrate', REBALANCE_UNIV3: 'migrate',
-}
-const KIND_LABELS: Record<string, string> = {
-  migrate: 'DEPLOY', harvest: 'HARVEST', hold: 'HOLD', safety: 'SAFETY EXIT',
-}
-
-function relativeTime(ts: number): string {
-  const d = (Date.now() - ts) / 1000
-  if (d < 60)    return 'just now'
-  if (d < 3600)  return `${Math.floor(d / 60)}m ago`
-  if (d < 86400) return `${Math.floor(d / 3600)}h ago`
-  return `${Math.floor(d / 86400)}d ago`
-}
-
-// ── Guardrail bar ─────────────────────────────────────────────────────────────
-
-function Guardrail({
-  label, value, displayVal, color, max = 100,
-}: {
-  label: string; value: number; displayVal: string; color: string; max?: number
-}) {
-  const pct = Math.min(100, (value / max) * 100)
+function ExecRow({ ex, compact = false }: { ex: any; compact?: boolean }) {
+  const color = actionColor(ex.action)
+  const tag   = strategyTag(ex)
   return (
-    <div className="guardrail">
-      <div className="guardrail-header">
-        <span className="guardrail-label">{label}</span>
-        <span className="guardrail-value">{displayVal}</span>
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: compact ? '9px 0' : '14px 0', borderBottom: '1px solid var(--border)' }}>
+      {/* Icon */}
+      <div style={{ width: compact ? 32 : 38, height: compact ? 32 : 38, borderRadius: compact ? 8 : 10, flexShrink: 0, background: `${color}18`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: compact ? 14 : 17 }}>
+        {actionEmoji(ex.action)}
       </div>
-      <div className="guardrail-track">
-        <div className="guardrail-fill" style={{ width:`${pct}%`, background:color }} />
+      {/* Content */}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
+          <span style={{ fontSize: compact ? 13 : 14, fontWeight: 600, color: 'var(--text-primary)' }}>{actionLabel(ex.action)}</span>
+          <span style={{ fontSize: 11, color: 'var(--text-muted)', flexShrink: 0 }}>{ex.timestamp ? relativeTime(ex.timestamp) : ''}</span>
+        </div>
+        {/* Strategy tag + amount */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3, flexWrap: 'wrap' }}>
+          {tag && (
+            <span style={{ fontSize: 10, fontWeight: 600, padding: '1px 6px', borderRadius: 4, background: `${color}18`, color, flexShrink: 0 }}>
+              {tag}
+            </span>
+          )}
+          {ex.amountUSD != null && (
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>${Number(ex.amountUSD).toFixed(2)}</span>
+          )}
+        </div>
+        {/* 0G proof badges */}
+        <ProofBadges ex={ex} />
+        {/* View full proof CTA — only when receiptHash exists */}
+        {ex.receiptHash && ex.receiptHash !== '0x' && (
+          <div style={{ marginTop: 5 }}>
+            <a
+              href={`/verify/${ex.receiptHash}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ fontSize: 10, color: '#EA580C', fontWeight: 600, textDecoration: 'none', opacity: 0.85 }}
+            >
+              View full proof →
+            </a>
+          </div>
+        )}
+        {/* Tx hash */}
+        {!compact && ex.txHash && (
+          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4, fontFamily: 'monospace' }}>
+            {ex.txHash.slice(0, 22)}…
+          </div>
+        )}
       </div>
+      {/* Amount right */}
+      {ex.amountUSD != null && (
+        <span style={{ fontSize: compact ? 12 : 13, fontWeight: 700, flexShrink: 0, color: ex.action === 'WITHDRAW' ? '#EF4444' : '#22C55E', fontVariantNumeric: 'tabular-nums' }}>
+          {ex.action === 'WITHDRAW' ? '-' : '+'}${Number(ex.amountUSD).toFixed(2)}
+        </span>
+      )}
     </div>
   )
 }
 
-// ── Skeleton ──────────────────────────────────────────────────────────────────
-
-function Skel({ h = 16, w = '100%', r = 6 }: { h?: number; w?: string | number; r?: number }) {
-  return <div className="skel" style={{ height:h, width:w, borderRadius:r }} />
-}
-
 // ── Page ──────────────────────────────────────────────────────────────────────
 
+const ACTION_FILTERS = ['All', 'GENESIS', 'REBALANCE', 'MIGRATE', 'WITHDRAW']
+
 export default function StrategyPage({ params }: { params: Promise<{ id: string }> }) {
-  const router      = useRouter()
+  const router = useRouter()
   const { id: userAddress } = React.use(params)
 
-  const [agentUser, setAgentUser]   = useState<any>(null)
-  const [agentReady, setAgentReady] = useState(false)
-  const [range, setRange]           = useState('1M')
-
-  const [showWithdraw, setShowWithdraw]       = useState(false)
+  const [agentUser, setAgentUser]           = useState<any>(null)
+  const [agentReady, setAgentReady]         = useState(false)
+  const [tab, setTab]                       = useState<'overview' | 'executions' | 'position'>('overview')
+  const [range, setRange]                   = useState('1M')
+  const [execFilter, setExecFilter]         = useState('All')
+  const [showWithdraw, setShowWithdraw]     = useState(false)
   const [showPauseConfirm, setShowPauseConfirm] = useState(false)
-  const [pauseLoading, setPauseLoading]         = useState(false)
+  const [pauseLoading, setPauseLoading]     = useState(false)
 
   const { data: availableRaw } = useReadContract({
     address: VAULT_ADDRESS || undefined, abi: yieldGekoAbi, functionName: 'balances',
@@ -477,19 +593,16 @@ export default function StrategyPage({ params }: { params: Promise<{ id: string 
     query: { enabled: Boolean(userAddress && VAULT_ADDRESS), refetchInterval: 60_000 },
   })
 
-  // Use !== undefined to handle 0n correctly (0n is falsy but means "read resolved with 0")
-  const available  = availableRaw !== undefined ? Number(formatUnits(availableRaw as bigint, 6)) : null
-  const working    = workingRaw   !== undefined ? Number(formatUnits(workingRaw as bigint, 6))   : null
+  const available   = availableRaw !== undefined ? Number(formatUnits(availableRaw as bigint, 6)) : null
+  const working     = workingRaw   !== undefined ? Number(formatUnits(workingRaw as bigint, 6))   : null
   const readsLoaded = available !== null && working !== null
-  const totalValue  = (available ?? 0) + (working ?? 0)
+  const vaultTotal  = (available ?? 0) + (working ?? 0)
 
-  // policyRaw may be returned as a named tuple or positional array depending on wagmi version.
-  // Access both ways to avoid !undefined = true triggering a false paused banner.
-  const policy  = policyRaw as { active: boolean; minAPY: bigint; maxDrawdownBps: bigint; 0: boolean; 2: bigint; 3: bigint } | undefined
-  const policyActive = policy ? (policy.active ?? (policy as any)[0]) : undefined
-  const minAPY  = policy ? Number((policy.minAPY ?? (policy as any)[2]) ?? BigInt(0)) / 100 : null
-  const maxDD   = policy ? Number((policy.maxDrawdownBps ?? (policy as any)[3]) ?? BigInt(0)) / 100 : null
-  const paused  = policyActive === false  // only true when explicitly false, not undefined
+  const policy       = policyRaw as any
+  const policyActive = policy ? (policy.active ?? policy[0]) : undefined
+  const minAPY       = policy ? Number((policy.minAPY ?? policy[2]) ?? BigInt(0)) / 100 : null
+  const maxDD        = policy ? Number((policy.maxDrawdownBps ?? policy[3]) ?? BigInt(0)) / 100 : null
+  const paused       = policyActive === false
 
   useEffect(() => {
     if (!userAddress) return
@@ -500,462 +613,386 @@ export default function StrategyPage({ params }: { params: Promise<{ id: string 
 
   const executePauseResume = useCallback(async () => {
     if (!userAddress || pauseLoading) return
-    setShowPauseConfirm(false)
-    setPauseLoading(true)
+    setShowPauseConfirm(false); setPauseLoading(true)
     try {
-      const endpoint = paused ? '/api/resume-user' : '/api/pause-user'
-      await agentPost(endpoint, { userAddress })
+      await agentPost(paused ? '/api/resume-user' : '/api/pause-user', { userAddress })
       const updated = await fetchAgentUser(userAddress)
       if (updated) setAgentUser(updated)
-    } finally {
-      setPauseLoading(false)
-    }
+    } finally { setPauseLoading(false) }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userAddress, paused, pauseLoading])
 
   const handlePauseResume = useCallback(() => {
     if (!userAddress || pauseLoading) return
-    if (paused) {
-      // Resume: no confirmation needed — safe action
-      executePauseResume()
-    } else {
-      // Pause: show confirmation first
-      setShowPauseConfirm(true)
-    }
+    paused ? executePauseResume() : setShowPauseConfirm(true)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userAddress, paused, pauseLoading, executePauseResume])
 
-  const metrics    = agentUser?.portfolio?.metrics
-  const currentAPY = (metrics?.weightedNetAPY as number | undefined) ?? 0
-  const earned     = (metrics?.incomeEarnedUSD as number | undefined) ?? 0
-  const positions: any[] = agentUser?.portfolio?.positions ?? []
-  const executions: ExecRecord[] = agentUser?.executions ?? []
-  const pnlHistory: { ts: number; totalUSD: number; navUSD: number }[] = agentUser?.pnlHistory ?? []
+  const metrics     = agentUser?.portfolio?.metrics
+  const currentAPY  = (metrics?.weightedNetAPY as number | undefined) ?? 0
+  const earned      = (metrics?.incomeEarnedUSD as number | undefined) ?? 0
+  const positions: any[]  = agentUser?.portfolio?.positions ?? []
+  const executions: any[] = agentUser?.executions ?? []
+  const pnlHistory: any[] = agentUser?.pnlHistory ?? []
+  const phase        = (agentUser?.phase as string | undefined) ?? 'INITIALIZING'
+  const displayName  = agentUser?.policy?.displayName?.split('—')[0]?.trim() ?? 'My Strategy'
+  const isRunning    = ['ALLOCATED', 'MONITORING', 'SCANNING', 'MIGRATING'].includes(phase)
+  const sessionStart = (agentUser?.activeSessionStartedAt as number | undefined) ?? 0
 
-  const phase       = (agentUser?.phase as string | undefined) ?? 'INITIALIZING'
-  const displayName = agentUser?.policy?.displayName?.split('—')[0]?.trim() ?? 'My Strategy'
-  const updatedAgo  = agentUser?.updatedAt ? relativeTime(agentUser.updatedAt) : null
-  const isRunning   = ['ALLOCATED','MONITORING','SCANNING','MIGRATING'].includes(phase)
+  // Agent NAV takes priority over vault contract read
+  const agentTotal  = (metrics?.totalValueUSD as number | undefined) ?? null
+  const displayTotal = agentTotal ?? vaultTotal
+  const entryUSD    = metrics?.totalEntryUSD ?? displayTotal
+  const pnlUSD      = displayTotal > 0 ? (displayTotal - entryUSD) + earned : 0
+  const pnlPct      = entryUSD > 0 ? (pnlUSD / entryUSD) * 100 : 0
 
-  const animTotal = useCountUp(totalValue)
-  const animEarned = useCountUp(earned)
-
-  // Session start time — filter chart to current session only so testing
-  // history from previous runs doesn't pollute the chart for real users.
-  const sessionStart: number = (agentUser?.activeSessionStartedAt as number | undefined) ?? 0
+  const animTotal = useCountUp(displayTotal)
 
   const chartData = useMemo(() => {
     const lengths: Record<string, number> = { '1W': 7, '1M': 30, '3M': 90 }
     const n = lengths[range] ?? 30
-    // Only show history from the current active session
-    const sessionHistory = sessionStart > 0
-      ? pnlHistory.filter(p => p.ts >= sessionStart)
-      : pnlHistory
-    if (sessionHistory.length >= 2) {
-      const step = Math.max(1, Math.floor(sessionHistory.length / n))
-      return sessionHistory.filter((_, i) => i % step === 0).slice(-n)
-        .map(p => p.totalUSD ?? 0)
+    const hist = sessionStart > 0 ? pnlHistory.filter((p: any) => p.ts >= sessionStart) : pnlHistory
+    if (hist.length >= 2) {
+      const step = Math.max(1, Math.floor(hist.length / n))
+      return hist.filter((_: any, i: number) => i % step === 0).slice(-n).map((p: any) => p.totalUSD ?? 0)
     }
-    // Flat line at current value while history builds up
-    if (totalValue > 0) {
-      return Array.from({ length: 7 }, () => totalValue)
-    }
+    if (displayTotal > 0) return Array(7).fill(displayTotal)
     return []
-  }, [range, pnlHistory, totalValue, sessionStart])
+  }, [range, pnlHistory, displayTotal, sessionStart])
+
+  // Filtered executions for Executions tab
+  const filteredExecs = useMemo(() => {
+    if (execFilter === 'All') return executions
+    return executions.filter((e: any) =>
+      execFilter === 'REBALANCE' ? e.action?.includes('REBALANCE') : e.action === execFilter
+    )
+  }, [executions, execFilter])
+
+  // Group by date for Executions tab
+  const groupedExecs = useMemo(() => {
+    const groups: Record<string, any[]> = {}
+    filteredExecs.forEach((e: any) => {
+      const day = e.timestamp ? formatDate(e.timestamp) : 'Unknown'
+      if (!groups[day]) groups[day] = []
+      groups[day].push(e)
+    })
+    return Object.entries(groups)
+  }, [filteredExecs])
 
   return (
     <>
       {showWithdraw && userAddress && (
-        <WithdrawModal
-          userAddress={userAddress}
-          onClose={() => setShowWithdraw(false)}
-          onDone={() => fetchAgentUser(userAddress).then(u => u && setAgentUser(u))}
-        />
+        <WithdrawModal userAddress={userAddress} onClose={() => setShowWithdraw(false)} onDone={() => fetchAgentUser(userAddress).then(u => u && setAgentUser(u))} />
       )}
       {showPauseConfirm && (
-        <ConfirmModal
-          title="Pause the agent?"
-          body={
-            <>
-              The agent will stop managing your position. Your funds stay in the vault and
-              your LP position remains open — no swaps or closures happen.
-              <br /><br />
-              You can resume at any time.
-            </>
-          }
-          confirmLabel="Yes, pause agent"
-          confirmStyle="warn"
-          onConfirm={executePauseResume}
-          onCancel={() => setShowPauseConfirm(false)}
-        />
+        <ConfirmModal title="Pause the agent?" body={<>The agent will stop managing your position. Your funds stay in the vault and your LP position remains open — no swaps happen.<br /><br />You can resume at any time.</>} confirmLabel="Yes, pause agent" confirmStyle="warn" onConfirm={executePauseResume} onCancel={() => setShowPauseConfirm(false)} />
       )}
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-      <div className="db-page">
-        <div className="app-page">
 
-          {/* Paused banner */}
-          {paused && (
-            <div className="paused-banner">
-              <div className="paused-banner-left">
-                <span style={{ fontSize:18 }}>⚠</span>
-                <div>
-                  <div style={{ fontWeight:600 }}>Agent paused — drawdown limit reached.</div>
-                  <div style={{ fontSize:13, opacity:.8 }}>Your capital is secured in the vault.</div>
-                </div>
-              </div>
-              <div style={{ display:'flex', gap:8 }}>
-                <button
-                  className="btn-sm btn-warn-sm"
-                  onClick={handlePauseResume}
-                  disabled={pauseLoading}
-                >
-                  {pauseLoading ? 'Resuming…' : 'Resume agent'}
-                </button>
-                <button className="btn-sm btn-ghost-sm" onClick={() => setShowWithdraw(true)}>
-                  Withdraw all
-                </button>
+      <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+        {/* Responsive overrides */}
+        <style>{`
+          @media (max-width: 1024px) {
+            .strategy-header { flex-direction: column !important; align-items: stretch !important; gap: 24px !important; }
+            .strategy-header-left { gap: 16px !important; }
+            .strategy-actions { width: 100% !important; margin-top: 16px !important; gap: 10px !important; }
+            .strategy-actions button { flex: 1 !important; height: 44px !important; }
+            
+            .strategy-grid { grid-template-columns: 1fr !important; }
+            .strategy-left-col { padding: 24px 0 !important; border-right: none !important; }
+            .strategy-right-col { width: 100% !important; padding: 24px 0 !important; }
+            
+            .stats-grid { grid-template-columns: 1fr !important; }
+            .metrics-grid { grid-template-columns: repeat(2, 1fr) !important; }
+            .strategy-tabs-scroll { gap: 16px !important; padding: 0 !important; width: 100% !important; max-width: 100% !important; }
+            .tab-content-wrap { max-width: 100% !important; }
+            .strategy-hub-content { flex-direction: column !important; align-items: stretch !important; gap: 24px !important; }
+          }
+        `}</style>
+
+        {/* ── Paused banner ── */}
+        {paused && (
+          <div className="paused-banner">
+            <div className="paused-banner-left">
+              <span style={{ fontSize: 18 }}>⚠</span>
+              <div>
+                <div style={{ fontWeight: 600 }}>Agent paused — drawdown limit reached.</div>
+                <div style={{ fontSize: 13, opacity: 0.8 }}>Your capital is secured in the vault.</div>
               </div>
             </div>
-          )}
-
-          {/* Back nav */}
-          <div style={{ padding:'32px 0 0' }}>
-            <button
-              onClick={() => router.push('/app')}
-              style={{
-                background:'none', border:'none', padding:0,
-                fontSize:13, color:'var(--t3)', cursor:'pointer',
-                display:'flex', alignItems:'center', gap:6,
-                transition:'color 150ms', fontFamily:'inherit',
-              }}
-              onMouseEnter={e => (e.currentTarget.style.color = 'var(--t1)')}
-              onMouseLeave={e => (e.currentTarget.style.color = 'var(--t3)')}
-            >
-              ← Dashboard
-            </button>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn-sm btn-warn-sm" onClick={handlePauseResume} disabled={pauseLoading}>{pauseLoading ? 'Resuming…' : 'Resume agent'}</button>
+              <button className="btn-sm btn-ghost-sm" onClick={() => setShowWithdraw(true)}>Withdraw all</button>
+            </div>
           </div>
+        )}
 
-          {/* Header */}
-          <div style={{ marginTop:20, animation:'fadeUp 500ms cubic-bezier(0.16,1,0.3,1) both' }}>
-            <div style={{ display:'flex', alignItems:'center', gap:12, flexWrap:'wrap' }}>
-              <h1 style={{ fontSize:clamp(28, 36), fontWeight:800, color:'var(--t1)', letterSpacing:'-.025em', margin:0, lineHeight:1.1 }}>
-                {displayName}
-              </h1>
-              <StatusPill state={paused ? 'paused' : 'running'} />
-              <ChainChip chain="arbitrum" />
-            </div>
+        {/* ── Profile header ── */}
+        <div style={{ padding: '32px 0 0', borderBottom: '1px solid var(--border)', width: '100%' }}>
+          <div className="strategy-header" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, marginBottom: 20 }}>
 
-            {/* Value row */}
-            <div style={{ marginTop:20 }}>
-              {!readsLoaded ? (
-                <div style={{ marginTop:4 }}><Skel h={56} w={200} r={10} /></div>
-              ) : (
-              <div style={{ fontSize:clamp(40, 64), fontWeight:800, color:'var(--t1)', letterSpacing:'-.035em', lineHeight:1, fontVariantNumeric:'tabular-nums' }}>
-                ${animTotal.toLocaleString(undefined, { minimumFractionDigits:2, maximumFractionDigits:2 })}
-              </div>
-              )}
-              <div style={{ display:'flex', alignItems:'center', gap:12, marginTop:12, flexWrap:'wrap' }}>
-                {earned > 0 && (
-                  <span style={{ fontSize:16, fontWeight:600, color:'var(--green)' }}>
-                    +${animEarned.toFixed(4)} earned
-                  </span>
-                )}
-                {currentAPY > 0 && (
-                  <span style={{
-                    fontSize:13, fontWeight:600, color:'var(--orange)',
-                    background:'var(--orange-dim)', border:'1px solid rgba(234,88,12,.22)',
-                    borderRadius:999, padding:'4px 12px',
-                  }}>
-                    {currentAPY.toFixed(1)}% APY
-                  </span>
-                )}
-                {agentReady && currentAPY === 0 && (
-                  <div className="phase-badge">
-                    <span className="phase-badge-icon">⟳</span>
-                    Agent {phase.toLowerCase().replace(/_/g,' ')} — first action within 60s
+            {/* Left: back + value */}
+            <div className="strategy-header-left" style={{ display: 'flex', alignItems: 'flex-start', gap: 14 }}>
+              <button onClick={() => router.push('/app')} style={{ marginTop: 6, background: 'none', border: 'none', padding: 0, fontSize: 18, color: 'var(--text-muted)', cursor: 'pointer', lineHeight: 1 }}>←</button>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 14, color: 'var(--text-muted)', fontWeight: 500 }}>{displayName}</span>
+                  <StatusPill state={paused ? 'paused' : 'running'} />
+                  <ChainChip chain="arbitrum" />
+                </div>
+                <div style={{ fontSize: 34, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-.03em', lineHeight: 1.2, fontVariantNumeric: 'tabular-nums', margin: '4px 0' }}>
+                  {readsLoaded || agentReady
+                    ? `$${animTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                    : <Skel h={40} w={180} r={8} />}
+                </div>
+                {displayTotal > 0 && entryUSD > 0 && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 14, fontWeight: 600, color: pnlPct >= 0 ? '#22C55E' : '#EF4444' }}>
+                      {pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(2)}% (${Math.abs(pnlUSD).toFixed(4)})
+                    </span>
+                    <div style={{ padding: '2px 6px', borderRadius: 6, background: 'var(--surface)', fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, border: '1px solid var(--border)' }}>PnL</div>
+                    {currentAPY > 0 && (
+                      <span style={{ fontSize: 12, fontWeight: 600, color: '#EA580C', background: 'rgba(234,88,12,0.10)', borderRadius: 999, padding: '2px 10px', border: '1px solid rgba(234,88,12,0.2)' }}>
+                        {currentAPY.toFixed(1)}% APY
+                      </span>
+                    )}
                   </div>
                 )}
               </div>
             </div>
 
-            {/* Action buttons */}
-            <div style={{ display:'flex', gap:10, marginTop:24, flexWrap:'wrap' }}>
-              <button
-                className="btn-sm btn-ghost-sm"
-                onClick={() => setShowWithdraw(true)}
-              >
+            {/* Right: action buttons */}
+            <div className="strategy-actions" style={{ display: 'flex', gap: 8, flexShrink: 0, marginTop: 4, flexWrap: 'wrap' }}>
+              <button onClick={() => router.push('/onboard')} style={{ height: 36, padding: '0 16px', borderRadius: 10, border: 'none', background: '#EA580C', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
+                + Add funds
+              </button>
+              <button onClick={handlePauseResume} disabled={pauseLoading} style={{ height: 36, padding: '0 14px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-primary)', fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit', opacity: pauseLoading ? 0.6 : 1 }}>
+                {pauseLoading ? (paused ? 'Resuming…' : 'Pausing…') : (paused ? 'Resume agent' : 'Pause agent')}
+              </button>
+              <button onClick={() => setShowWithdraw(true)} style={{ height: 36, padding: '0 14px', borderRadius: 10, border: '1px solid rgba(239,68,68,0.3)', background: 'rgba(239,68,68,0.08)', color: '#EF4444', fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit' }}>
                 Withdraw
               </button>
-              <button
-                className="btn-sm btn-warn-sm"
-                onClick={handlePauseResume}
-                disabled={pauseLoading}
-                style={{ minWidth:120, position:'relative' }}
-              >
-                {pauseLoading ? (
-                  <span style={{ display:'flex', alignItems:'center', gap:6 }}>
-                    <span style={{
-                      display:'inline-block', width:12, height:12, borderRadius:'50%',
-                      border:'2px solid transparent', borderTopColor:'currentColor',
-                      animation:'spin 0.8s linear infinite',
-                    }} />
-                    {paused ? 'Resuming…' : 'Pausing…'}
-                  </span>
-                ) : (paused ? 'Resume agent' : 'Pause agent')}
-              </button>
-              <button className="btn-sm btn-primary-sm" onClick={() => router.push('/onboard')}>
-                Add funds
-              </button>
             </div>
           </div>
 
-          {/* Main grid */}
-          <div className="strat-grid">
-
-            {/* Left column */}
-            <div style={{ display:'flex', flexDirection:'column', gap:20 }}>
-
-              {/* Performance chart */}
-              <div className="db-card db-card-p" style={{ animation:'fadeUp 500ms 60ms cubic-bezier(0.16,1,0.3,1) both' }}>
-                <div className="sec-head">
-                  <div style={{ display:'flex', flexDirection:'column', gap:3 }}>
-                    <span className="sec-title">Portfolio performance</span>
-                    {updatedAgo && <span className="sec-meta">Updated {updatedAgo}</span>}
-                  </div>
-                  <div style={{ display:'flex', alignItems:'center', gap:10 }}>
-                    {isRunning && (
-                      <span className="live-dot">
-                        <span className="live-dot-ring" />
-                        Live
-                      </span>
-                    )}
-                    <div className="range-tabs">
-                      {['1W', '1M', '3M'].map(r => (
-                        <button key={r} data-active={range === r} onClick={() => setRange(r)}>{r}</button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-                {chartData.length >= 2 ? (
-                  <PerfChart data={chartData} floorUSD={totalValue * (1 - (maxDD ?? 0) / 100)} />
-                ) : (
-                  <div style={{ padding:'40px 0', textAlign:'center', fontSize:14, color:'var(--t3)' }}>
-                    {agentReady ? 'Performance history appears after the first agent tick.' : <Skel h={160} />}
-                  </div>
-                )}
+          {/* Tabs */}
+          <div className="strategy-tabs-scroll" style={{ display: 'flex', alignItems: 'center', gap: 24, padding: '0 4px', overflowX: 'auto' }}>
+            {(['overview', 'executions', 'position'] as const).map(t => (
+              <div key={t} onClick={() => setTab(t)} style={{ paddingBottom: 12, borderBottom: tab === t ? '2px solid #EA580C' : '2px solid transparent', fontSize: 14, fontWeight: 600, color: tab === t ? 'var(--text-primary)' : 'var(--text-muted)', cursor: 'pointer', whiteSpace: 'nowrap', textTransform: 'capitalize' }}>
+                {t === 'executions' ? `Executions${executions.length > 0 ? ` (${executions.length})` : ''}` : t.charAt(0).toUpperCase() + t.slice(1)}
               </div>
-
-              {/* Positions */}
-              <div className="db-card db-card-p" style={{ animation:'fadeUp 500ms 120ms cubic-bezier(0.16,1,0.3,1) both' }}>
-                <div className="sec-head">
-                  <span className="sec-title">Where your capital is deployed</span>
-                  {positions.length > 0 && (
-                    <span className="sec-meta">{positions.length} position{positions.length > 1 ? 's' : ''}</span>
-                  )}
-                </div>
-
-                {positions.length > 0 ? (
-                  <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
-                    {positions.map((pos: any, i: number) => {
-                      const protocol = (pos.protocol as string ?? '').toLowerCase()
-                      const protoId  = protocol.includes('aave') ? 'aave'
-                        : protocol.includes('morpho') ? 'morpho'
-                        : protocol.includes('pendle') ? 'pendle'
-                        : protocol.includes('gmx')    ? 'gmx'
-                        : 'uniswap'
-                      const apy          = (pos.currentNetAPY as number ?? 0)
-                      const usd          = (pos.currentUSD as number ?? 0)
-                      const feesEarned   = (pos.feesEarnedUSD as number ?? 0)
-                      const pendingFees  = ((pos.uniV3PendingFees0USD ?? 0) + (pos.uniV3PendingFees1USD ?? 0)) as number
-                      const ilUSD        = Math.abs(pos.ilUSD as number ?? 0)
-                      const totalReturn  = (pos.totalReturnUSD as number ?? 0)
-                      const drawdown     = (pos.drawdownPct as number ?? 0)
-                      const daysHeld     = (pos.daysHeld as number ?? 0)
-                      const entryUSD     = (pos.entryUSD as number ?? 0)
-
-                      return (
-                        <div key={i} style={{ animation:`fadeUp 400ms ${i * 60}ms cubic-bezier(0.16,1,0.3,1) both` }}>
-                          <div className="alloc-card">
-                            <div style={{ display:'flex', alignItems:'center', gap:14 }}>
-                              <ProtocolMark id={protoId} size={40} />
-                              <div>
-                                <div style={{ fontSize:14, fontWeight:700, color:'var(--t1)', letterSpacing:'-.005em' }}>
-                                  {pos.venueName ?? pos.protocol}
-                                </div>
-                                <div style={{ fontSize:12, color:'var(--t3)', marginTop:2 }}>
-                                  {pos.strategyType?.replace(/_/g,' ')} · Arbitrum
-                                  {daysHeld > 0 && ` · ${daysHeld < 1 ? `${Math.round(daysHeld * 24)}h` : `${daysHeld.toFixed(1)}d`} held`}
-                                </div>
-                              </div>
-                            </div>
-                            <div style={{ textAlign:'right', flexShrink:0 }}>
-                              <div style={{ fontSize:18, fontWeight:700, color:'var(--t1)', letterSpacing:'-.01em', fontVariantNumeric:'tabular-nums' }}>
-                                ${usd.toLocaleString(undefined, { minimumFractionDigits:2, maximumFractionDigits:2 })}
-                              </div>
-                              <div style={{ fontSize:12, marginTop:3 }}>
-                                <span style={{ color:'var(--t3)' }}>{(pos.allocationPct ?? 0).toFixed(0)}%{' '}</span>
-                                <span style={{ color:'var(--green)', fontWeight:600 }}>{apy.toFixed(1)}% APY</span>
-                              </div>
-                            </div>
-                          </div>
-
-                          {/* Position metrics breakdown */}
-                          <div style={{
-                            display:'grid', gridTemplateColumns:'repeat(4, 1fr)', gap:1,
-                            background:'var(--border)', borderRadius:12, overflow:'hidden', marginTop:8,
-                          }}>
-                            {[
-                              { label:'Entry', val:`$${entryUSD.toFixed(2)}`, color:'var(--t2)' },
-                              { label:'Fees earned', val: feesEarned > 0 ? `+$${feesEarned.toFixed(6)}` : '—', color:'var(--green)' },
-                              { label:'Pending fees', val: pendingFees > 0.000001 ? `$${pendingFees.toFixed(6)}` : '—', color:'var(--orange)' },
-                              { label:'IL impact', val: ilUSD > 0.000001 ? `-$${ilUSD.toFixed(6)}` : '—', color: ilUSD > 0.01 ? 'var(--amber)' : 'var(--t3)' },
-                              { label:'Total return', val: `${totalReturn >= 0 ? '+' : ''}$${totalReturn.toFixed(6)}`, color: totalReturn >= 0 ? 'var(--green)' : 'var(--red)' },
-                              { label:'Drawdown', val: drawdown > 0 ? `-${drawdown.toFixed(2)}%` : '0%', color: drawdown > 5 ? 'var(--amber)' : 'var(--t3)' },
-                              { label:'Current APY', val:`${apy.toFixed(1)}%`, color:'var(--orange)' },
-                              { label:'Entry APY', val:`${(pos.entryAPY as number ?? 0).toFixed(1)}%`, color:'var(--t2)' },
-                            ].map(({ label, val, color }) => (
-                              <div key={label} style={{ background:'var(--bg)', padding:'10px 14px' }}>
-                                <div style={{ fontSize:10, color:'var(--t3)', textTransform:'uppercase', letterSpacing:'.07em', fontWeight:600 }}>{label}</div>
-                                <div style={{ fontSize:13, color, fontWeight:600, marginTop:4, fontVariantNumeric:'tabular-nums' }}>{val}</div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                ) : (
-                  <div style={{ padding:'24px 0', textAlign:'center', fontSize:14, color:'var(--t3)' }}>
-                    {!agentReady
-                      ? <><Skel h={14} /><div style={{height:10}}/><Skel h={14} w="60%" /></>
-                      : 'Agent is deploying your capital — check back shortly.'}
-                  </div>
-                )}
-
-                {/* Idle balance footer */}
-                <div className="db-divider" />
-                <div style={{ display:'flex', justifyContent:'space-between', fontSize:13 }}>
-                  <span style={{ color:'var(--t3)' }}>Idle (not working)</span>
-                  {available === null
-                    ? <Skel h={13} w={60} />
-                    : <span style={{ color:'var(--t1)', fontWeight:600, fontVariantNumeric:'tabular-nums' }}>
-                        ${available.toLocaleString(undefined, { minimumFractionDigits:2, maximumFractionDigits:2 })}
-                      </span>
-                  }
-                </div>
-              </div>
-            </div>
-
-            {/* Right column */}
-            <div style={{ display:'flex', flexDirection:'column', gap:20 }}>
-
-              {/* Guardrails */}
-              <div className="db-card db-card-p" style={{ animation:'fadeUp 500ms 80ms cubic-bezier(0.16,1,0.3,1) both' }}>
-                <div className="sec-head" style={{ marginBottom:20 }}>
-                  <span className="sec-title">Your guardrails</span>
-                </div>
-                {minAPY === null ? (
-                  <><Skel h={14} /><div style={{height:12}}/><Skel h={5} /><div style={{height:16}}/><Skel h={14} /><div style={{height:12}}/><Skel h={5} /></>
-                ) : (
-                  <>
-                    <Guardrail
-                      label="APY floor"
-                      value={minAPY}
-                      displayVal={`${minAPY.toFixed(1)}%`}
-                      color="linear-gradient(90deg, #16A34A, #22C55E)"
-                      max={50}
-                    />
-                    <Guardrail
-                      label="Max drawdown"
-                      value={maxDD ?? 0}
-                      displayVal={`${(maxDD ?? 0).toFixed(1)}%`}
-                      color="linear-gradient(90deg, #F59E0B, #FBBF24)"
-                      max={50}
-                    />
-                    {currentAPY > 0 && (
-                      <Guardrail
-                        label="Current APY"
-                        value={currentAPY}
-                        displayVal={`${currentAPY.toFixed(1)}%`}
-                        color="linear-gradient(90deg, #EA580C, #FB923C)"
-                        max={100}
-                      />
-                    )}
-                  </>
-                )}
-              </div>
-
-              {/* Activity feed */}
-              <div className="db-card db-card-p" style={{ animation:'fadeUp 500ms 140ms cubic-bezier(0.16,1,0.3,1) both' }}>
-                <div className="sec-head">
-                  <span className="sec-title">Agent activity</span>
-                  {executions.length > 0 && (
-                    <span className="sec-meta">{executions.length} actions</span>
-                  )}
-                </div>
-
-                {executions.length === 0 ? (
-                  <div style={{ padding:'28px 0', textAlign:'center', fontSize:14, color:'var(--t3)' }}>
-                    {agentReady
-                      ? 'No actions yet — scanning for opportunities.'
-                      : <><Skel h={14} /><div style={{height:12}}/><Skel h={14} w="70%" /></>}
-                  </div>
-                ) : (
-                  <div>
-                    {executions.slice(0, 8).map((e, i) => {
-                      const kind = KIND_MAP[e.action] ?? 'hold'
-                      return (
-                        <div
-                          key={i}
-                          className="act-entry"
-                          data-kind={kind}
-                          style={{ animation:`fadeUp 350ms ${i * 40}ms cubic-bezier(0.16,1,0.3,1) both` }}
-                        >
-                          <div className="act-entry-ts">
-                            <span className="act-entry-dot" />
-                            <span>{relativeTime(e.timestamp)}</span>
-                          </div>
-                          <div className="act-entry-kind">{KIND_LABELS[kind] ?? e.action}</div>
-                          <div className="act-entry-title">
-                            {e.from ? `${e.from.split(' ')[0]} → ${e.to.split(' ')[0]}` : e.to}
-                          </div>
-                          {e.amountUSD > 0 && (
-                            <div className="act-entry-row">
-                              ${e.amountUSD.toLocaleString(undefined, { minimumFractionDigits:2, maximumFractionDigits:2 })}
-                            </div>
-                          )}
-                          {kind !== 'hold' && (
-                            <div className="act-entry-foot">
-                              <button
-                                className="act-entry-verify"
-                                onClick={() => router.push(`/proof/${e.receiptHash}`)}
-                              >
-                                Verify on-chain →
-                              </button>
-                              <span className="act-entry-anchor">
-                                {e.txHash
-                                  ? <span style={{ color:'var(--green)' }}>✓ Confirmed</span>
-                                  : e.simulated
-                                  ? <span style={{ color:'var(--t3)' }}>Simulated</span>
-                                  : <span style={{ color:'var(--t3)' }}>⟳ Anchoring…</span>}
-                              </span>
-                            </div>
-                          )}
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
-              </div>
-            </div>
+            ))}
           </div>
         </div>
+
+        {/* ── Tab: Overview ── */}
+        {tab === 'overview' && (
+          <div className="strategy-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 340px', flex: 1, minHeight: 0 }}>
+
+            {/* Left — chart + stat cards */}
+            <div className="strategy-left-col" style={{ padding: '24px 24px 48px 0', borderRight: '1px solid var(--border)', overflowY: 'auto' }}>
+
+              {/* Performance */}
+              <div style={{ marginBottom: 28 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>Performance</span>
+                    {isRunning && <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#22C55E', display: 'inline-block', boxShadow: '0 0 6px #22C55E' }} />}
+                  </div>
+                  <div style={{ display: 'flex', gap: 2 }}>
+                    {(['1W', '1M', '3M'] as const).map(r => (
+                      <button key={r} onClick={() => setRange(r)} style={{ padding: '4px 10px', borderRadius: 8, cursor: 'pointer', background: range === r ? 'var(--surface)' : 'transparent', color: range === r ? 'var(--text-primary)' : 'var(--text-muted)', fontSize: 12, fontWeight: range === r ? 600 : 400, border: range === r ? '1px solid var(--border)' : '1px solid transparent', fontFamily: 'inherit' }}>
+                        {r}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Chart card */}
+                <div style={{ background: 'var(--surface)', borderRadius: 14, border: '1px solid var(--border)', padding: '20px 20px 14px', marginBottom: 16 }}>
+                  {chartData.length >= 2 ? (
+                    <>
+                      <div style={{ fontSize: 24, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-.02em', fontVariantNumeric: 'tabular-nums', marginBottom: 2 }}>
+                        ${(chartData[chartData.length - 1] ?? 0).toFixed(4)}
+                      </div>
+                      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 14 }}>
+                        {range === '1W' ? 'Last 7 days' : range === '1M' ? 'Last 30 days' : 'Last 3 months'}
+                      </div>
+                      <MiniChart data={chartData} height={140} />
+                    </>
+                  ) : (
+                    <div style={{ height: 160, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 6 }}>
+                      <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>{agentReady ? 'Performance history builds up over time' : <Skel h={13} />}</div>
+                      {agentReady && <div style={{ fontSize: 12, color: 'var(--text-muted)', opacity: 0.6 }}>Check back after the agent takes its first actions</div>}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Guardrails HUD */}
+              {(minAPY !== null || maxDD !== null) && (
+                <div style={{ background: 'var(--surface)', borderRadius: 14, border: '1px solid var(--border)', padding: '16px 20px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+                    <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>Strategy Intelligence Hub</span>
+                    <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 600 }}>Active Enforcement</span>
+                  </div>
+                  <PolicyHUD 
+                    minAPY={minAPY ?? 0} 
+                    maxDD={maxDD ?? 0} 
+                    currentAPY={currentAPY} 
+                    totalValue={displayTotal}
+                    earned={earned}
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* Right — Neural Agent Feed */}
+            <div className="strategy-right-col" style={{ width: 340, padding: '24px 0 24px 24px', overflowY: 'auto' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>Agent Intelligence</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 6px', borderRadius: 4, background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.2)' }}>
+                    <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#22C55E', animation: 'pulse 1.5s infinite' }} />
+                    <span style={{ fontSize: 9, fontWeight: 800, color: '#22C55E', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Live</span>
+                  </div>
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 500 }}>v1.0.4-aura</div>
+              </div>
+              
+              <LiveAgentFeed agentUser={agentUser} executions={executions} phase={phase} />
+            </div>
+          </div>
+        )}
+
+        {/* ── Tab: Executions — Zerion History style ── */}
+        {tab === 'executions' && (
+          <div style={{ flex: 1, overflowY: 'auto' }}>
+            {/* Filter bar */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '16px 0', borderBottom: '1px solid var(--border)', flexWrap: 'wrap' }}>
+              {ACTION_FILTERS.map(f => (
+                <button key={f} onClick={() => setExecFilter(f)} style={{ height: 30, padding: '0 12px', borderRadius: 20, border: `1px solid ${execFilter === f ? 'var(--text-muted)' : 'var(--border)'}`, background: execFilter === f ? 'var(--surface)' : 'transparent', color: execFilter === f ? 'var(--text-primary)' : 'var(--text-muted)', fontSize: 12, fontWeight: execFilter === f ? 600 : 400, cursor: 'pointer', fontFamily: 'inherit' }}>
+                  {f === 'All' ? 'All actions' : f === 'GENESIS' ? 'Deployed' : f === 'REBALANCE' ? 'Rebalanced' : f === 'MIGRATE' ? 'Migrated' : 'Withdrew'}
+                </button>
+              ))}
+              <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--text-muted)' }}>
+                {filteredExecs.length} action{filteredExecs.length !== 1 ? 's' : ''}
+              </span>
+            </div>
+
+            {/* Grouped by date */}
+            {filteredExecs.length === 0 ? (
+              <div style={{ padding: '48px 0', textAlign: 'center', fontSize: 13, color: 'var(--text-muted)' }}>
+                No executions matching this filter.
+              </div>
+            ) : (
+              <div className="tab-content-wrap" style={{ maxWidth: 680 }}>
+                {groupedExecs.map(([day, exs]) => (
+                  <div key={day}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', padding: '20px 0 8px', textTransform: 'uppercase', letterSpacing: '.06em' }}>{day}</div>
+                    {exs.map((ex: any, i: number) => <ExecRow key={i} ex={ex} />)}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Tab: Position ── */}
+        {tab === 'position' && (
+          <div style={{ flex: 1, overflowY: 'auto', padding: '24px 0' }}>
+            <div className="tab-content-wrap" style={{ maxWidth: 720 }}>
+              {positions.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '48px 0', fontSize: 13, color: 'var(--text-muted)' }}>
+                  {agentReady ? 'Agent is deploying your capital — check back shortly.' : <><Skel h={14} /><div style={{ height: 10 }} /><Skel h={14} w="60%" /></>}
+                </div>
+              ) : positions.map((pos: any, i: number) => {
+                const protocol  = (pos.protocol as string ?? '').toLowerCase()
+                const protoId   = protocol.includes('aave') ? 'aave' : protocol.includes('morpho') ? 'morpho' : protocol.includes('pendle') ? 'pendle' : protocol.includes('gmx') ? 'gmx' : 'uniswap'
+                const apy        = (pos.currentNetAPY as number ?? 0)
+                const usd        = (pos.currentUSD as number ?? 0)
+                const feesEarned = (pos.feesEarnedUSD as number ?? 0)
+                const pendingFees = ((pos.uniV3PendingFees0USD ?? 0) + (pos.uniV3PendingFees1USD ?? 0)) as number
+                const ilUSD      = Math.abs(pos.ilUSD as number ?? 0)
+                const totalReturn = (pos.totalReturnUSD as number ?? 0)
+                const drawdown   = (pos.drawdownPct as number ?? 0)
+                const daysHeld   = (pos.daysHeld as number ?? 0)
+                const entryUSDPos = (pos.entryUSD as number ?? 0)
+                const venueName  = pos.venueName ?? pos.protocol ?? 'Strategy'
+                const pair       = parseTokenPair(venueName)
+
+                return (
+                  <div key={i} style={{ background: 'var(--surface)', borderRadius: 14, border: '1px solid var(--border)', marginBottom: 16, overflow: 'hidden' }}>
+                    {/* Position header */}
+                    <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                        <ProtocolMark id={protoId} size={38} />
+                        <div>
+                          <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>
+                            {pair ? `${pair[0]} / ${pair[1]}` : cleanVenueName(venueName)}
+                          </div>
+                          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+                            {pos.strategyType?.replace(/_/g, ' ')} · Arbitrum
+                            {daysHeld > 0 && ` · ${daysHeld < 1 ? `${Math.round(daysHeld * 24)}h` : `${daysHeld.toFixed(1)}d`} held`}
+                          </div>
+                        </div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
+                          ${usd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </div>
+                        <div style={{ fontSize: 12, color: '#22C55E', fontWeight: 600, marginTop: 2 }}>
+                          {apy.toFixed(1)}% APY
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Metrics grid */}
+                    <div className="metrics-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 1, background: 'var(--border)' }}>
+                      {[
+                        { label: 'Entry', val: `$${entryUSDPos.toFixed(2)}`, color: 'var(--text-muted)' },
+                        { label: 'Fees earned', val: feesEarned > 0 ? `+$${feesEarned.toFixed(6)}` : '—', color: '#22C55E' },
+                        { label: 'Pending fees', val: pendingFees > 0.000001 ? `$${pendingFees.toFixed(6)}` : '—', color: '#EA580C' },
+                        { label: 'IL impact', val: ilUSD > 0.000001 ? `-$${ilUSD.toFixed(6)}` : '—', color: ilUSD > 0.01 ? '#F59E0B' : 'var(--text-muted)' },
+                        { label: 'Total return', val: `${totalReturn >= 0 ? '+' : ''}$${totalReturn.toFixed(6)}`, color: totalReturn >= 0 ? '#22C55E' : '#EF4444' },
+                        { label: 'Drawdown', val: drawdown > 0 ? `-${drawdown.toFixed(2)}%` : '0%', color: drawdown > 5 ? '#F59E0B' : 'var(--text-muted)' },
+                        { label: 'Current APY', val: `${apy.toFixed(1)}%`, color: '#EA580C' },
+                        { label: 'Entry APY', val: `${(pos.entryAPY as number ?? 0).toFixed(1)}%`, color: 'var(--text-muted)' },
+                      ].map(({ label, val, color }) => (
+                        <div key={label} style={{ background: 'var(--background)', padding: '10px 14px' }}>
+                          <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.07em', fontWeight: 600 }}>{label}</div>
+                          <div style={{ fontSize: 13, color, fontWeight: 600, marginTop: 4, fontVariantNumeric: 'tabular-nums' }}>{val}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* UniV3 specifics */}
+                    {pos.uniV3TokenId && (
+                      <div style={{ padding: '12px 20px', borderTop: '1px solid var(--border)', display: 'flex', gap: 24, flexWrap: 'wrap' }}>
+                        <div><span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Token ID </span><span style={{ fontSize: 11, fontWeight: 600, fontFamily: 'monospace' }}>#{pos.uniV3TokenId}</span></div>
+                        {pos.uniV3RangePct && <div><span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Range </span><span style={{ fontSize: 11, fontWeight: 600 }}>±{pos.uniV3RangePct}%</span></div>}
+                        {pos.uniV3Rebalances != null && <div><span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Rebalances </span><span style={{ fontSize: 11, fontWeight: 600 }}>{pos.uniV3Rebalances}</span></div>}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+
+              {/* Idle USDC */}
+              {available !== null && available > 0 && (
+                <div style={{ background: 'var(--surface)', borderRadius: 14, border: '1px solid var(--border)', padding: '14px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>Idle USDC</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Not deployed — awaiting agent allocation</div>
+                  </div>
+                  <div style={{ fontSize: 16, fontWeight: 700, color: '#F59E0B', fontVariantNumeric: 'tabular-nums' }}>
+                    ${available.toFixed(4)}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </>
   )
-}
-
-// Utility — CSS clamp fallback
-function clamp(min: number, preferred: number): string {
-  return `clamp(${min}px, ${preferred * 0.035}vw + ${min * 0.6}px, ${preferred}px)`
 }

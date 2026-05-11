@@ -319,18 +319,26 @@ function LiveAgentFeed({ agentUser, executions, phase }: {
 
 // ── ConfirmModal ──────────────────────────────────────────────────────────────
 
-function ConfirmModal({ title, body, confirmLabel, confirmStyle = 'danger', onConfirm, onCancel }: {
+function ConfirmModal({ title, body, confirmLabel, confirmStyle = 'danger', onConfirm, onCancel, icon }: {
   title: string; body: React.ReactNode; confirmLabel: string
-  confirmStyle?: 'danger' | 'warn'; onConfirm: () => void; onCancel: () => void
+  confirmStyle?: 'danger' | 'warn'; onConfirm: () => void; onCancel: () => void; icon?: string
 }) {
+  const accent = confirmStyle === 'danger' ? '#ef4444' : '#f59e0b'
   return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 999, background: 'rgba(0,0,0,0.72)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={onCancel}>
-      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16, padding: 28, width: 380, maxWidth: 'calc(100vw - 48px)' }} onClick={e => e.stopPropagation()}>
-        <div style={{ fontWeight: 600, fontSize: 16, marginBottom: 12 }}>{title}</div>
-        <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.6, marginBottom: 24 }}>{body}</div>
-        <div style={{ display: 'flex', gap: 10 }}>
-          <button className="btn-ghost" style={{ flex: 1 }} onClick={onCancel}>Cancel</button>
-          <button style={{ flex: 1, padding: '10px 0', borderRadius: 10, border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: 14, background: confirmStyle === 'danger' ? '#ef4444' : '#f59e0b', color: '#fff' }} onClick={onConfirm}>{confirmLabel}</button>
+    <div style={{ position: 'fixed', inset: 0, zIndex: 999, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(12px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, animation: 'backdropFade 0.3s ease-out' }} onClick={onCancel}>
+      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 24, padding: '32px 28px', width: 400, maxWidth: '100%', boxShadow: '0 20px 40px rgba(0,0,0,0.4)', textAlign: 'center', animation: 'modalPop 0.4s cubic-bezier(0.16, 1, 0.3, 1)' }} onClick={e => e.stopPropagation()}>
+        {icon && (
+          <div style={{ width: 64, height: 64, borderRadius: 20, background: `${accent}15`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28, margin: '0 auto 20px', border: `1px solid ${accent}25` }}>
+            {icon}
+          </div>
+        )}
+        <div style={{ fontWeight: 700, fontSize: 20, color: 'var(--text-primary)', marginBottom: 12, letterSpacing: '-0.02em' }}>{title}</div>
+        <div style={{ fontSize: 14, color: 'var(--text-muted)', lineHeight: 1.6, marginBottom: 32 }}>{body}</div>
+        <div style={{ display: 'flex', gap: 12 }}>
+          <button className="btn-ghost" style={{ flex: 1, height: 48, borderRadius: 12, fontWeight: 600 }} onClick={onCancel}>Cancel</button>
+          <button style={{ flex: 1, height: 48, borderRadius: 12, border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: 14, background: accent, color: '#fff', boxShadow: `0 4px 12px ${accent}40` }} onClick={onConfirm}>
+            {confirmLabel}
+          </button>
         </div>
       </div>
     </div>
@@ -350,6 +358,8 @@ function WithdrawModal({ userAddress, onClose, onDone }: { userAddress: string; 
 
   useEffect(() => {
     if (phase !== 'agent-closing') return
+    const setGlobal = (window as any).setGlobalLoading
+    if (setGlobal) setGlobal(true)
     let cancelled = false
     agentPost('/api/withdraw', { userAddress }).then((res: any) => {
       if (cancelled) return
@@ -357,33 +367,86 @@ function WithdrawModal({ userAddress, onClose, onDone }: { userAddress: string; 
         setIdleRaw(BigInt(res.idleUSDCRaw ?? '0')); setPhase('ready-to-sign')
       } else { setErrMsg(res.error ?? 'Agent could not unwind the position.'); setPhase('error') }
     }).catch((e: any) => { if (!cancelled) { setErrMsg(e.message); setPhase('error') } })
-    return () => { cancelled = true }
+      .finally(() => { if (!cancelled && setGlobal) setGlobal(false) })
+    return () => { cancelled = true; if (setGlobal) setGlobal(false) }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase])
 
   function signWithdraw() {
     if (!VAULT_ADDRESS || idleRaw === BigInt(0)) return
+    const setGlobal = (window as any).setGlobalLoading
+    if (setGlobal) setGlobal(true)
     setPhase('signing-tx')
     writeContract({ address: VAULT_ADDRESS, abi: yieldGekoAbi, functionName: 'withdraw', args: [USDC_ADDRESS, idleRaw] }, {
-      onSuccess: () => setPhase('done'),
-      onError: (e: any) => { setErrMsg(e.shortMessage ?? e.message); setPhase('error') },
+      onSuccess: () => { setPhase('done'); if (setGlobal) setGlobal(false) },
+      onError: (e: any) => { setErrMsg(e.shortMessage ?? e.message); setPhase('error'); if (setGlobal) setGlobal(false) },
     })
   }
 
-  if (phase === 'confirm') return <ConfirmModal title="Withdraw all funds?" body={<>This will close your active position and convert everything to USDC. You&apos;ll then sign a wallet transaction to receive the funds.<br /><br /><strong>This stops the agent from earning yield on your behalf.</strong></>} confirmLabel="Yes, withdraw" confirmStyle="danger" onConfirm={() => setPhase('agent-closing')} onCancel={onClose} />
+  if (phase === 'confirm') return <ConfirmModal icon="📤" title="Withdraw everything?" body={<>This will immediately close your active position and convert all LP tokens to USDC. You'll then sign a final transaction to receive funds.<br /><br /><span style={{ color: '#ef4444', fontWeight: 600 }}>This stops the agent from earning.</span></>} confirmLabel="Yes, withdraw" confirmStyle="danger" onConfirm={() => setPhase('agent-closing')} onCancel={onClose} />
 
   return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 999, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={phase === 'agent-closing' ? undefined : onClose}>
-      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16, padding: 32, width: 400, maxWidth: 'calc(100vw - 48px)' }} onClick={e => e.stopPropagation()}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-          <span style={{ fontWeight: 600, fontSize: 16 }}>Withdraw funds</span>
-          {phase !== 'agent-closing' && <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 18 }}>✕</button>}
+    <div style={{ position: 'fixed', inset: 0, zIndex: 999, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(12px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, animation: 'backdropFade 0.3s ease-out' }} onClick={phase === 'agent-closing' ? undefined : onClose}>
+      <div key={phase} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 24, padding: '32px 28px', width: 420, maxWidth: '100%', boxShadow: '0 20px 40px rgba(0,0,0,0.4)', animation: 'modalPop 0.4s cubic-bezier(0.16, 1, 0.3, 1)' }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 28 }}>
+          <span style={{ fontWeight: 700, fontSize: 18, color: 'var(--text-primary)' }}>Withdraw funds</span>
+          {phase !== 'agent-closing' && <button onClick={onClose} style={{ background: 'rgba(255,255,255,0.05)', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 14, width: 28, height: 28, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>}
         </div>
-        {phase === 'agent-closing' && <><OrbitalSpinner label="Agent closing position on-chain…" /><p style={{ textAlign: 'center', fontSize: 12, color: 'var(--text-muted)', marginTop: 8 }}>Unwinding LP and converting to USDC. 30–90 seconds.</p></>}
-        {phase === 'ready-to-sign' && <><div style={{ textAlign: 'center', marginBottom: 24 }}><div style={{ fontSize: 32, fontWeight: 700, color: '#22C55E' }}>{idleUSDC.toFixed(6)} USDC</div><div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>ready in vault — sign to receive</div></div><div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 24 }}><div style={{ width: 20, height: 20, borderRadius: '50%', background: '#22C55E', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700 }}>✓</div><div style={{ fontSize: 12, color: 'var(--text-muted)', flex: 1 }}>Position closed by agent</div><div style={{ width: 20, height: 20, borderRadius: '50%', border: '2px solid #EA580C', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, color: '#EA580C' }}>2</div><div style={{ fontSize: 12, color: 'var(--text-primary)', flex: 1 }}>Sign wallet transfer</div></div><button className="btn-primary" style={{ width: '100%' }} onClick={signWithdraw}>Sign &amp; receive {idleUSDC.toFixed(4)} USDC</button></>}
-        {phase === 'signing-tx' && <OrbitalSpinner label="Waiting for wallet signature…" />}
-        {phase === 'done' && <div style={{ textAlign: 'center' }}><div style={{ fontSize: 40, marginBottom: 12 }}>🎉</div><div style={{ fontWeight: 600, marginBottom: 6 }}>Withdrawal complete</div><div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 24 }}>{idleUSDC.toFixed(6)} USDC is now in your wallet.</div><button className="btn-primary" style={{ width: '100%' }} onClick={() => { onDone(); onClose() }}>Done</button></div>}
-        {phase === 'error' && <div style={{ textAlign: 'center' }}><div style={{ fontSize: 13, color: '#ef4444', background: 'rgba(239,68,68,0.08)', borderRadius: 8, padding: '12px 16px', marginBottom: 20 }}>{errMsg || 'Something went wrong.'}</div><button className="btn-ghost" style={{ width: '100%' }} onClick={onClose}>Close</button></div>}
+        
+        {phase === 'agent-closing' && (
+          <div style={{ textAlign: 'center', padding: '10px 0' }}>
+            <OrbitalSpinner label="Agent closing position on-chain…" />
+            <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 12, padding: 16, marginTop: 20, border: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                The agent is unwinding LP positions and swapping for USDC. This typically takes 30–90 seconds.
+              </div>
+            </div>
+          </div>
+        )}
+
+        {phase === 'ready-to-sign' && (
+          <>
+            <div style={{ textAlign: 'center', marginBottom: 32, padding: '24px 0', background: 'rgba(34,197,94,0.05)', borderRadius: 20, border: '1px dotted rgba(34,197,94,0.3)' }}>
+              <div style={{ fontSize: 36, fontWeight: 800, color: '#22C55E', letterSpacing: '-0.03em' }}>{idleUSDC.toFixed(4)} <span style={{ fontSize: 18, opacity: 0.8 }}>USDC</span></div>
+              <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>Available in vault</div>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginBottom: 32 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ width: 24, height: 24, borderRadius: '50%', background: '#22C55E', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: '#fff' }}>✓</div>
+                <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Position closed by agent</div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ width: 24, height: 24, borderRadius: '50%', border: '2px solid #EA580C', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, color: '#EA580C' }}>2</div>
+                <div style={{ fontSize: 13, color: 'var(--text-primary)', fontWeight: 600 }}>Sign wallet transfer</div>
+              </div>
+            </div>
+
+            <button className="btn-primary" style={{ width: '100%', height: 52, borderRadius: 14, fontWeight: 700, fontSize: 15 }} onClick={signWithdraw}>
+              Sign to receive funds
+            </button>
+          </>
+        )}
+
+        {phase === 'signing-tx' && <OrbitalSpinner label="Check your wallet to sign…" />}
+        
+        {phase === 'done' && (
+          <div style={{ textAlign: 'center', padding: '20px 0' }}>
+            <div style={{ width: 80, height: 80, borderRadius: '50%', background: 'rgba(34,197,94,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 40, margin: '0 auto 24px' }}>🎉</div>
+            <div style={{ fontWeight: 700, fontSize: 20, marginBottom: 8 }}>Withdrawal complete</div>
+            <div style={{ fontSize: 14, color: 'var(--text-muted)', marginBottom: 32 }}>Your funds are now in your wallet.</div>
+            <button className="btn-primary" style={{ width: '100%', height: 48, borderRadius: 12 }} onClick={() => { onDone(); onClose() }}>Done</button>
+          </div>
+        )}
+        
+        {phase === 'error' && (
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ fontSize: 14, color: '#ef4444', background: 'rgba(239,68,68,0.08)', borderRadius: 12, padding: '20px', marginBottom: 24, border: '1px solid rgba(239,68,68,0.2)' }}>
+              {errMsg || 'An unexpected error occurred.'}
+            </div>
+            <button className="btn-ghost" style={{ width: '100%', height: 48, borderRadius: 12 }} onClick={onClose}>Close</button>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -613,12 +676,17 @@ export default function StrategyPage({ params }: { params: Promise<{ id: string 
 
   const executePauseResume = useCallback(async () => {
     if (!userAddress || pauseLoading) return
+    const setGlobal = (window as any).setGlobalLoading
+    if (setGlobal) setGlobal(true)
     setShowPauseConfirm(false); setPauseLoading(true)
     try {
       await agentPost(paused ? '/api/resume-user' : '/api/pause-user', { userAddress })
       const updated = await fetchAgentUser(userAddress)
       if (updated) setAgentUser(updated)
-    } finally { setPauseLoading(false) }
+    } finally {
+      setPauseLoading(false)
+      if (setGlobal) setGlobal(false)
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userAddress, paused, pauseLoading])
 
@@ -685,7 +753,7 @@ export default function StrategyPage({ params }: { params: Promise<{ id: string 
         <WithdrawModal userAddress={userAddress} onClose={() => setShowWithdraw(false)} onDone={() => fetchAgentUser(userAddress).then(u => u && setAgentUser(u))} />
       )}
       {showPauseConfirm && (
-        <ConfirmModal title="Pause the agent?" body={<>The agent will stop managing your position. Your funds stay in the vault and your LP position remains open — no swaps happen.<br /><br />You can resume at any time.</>} confirmLabel="Yes, pause agent" confirmStyle="warn" onConfirm={executePauseResume} onCancel={() => setShowPauseConfirm(false)} />
+        <ConfirmModal icon="⏸" title="Pause the agent?" body={<>The agent will stop managing your position. Your funds stay in the vault and your LP position remains open — no swaps will happen.<br /><br />You can resume at any time.</>} confirmLabel="Yes, pause agent" confirmStyle="warn" onConfirm={executePauseResume} onCancel={() => setShowPauseConfirm(false)} />
       )}
 
       <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
@@ -706,7 +774,17 @@ export default function StrategyPage({ params }: { params: Promise<{ id: string 
             .strategy-tabs-scroll { gap: 16px !important; padding: 0 !important; width: 100% !important; max-width: 100% !important; }
             .tab-content-wrap { max-width: 100% !important; }
             .strategy-hub-content { flex-direction: column !important; align-items: stretch !important; gap: 24px !important; }
+            
+            /* Modal Animations */
+            @keyframes backdropFade { from { opacity: 0; } to { opacity: 1; } }
+            @keyframes modalPop { from { opacity: 0; transform: scale(0.96) translateY(10px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+            @keyframes contentSlide { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
           }
+          
+          /* Global animations available outside media query too */
+          @keyframes backdropFade { from { opacity: 0; } to { opacity: 1; } }
+          @keyframes modalPop { from { opacity: 0; transform: scale(0.96) translateY(10px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+          @keyframes contentSlide { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
         `}</style>
 
         {/* ── Paused banner ── */}

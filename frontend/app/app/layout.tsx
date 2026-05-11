@@ -7,6 +7,7 @@ import { WalletAvatar } from '../components/WalletAvatar'
 import Image from 'next/image'
 import Link from 'next/link'
 import { ThemeToggle } from '../components/ThemeToggle'
+import GlobalLoading from '../components/GlobalLoading'
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
 
@@ -249,6 +250,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const { address } = useAccount()
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const [isProcessing, setIsProcessing] = useState(false)
+
+  // Expose a way to trigger loading globally for demo purposes
+  useEffect(() => {
+    (window as any).setGlobalLoading = setIsProcessing
+  }, [])
 
   // Close drawer on route change
   useEffect(() => { setDrawerOpen(false) }, [pathname])
@@ -265,6 +272,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <>
+      <GlobalLoading show={isProcessing} />
       {/* ── Responsive styles ─────────────────────────────────────────── */}
       <style>{`
         .app-layout-sidebar {

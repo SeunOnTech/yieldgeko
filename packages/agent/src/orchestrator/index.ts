@@ -30,7 +30,8 @@ import { decideAllocation, runSafetyGate }                   from './allocation'
 import { updatePortfolioPositions, updatePortfolioPositionsReal, checkCircuitBreakers, hasRedBreaker, buildExecutionRecord } from './monitor';
 import { broadcast, setLatestState, startSSEServer, setRegisterCallback, setResetCallback, setWithdrawCallback, setPauseCallback, setResumeCallback } from './sse';
 import { OnChainProvider }                                   from './protocols';
-import { PersistenceStore }                                  from './persistence';
+import { PersistenceStore, uploadExecutionTrace }            from './persistence';
+import { anchorExecutionProof }                              from './zgChain';
 import { UserRegistry, DEMO_POLICIES }                       from './users';
 import { openPortfolio, planAllocation, buildPnLPoint }      from './portfolio';
 import { evaluatePortfolioHarvests }                         from './compounder';
@@ -749,6 +750,51 @@ async function tickUser(
               onChainPositionPatch = patchFromExecutionResult(result);
 
               userLog(userId, 'SUCCESS', `On-chain tx confirmed: ${result.txHash.slice(0, 10)}…`, `Gas: ${result.gasUsed}`);
+
+              // ── 0G Proof trail (non-blocking, non-fatal) ──────────────────
+              // Upload execution trace to 0G Storage, then anchor receipt on
+              // 0G Chain. Both run in background — Arbitrum execution is done.
+              if (policy.userAddress && result.receiptHash) {
+                (async () => {
+                  try {
+                    const traceCID = await uploadExecutionTrace({
+                      action:         decision.action as string,
+                      userId,
+                      userAddress:    policy.userAddress!,
+                      receiptHash:    result.receiptHash,
+                      arbitrumTxHash: result.txHash,
+                      timestamp:      Date.now(),
+                      poolAddress:    toInput.marketAddress,
+                      amountUSD:      toInput.amountUSD,
+                    });
+
+                    const anchor = await anchorExecutionProof({
+                      receiptHash: result.receiptHash,
+                      userAddress: policy.userAddress!,
+                      action:      decision.action as 'GENESIS' | 'MIGRATE' | 'REBALANCE' | 'WITHDRAW',
+                      traceCID:    traceCID ?? '',
+                    });
+
+                    if (anchor) {
+                      record.zgChainTxHash  = anchor.txHash;
+                      record.zgChainExplorer = anchor.explorerUrl;
+                      record.zgTraceCID     = traceCID ?? undefined;
+                      // Patch the stored record with 0G links
+                      const current = registry.get(userId);
+                      if (current) {
+                        registry.update(userId, {
+                          executions: current.executions.map(e =>
+                            e.receiptHash === result.receiptHash ? { ...e, ...record } : e,
+                          ),
+                        });
+                        pushState();
+                      }
+                    }
+                  } catch (e: any) {
+                    console.warn('[0G] Proof trail failed (non-fatal):', e.message?.slice(0, 80));
+                  }
+                })();
+              }
               // NOTE: No fee collected here — funds just deployed, yield not yet accrued.
               // Fees are collected after executeWithdraw (when yield lands as idle balance).
             } catch (err: any) {

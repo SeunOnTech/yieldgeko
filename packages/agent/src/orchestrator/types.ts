@@ -316,6 +316,11 @@ export interface ExecutionRecord {
   portfolioValueBefore?: number;
   portfolioValueAfter?:  number;
   sessionId?:  string;
+  // 0G proof trail — set after anchor() confirms on 0G Chain
+  zgTraceCID?:      string;   // 0G Storage CID → storagescan.0g.ai
+  zgAttestCID?:     string;   // 0G Storage CID for TEE attestation
+  zgChainTxHash?:   string;   // 0G Chain anchor TX → chainscan.0g.ai
+  zgChainExplorer?: string;   // full chainscan.0g.ai URL
 }
 
 // ── Activity Log ──────────────────────────────────────────────────────────────

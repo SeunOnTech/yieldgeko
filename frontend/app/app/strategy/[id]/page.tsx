@@ -6,7 +6,7 @@ import { useReadContract, useWriteContract } from 'wagmi'
 import { formatUnits, parseUnits } from 'viem'
 import { VAULT_ADDRESS, USDC_ADDRESS } from '@/config'
 import { yieldGekoAbi } from '@/src/generated'
-import { AppNav, StatusPill, ChainChip, ProtocolMark } from '../../../components/ui'
+import { StatusPill, ChainChip, ProtocolMark } from '../../../components/ui'
 
 // ── Agent state ───────────────────────────────────────────────────────────────
 
@@ -590,7 +590,6 @@ export default function StrategyPage({ params }: { params: Promise<{ id: string 
         />
       )}
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-      <AppNav />
       <div className="db-page">
         <div className="app-page">
 

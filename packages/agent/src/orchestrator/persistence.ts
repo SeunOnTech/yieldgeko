@@ -1,8 +1,12 @@
 import * as fs   from 'node:fs';
 import * as path from 'node:path';
+import * as dns  from 'node:dns';
 import { Wallet, JsonRpcProvider, NonceManager } from 'ethers';
 import PQueue from 'p-queue';
 import type { UserState } from './types';
+
+// 0G Storage nodes use IPv4 — force Node.js to prefer IPv4 over IPv6
+dns.setDefaultResultOrder('ipv4first');
 
 // ── Persistence layer ─────────────────────────────────────────────────────────
 //
@@ -124,7 +128,11 @@ async function upload0G(userId: string, state: UserState, cfg: ZeroGConfig): Pro
     fs.writeFileSync(cidPath(userId), artifact.cid, 'utf8');
     console.log  = origLog;
     console.info = origInfo;
-    origLog(`[Persist] ✅ 0G saved: ${userId} — CID ${artifact.cid.slice(0, 14)}...`);
+    origLog(`[Persist] ✅ 0G saved: ${userId}`);
+    origLog(`[Persist]    CID (rootHash): ${artifact.cid}`);
+    origLog(`[Persist]    TX (0G Chain):  ${artifact.txHash}`);
+    origLog(`[Persist]    🔗 StorageScan: https://storagescan.0g.ai/submission/${artifact.txSeq}`);
+    origLog(`[Persist]    🔗 ChainScan:   https://chainscan.0g.ai/tx/${artifact.txHash}`);
   } catch (err: any) {
     console.log  = origLog;
     console.info = origInfo;
@@ -198,6 +206,46 @@ function appendToIndex(userId: string): void {
     fs.appendFileSync(INDEX_PATH, userId + '\n', 'utf8');
   } catch (err: any) {
     console.warn(`[Persist] Index append failed (${userId}):`, err.message);
+  }
+}
+
+// ── 0G Storage: execution trace upload ───────────────────────────────────────
+//
+// Uploads a plain-JSON execution trace to 0G Storage and returns the CID.
+// Not encrypted (traces are public audit records by design).
+// Non-fatal — returns null and warns on failure.
+
+export async function uploadExecutionTrace(trace: {
+  action:         string;
+  userId:         string;
+  userAddress:    string;
+  receiptHash:    string;
+  arbitrumTxHash: string;
+  timestamp:      number;
+  screenerTop5?:  unknown[];
+  teeDecision?:   unknown;
+  poolAddress?:   string;
+  amountUSD?:     number;
+}): Promise<string | null> {
+  const cfg = detect0GConfig();
+  if (!cfg) return null;
+
+  try {
+    const { persistJsonArtifact } = await import('../storage/persist');
+    const artifact = await persistJsonArtifact(trace, {
+      indexerUrl: cfg.indexerUrl,
+      evmRpcUrl:  cfg.evmRpcUrl,
+      signer:     cfg.signer,
+    });
+    const cid = artifact.cid;
+    console.log(`[Persist] ✅ Trace stored on 0G (${trace.action})`);
+    console.log(`[Persist]    CID (rootHash): ${artifact.cid}`);
+    console.log(`[Persist]    🔗 StorageScan: https://storagescan.0g.ai/submission/${artifact.txSeq}`);
+    console.log(`[Persist]    🔗 ChainScan:   https://chainscan.0g.ai/tx/${artifact.txHash}`);
+    return cid;
+  } catch (err: any) {
+    console.warn(`[Persist] Trace upload failed (non-fatal): ${err.message?.slice(0, 80)}`);
+    return null;
   }
 }
 

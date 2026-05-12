@@ -1,0 +1,49 @@
+{
+  "42161": {
+    "name": "Arbitrum One",
+    "v2": {
+      "enforcer": "0x21b25E099CA7AF1BEa3a4558E437C56680B4b925",
+      "executor": "0x94DE8790BEd6Be0395C6BE7f42FD677b7B8cBcFb",
+      "swapper":  "0x4313539C4fF1b93891B6A66D6a2eb690153A1b33",
+      "executor_v1_legacy": "0x396e7bF66521EC33fAc3739D2E4Eb7220eBBf4ba",
+      "swapper_v1_legacy":  "0x841c2838AD15699f5A836b135dF3D4AE7671a9A2"
+    },
+    "delegation": {
+      "delegationManager": "0xdb9B1e94B5b69Df7e401DDbedE43491141047dB3",
+      "hybridDeleGatorImpl": "0x48dBe696A4D990079e039489bA2053B36E8FFEC4",
+      "simpleFactory": "0x69Aa2f9fe1572F1B640E1bbc512f5c3a734fc77c",
+      "allowedTargetsEnforcer": "0x7F20f61b1f09b08D970938F6fa563634d65c4EeB"
+    },
+    "v1": {
+      "vault": "0xe2D93183f0BC699e42f80b198542cfdf83B3CD2d"
+    }
+  },
+  "16661": {
+    "name": "0G Mainnet",
+    "registry": {
+      "yieldGekoRegistry": "0xd7185a3Aa4b23EBE84e7bd60CF5e78B71dd21c8e"
+    },
+    "compute": {
+      "provider": "0x1B3AAef3ae5050EEE04ea38cD4B087472BD85EB0",
+      "model": "deepseek/deepseek-chat-v3-0324"
+    }
+  },
+  "11155111": {
+    "name": "Ethereum Sepolia",
+    "v2": {
+      "enforcer": "0xe2D93183f0BC699e42f80b198542cfdf83B3CD2d",
+      "executor": "0xA689ed7b137B2268504Bc3eC6F2aCd37eC3a3CeB",
+      "swapper": "0xdBd12F1f1E2AF8a3dE0927b906127AeE15F4964e"
+    },
+    "delegation": {
+      "delegationManager": "0xdb9B1e94B5b69Df7e401DDbedE43491141047dB3",
+      "hybridDeleGatorImpl": "0x48dBe696A4D990079e039489bA2053B36E8FFEC4",
+      "simpleFactory": "0x69Aa2f9fe1572F1B640E1bbc512f5c3a734fc77c",
+      "allowedTargetsEnforcer": "0x7F20f61b1f09b08D970938F6fa563634d65c4EeB"
+    },
+    "mocks": {
+      "usdc": "0xeD2D87acE3Adc4F4a50e34c6B3cf2DBAbDe6A5C4",
+      "yieldProtocol": "0x922Ec8f283eAEfafDE2A492823E67e64E6e89f32"
+    }
+  }
+}

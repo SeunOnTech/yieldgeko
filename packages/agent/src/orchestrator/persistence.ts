@@ -1,9 +1,11 @@
-import * as fs   from 'node:fs';
+import * as fs from 'node:fs';
 import * as path from 'node:path';
-import * as dns  from 'node:dns';
+import * as dns from 'node:dns';
 import { Wallet, JsonRpcProvider, NonceManager } from 'ethers';
 import PQueue from 'p-queue';
 import type { UserState } from './types';
+import { getJournal } from './journal';
+
 
 // 0G Storage nodes use IPv4 — force Node.js to prefer IPv4 over IPv6
 dns.setDefaultResultOrder('ipv4first');
@@ -33,7 +35,7 @@ dns.setDefaultResultOrder('ipv4first');
 // ─────────────────────────────────────────────────────────────────────────────
 
 const STATE_DIR = path.resolve(process.cwd(), '.state');
-const SCHEMA    = 'yieldgeko.orchestrator.user-state.v1';
+const SCHEMA = 'yieldgeko.orchestrator.user-state.v1';
 
 function ensureStateDir(): void {
   if (!fs.existsSync(STATE_DIR)) fs.mkdirSync(STATE_DIR, { recursive: true });
@@ -93,9 +95,9 @@ function loadLocal(userId: string): UserState | null {
 // ── 0G Storage backend ────────────────────────────────────────────────────────
 
 interface ZeroGConfig {
-  indexerUrl:       string;
-  evmRpcUrl:        string;
-  signer:           NonceManager;   // NonceManager prevents concurrent nonce collisions
+  indexerUrl: string;
+  evmRpcUrl: string;
+  signer: NonceManager;   // NonceManager prevents concurrent nonce collisions
   encryptionKeyB64: string;
 }
 
@@ -106,27 +108,27 @@ async function upload0G(userId: string, state: UserState, cfg: ZeroGConfig): Pro
   const { persistEncryptedJsonArtifact } = await import('../storage/persist');
 
   // Suppress 0G SDK verbose logs during upload
-  const origLog   = console.log;
-  const origInfo  = console.info;
-  console.log  = () => {};
-  console.info = () => {};
+  const origLog = console.log;
+  const origInfo = console.info;
+  console.log = () => { };
+  console.info = () => { };
 
   try {
-    const payload  = JSON.parse(serialise(state));   // bigints → serialisable form
+    const payload = JSON.parse(serialise(state));   // bigints → serialisable form
     const artifact = await persistEncryptedJsonArtifact(
       SCHEMA,
       payload,
       cfg.encryptionKeyB64,
       {
         indexerUrl: cfg.indexerUrl,
-        evmRpcUrl:  cfg.evmRpcUrl,
-        signer:     cfg.signer,
+        evmRpcUrl: cfg.evmRpcUrl,
+        signer: cfg.signer,
       },
     );
 
     ensureStateDir();
     fs.writeFileSync(cidPath(userId), artifact.cid, 'utf8');
-    console.log  = origLog;
+    console.log = origLog;
     console.info = origInfo;
     origLog(`[Persist] ✅ 0G saved: ${userId}`);
     origLog(`[Persist]    CID (rootHash): ${artifact.cid}`);
@@ -134,7 +136,7 @@ async function upload0G(userId: string, state: UserState, cfg: ZeroGConfig): Pro
     origLog(`[Persist]    🔗 StorageScan: https://storagescan.0g.ai/submission/${artifact.txSeq}`);
     origLog(`[Persist]    🔗 ChainScan:   https://chainscan.0g.ai/tx/${artifact.txHash}`);
   } catch (err: any) {
-    console.log  = origLog;
+    console.log = origLog;
     console.info = origInfo;
     origLog(`[Persist] ⚠  0G upload failed (${userId}), using local fallback: ${err.message}`);
     saveLocal(userId, state);
@@ -164,21 +166,36 @@ async function restore0G(userId: string, cfg: ZeroGConfig): Promise<UserState | 
 }
 
 // ── Config detection ──────────────────────────────────────────────────────────
+//
+// SINGLETON: one NonceManager for the entire process lifetime.
+// Every 0G Storage write (state save, trace upload, attest upload) shares it,
+// so concurrent operations never collide on the same nonce.
 
-function detect0GConfig(): ZeroGConfig | null {
-  const indexerUrl       = process.env.INDEXER_URL;
-  const evmRpcUrl        = process.env.RPC_URL;
-  const privateKey       = process.env.PRIVATE_KEY;
+let _0gConfigCache: ZeroGConfig | null | undefined = undefined;
+
+export function detect0GConfig(): ZeroGConfig | null {
+  if (_0gConfigCache !== undefined) return _0gConfigCache;
+
+  const indexerUrl = process.env.INDEXER_URL;
+  const evmRpcUrl = process.env.RPC_URL;
+  const privateKey = process.env.PRIVATE_KEY;
   const encryptionKeyB64 = process.env.AGENT_STATE_ENCRYPTION_KEY_B64;
 
-  if (!indexerUrl || !evmRpcUrl || !privateKey || !encryptionKeyB64) return null;
+  if (!indexerUrl || !evmRpcUrl || !privateKey || !encryptionKeyB64) {
+    _0gConfigCache = null;
+    return null;
+  }
 
   try {
     const provider = new JsonRpcProvider(evmRpcUrl);
-    const wallet   = new Wallet(privateKey, provider);
-    const signer   = new NonceManager(wallet);   // handles concurrent saves without nonce conflicts
-    return { indexerUrl, evmRpcUrl, signer, encryptionKeyB64 };
-  } catch { return null; }
+    const wallet = new Wallet(privateKey, provider);
+    const signer = new NonceManager(wallet);
+    _0gConfigCache = { indexerUrl, evmRpcUrl, signer, encryptionKeyB64 };
+    return _0gConfigCache;
+  } catch {
+    _0gConfigCache = null;
+    return null;
+  }
 }
 
 // ── Real-user index ───────────────────────────────────────────────────────────
@@ -186,26 +203,43 @@ function detect0GConfig(): ZeroGConfig | null {
 // Written synchronously on registration so it survives crashes immediately.
 // On boot: read this file → restore all real users alongside demo users.
 
-const INDEX_PATH = path.join(STATE_DIR, 'users.index');
+const LEGACY_INDEX_PATH = path.join(STATE_DIR, 'users.index');
+const ACTIVE_INDEX_PATH = path.join(STATE_DIR, 'active-users.index');
+const ARCHIVED_INDEX_PATH = path.join(STATE_DIR, 'archived-users.index');
 
-function readIndex(): string[] {
+function readIndex(indexPath: string): string[] {
   try {
-    if (!fs.existsSync(INDEX_PATH)) return [];
-    return fs.readFileSync(INDEX_PATH, 'utf8')
+    if (!fs.existsSync(indexPath)) return [];
+    return fs.readFileSync(indexPath, 'utf8')
       .split('\n')
       .map(l => l.trim())
       .filter(Boolean);
   } catch { return []; }
 }
 
-function appendToIndex(userId: string): void {
+function writeIndex(indexPath: string, userIds: string[]): void {
+  fs.writeFileSync(indexPath, userIds.join('\n') + (userIds.length > 0 ? '\n' : ''), 'utf8');
+}
+
+function appendToIndex(indexPath: string, userId: string): void {
   try {
     ensureStateDir();
-    const existing = readIndex();
+    const existing = readIndex(indexPath);
     if (existing.includes(userId)) return;   // idempotent
-    fs.appendFileSync(INDEX_PATH, userId + '\n', 'utf8');
+    fs.appendFileSync(indexPath, userId + '\n', 'utf8');
   } catch (err: any) {
     console.warn(`[Persist] Index append failed (${userId}):`, err.message);
+  }
+}
+
+function removeFromIndex(indexPath: string, userId: string): void {
+  try {
+    ensureStateDir();
+    if (!fs.existsSync(indexPath)) return;
+    const next = readIndex(indexPath).filter(id => id !== userId);
+    writeIndex(indexPath, next);
+  } catch (err: any) {
+    console.warn(`[Persist] Index remove failed (${userId}):`, err.message);
   }
 }
 
@@ -216,16 +250,16 @@ function appendToIndex(userId: string): void {
 // Non-fatal — returns null and warns on failure.
 
 export async function uploadExecutionTrace(trace: {
-  action:         string;
-  userId:         string;
-  userAddress:    string;
-  receiptHash:    string;
+  action: string;
+  userId: string;
+  userAddress: string;
+  receiptHash: string;
   arbitrumTxHash: string;
-  timestamp:      number;
-  screenerTop5?:  unknown[];
-  teeDecision?:   unknown;
-  poolAddress?:   string;
-  amountUSD?:     number;
+  timestamp: number;
+  screenerTop5?: unknown[];
+  teeDecision?: unknown;
+  poolAddress?: string;
+  amountUSD?: number;
 }): Promise<string | null> {
   const cfg = detect0GConfig();
   if (!cfg) return null;
@@ -234,17 +268,16 @@ export async function uploadExecutionTrace(trace: {
     const { persistJsonArtifact } = await import('../storage/persist');
     const artifact = await persistJsonArtifact(trace, {
       indexerUrl: cfg.indexerUrl,
-      evmRpcUrl:  cfg.evmRpcUrl,
-      signer:     cfg.signer,
+      evmRpcUrl: cfg.evmRpcUrl,
+      signer: cfg.signer,
     });
-    const cid = artifact.cid;
     console.log(`[Persist] ✅ Trace stored on 0G (${trace.action})`);
     console.log(`[Persist]    CID (rootHash): ${artifact.cid}`);
     console.log(`[Persist]    🔗 StorageScan: https://storagescan.0g.ai/submission/${artifact.txSeq}`);
     console.log(`[Persist]    🔗 ChainScan:   https://chainscan.0g.ai/tx/${artifact.txHash}`);
-    return cid;
+    return artifact.cid;
   } catch (err: any) {
-    console.warn(`[Persist] Trace upload failed (non-fatal): ${err.message?.slice(0, 80)}`);
+    console.warn(`[Persist] Trace upload failed: ${err.message?.slice(0, 120)}`);
     return null;
   }
 }
@@ -252,11 +285,11 @@ export async function uploadExecutionTrace(trace: {
 // ── Public API ────────────────────────────────────────────────────────────────
 
 export class PersistenceStore {
-  private cfg:  ZeroGConfig | null;
+  private cfg: ZeroGConfig | null;
   readonly mode: '0g' | 'local';
 
   constructor() {
-    this.cfg  = detect0GConfig();
+    this.cfg = detect0GConfig();
     this.mode = this.cfg ? '0g' : 'local';
     ensureStateDir();
 
@@ -272,6 +305,9 @@ export class PersistenceStore {
     if (this.cfg) {
       const cfg = this.cfg;
       uploadQueue.add(() => upload0G(userId, state, cfg));
+      // Pro-Grade: Sync journal to 0G every few saves or major events
+      // For now, we'll trigger it on every save (since saves are infrequent anyway)
+      uploadQueue.add(() => this.syncJournalTo0G(userId));
       // Also save to local immediately as instant hot backup
       saveLocal(userId, state);
     } else {
@@ -279,23 +315,100 @@ export class PersistenceStore {
     }
   }
 
-  // Register a real user in the index — call once at registration time.
-  // Idempotent: safe to call on every restart; won't duplicate entries.
-  registerInIndex(userId: string): void {
-    appendToIndex(userId);
+  // Segmented Journal Sync: reads SQLite → uploads chunk to 0G → returns new CID
+  async syncJournalTo0G(userId: string): Promise<string | null> {
+    if (!this.cfg) return null;
+
+    const journal = getJournal();
+    const data = journal.getUnsyncedData(userId);
+    
+    if (data.logs.length === 0 && data.executions.length === 0 && data.pnl.length === 0) {
+      return null;
+    }
+
+    try {
+      const { persistJsonArtifact } = await import('../storage/persist');
+      const segment = {
+        userId,
+        timestamp: Date.now(),
+        ...data
+      };
+
+      const artifact = await persistJsonArtifact(segment, {
+        indexerUrl: this.cfg.indexerUrl,
+        evmRpcUrl: this.cfg.evmRpcUrl,
+        signer: this.cfg.signer,
+      });
+
+      // Update SQLite checkpoint so we don't upload these again
+      journal.updateCheckpoint(userId, {
+        last_log_ts: data.logs.length > 0 ? Math.max(...data.logs.map(l => l.timestamp)) : undefined,
+        last_exec_ts: data.executions.length > 0 ? Math.max(...data.executions.map(e => e.timestamp)) : undefined,
+        last_pnl_ts: data.pnl.length > 0 ? Math.max(...data.pnl.map(p => p.ts)) : undefined,
+      });
+
+      console.log(`[Persist] ✅ Journal segment synced to 0G for ${userId} (CID: ${artifact.cid})`);
+      return artifact.cid;
+    } catch (err: any) {
+      console.warn(`[Persist] Journal sync failed for ${userId}:`, err.message);
+      return null;
+    }
   }
 
-  // Return all real-user IDs from the index (used at boot to restore them).
-  getRealUserIds(): string[] {
-    return readIndex();
+
+  // Register a real user as active/runnable.
+  // Removes the user from the archived set so re-registration is clean.
+  registerActiveUser(userId: string): void {
+    appendToIndex(ACTIVE_INDEX_PATH, userId);
+    removeFromIndex(ARCHIVED_INDEX_PATH, userId);
+  }
+
+  // Backwards-compatible alias while callers migrate.
+  registerInIndex(userId: string): void {
+    this.registerActiveUser(userId);
+  }
+
+  // Mark a user as archived/non-runnable after withdrawal.
+  // We keep their state artifacts for audit/history, but remove restore pointers.
+  markUserArchived(userId: string): void {
+    removeFromIndex(ACTIVE_INDEX_PATH, userId);
+    removeFromIndex(LEGACY_INDEX_PATH, userId);
+    appendToIndex(ARCHIVED_INDEX_PATH, userId);
+  }
+
+  // Return only runnable real-user IDs for boot restore.
+  // If the new active index is not present yet, fall back to the legacy index.
+  getActiveUserIds(): string[] {
+    const activeExists = fs.existsSync(ACTIVE_INDEX_PATH);
+    if (activeExists) return readIndex(ACTIVE_INDEX_PATH);
+
+    const archived = new Set(readIndex(ARCHIVED_INDEX_PATH));
+    return readIndex(LEGACY_INDEX_PATH).filter(id => !archived.has(id));
+  }
+
+  getArchivedUserIds(): string[] {
+    return readIndex(ARCHIVED_INDEX_PATH);
   }
 
   // Blocking restore — called once at boot
   async load(userId: string): Promise<UserState | null> {
+    console.log(`[Persist] Loading ${userId}...`);
     if (this.cfg) {
-      return await restore0G(userId, this.cfg);
+      try {
+        const g0 = await restore0G(userId, this.cfg);
+        if (g0) {
+          console.log(`[Persist] ✅ ${userId} restored from 0G`);
+          return g0;
+        }
+      } catch (err: any) {
+        console.warn(`[Persist] 0G restore error for ${userId}:`, err.message);
+      }
+      console.log(`[Persist] 0G missing/failed for ${userId}, trying local...`);
     }
-    return loadLocal(userId);
+    const local = loadLocal(userId);
+    if (local) console.log(`[Persist] ✅ ${userId} restored from local`);
+    else console.warn(`[Persist] ❌ ${userId} not found locally or failed to load`);
+    return local;
   }
 
   async loadAll(userIds: string[]): Promise<Map<string, UserState>> {

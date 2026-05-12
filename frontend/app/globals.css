@@ -7,9 +7,10 @@
   --primary-glow:   rgba(234, 88, 12, 0.15);
 
   /* App surfaces */
-  --background: #FAFAF9;
+  --background: #FFFFFF;
   --surface:    #FFFFFF;
   --foreground: #1C1917;
+  --sidebar-bg: #F7F9FB;
 
   /* Text */
   --text-primary:   #1C1917;
@@ -58,6 +59,9 @@
   --background: #1a1a1a;
   --surface:    #242424;
   --foreground: #e8e8e8;
+  --sidebar-bg: #1a1a1a;
+  --primary-light: rgba(234, 88, 12, 0.1);
+  --primary-border: rgba(234, 88, 12, 0.3);
 
   /* Text */
   --text-primary:   #e8e8e8;
@@ -278,4 +282,15 @@ input[type="range"]::-webkit-slider-thumb {
 .theme-toggle-btn[data-theme='dark'] .theme-icon-moon {
   opacity: 1;
   transform: rotate(0deg) scale(1);
+}
+
+@keyframes dropdownFadeIn {
+  from { opacity: 0; transform: translateY(-8px) scale(0.95); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (max-width: 768px) {
+  .mobile-hide {
+    display: none !important;
+  }
 }

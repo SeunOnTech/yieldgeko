@@ -25,6 +25,8 @@ createAppKit({
   },
   features: {
     analytics: false,
+    email: true,
+    socials: ['google', 'apple', 'x', 'discord'],
   },
 })
 

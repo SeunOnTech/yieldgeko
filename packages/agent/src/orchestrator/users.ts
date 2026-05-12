@@ -1,4 +1,5 @@
 import type { UserPolicy, UserState, Phase } from './types';
+import type { StoredDelegation } from './delegation-client';
 
 // ── Demo user policies (replace with real EIP-712 signed intents in prod) ─────
 
@@ -46,23 +47,22 @@ export const DEMO_POLICIES: UserPolicy[] = [
 
 // ── Fresh user state factory ───────────────────────────────────────────────────
 
-export function createUserState(policy: UserPolicy): UserState {
+export function createUserState(policy: UserPolicy, userAddress: string): UserState {
   const now = Date.now();
   return {
     userId:     policy.id,
+    userAddress,
     policy,
     phase:      'INITIALIZING',
     portfolio:  null,
     breakers:   [],
-    pnlHistory: [],
-    executions: [],
-    log:        [],
     activeSessionId:        `session-${now}`,
     activeSessionStartedAt: now,
     updatedAt:  now,
     tickErrors: 0,
   };
 }
+
 
 // ── UserRegistry ──────────────────────────────────────────────────────────────
 //
@@ -78,23 +78,56 @@ export class UserRegistry {
   private users = new Map<string, UserState>();
 
   // Register a demo or pre-configured user
-  register(policy: UserPolicy): UserState {
-    const state = createUserState(policy);
+  register(policy: UserPolicy, userAddress?: string): UserState {
+    const addr = userAddress || policy.userAddress || '0x0000000000000000000000000000000000000000';
+    const state = createUserState(policy, addr);
     this.users.set(policy.id, state);
     return state;
   }
 
+
   // Register a real user who has signed an EIP-712 policy on the frontend.
   // Marks isReal=true so the orchestrator uses on-chain execution, not simulation.
   // Demo users (Alice/Bob/Carol) keep running — this only adds new real users.
-  registerReal(policy: UserPolicy): UserState {
+  registerReal(policy: UserPolicy, userAddress: string): UserState {
     if (this.users.has(policy.id)) {
-      return this.users.get(policy.id)!;  // already registered — idempotent
+      return this.users.get(policy.id)!;
     }
-    const realPolicy: UserPolicy = { ...policy, isReal: true };
-    const state = createUserState(realPolicy);
+    const realPolicy: UserPolicy = { ...policy, isReal: true, userAddress };
+    const state = createUserState(realPolicy, userAddress);
     this.users.set(realPolicy.id, state);
     return state;
+  }
+
+
+  // Register a V2 user who has created a MetaMask smart account and signed a delegation.
+  // Stores the delegation alongside the policy so the executor can redeem it.
+  registerV2(
+    policy:           UserPolicy,
+    smartAccountAddr: string,
+    delegation:       StoredDelegation,
+  ): UserState {
+    if (this.users.has(policy.id)) {
+      // Re-registration: use the incoming policy (new riskTier, managedUSD, minAPY, etc.)
+      // and layer in the V2-specific fields. This allows policy updates on re-register.
+      const updatedPolicy: UserPolicy = {
+        ...policy,
+        smartAccountAddress: smartAccountAddr,
+        signedDelegation:    delegation,
+        isReal:              true,
+      };
+      return this.update(policy.id, { policy: updatedPolicy }) ?? this.users.get(policy.id)!;
+    }
+    const v2Policy: UserPolicy = {
+      ...policy,
+      isReal:              true,
+      smartAccountAddress: smartAccountAddr,
+      signedDelegation:    delegation,
+    };
+    const state = createUserState(v2Policy, smartAccountAddr);
+    this.users.set(v2Policy.id, state);
+    return state;
+
   }
 
   // Restore from persisted state (called on boot)
@@ -103,7 +136,6 @@ export class UserRegistry {
     const merged: UserState = {
       ...persisted,
       // Fresh runtime fields — these are rebuilt each session
-      log:        persisted.log.slice(0, 20),   // keep last 20 log entries
       activeSessionId:        persisted.activeSessionId ?? `session-${Date.now()}`,
       activeSessionStartedAt: persisted.activeSessionStartedAt ?? Date.now(),
       tickErrors: 0,
@@ -111,6 +143,7 @@ export class UserRegistry {
     };
     this.users.set(persisted.userId, merged);
   }
+
 
   get(userId: string): UserState | undefined {
     return this.users.get(userId);
@@ -156,6 +189,12 @@ export class UserRegistry {
     const record: Record<string, UserState> = {};
     for (const [id, state] of this.users) record[id] = state;
     return record;
+  }
+
+  // Remove user from registry entirely — they stop ticking immediately.
+  // Called on reset-user so a fresh re-registration doesn't race the old entry.
+  deregister(userId: string): boolean {
+    return this.users.delete(userId);
   }
 
   size(): number {

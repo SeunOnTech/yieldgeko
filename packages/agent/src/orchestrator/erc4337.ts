@@ -36,8 +36,8 @@ import { createPimlicoClient } from 'permissionless/clients/pimlico';
 
 const ENTRY_POINT_V07 = '0x0000000071727De22E5E9d8BAf0edAc6f37da032' as const;
 
-function pimlicoRpcUrl(apiKey: string, chain: string = 'arbitrum'): string {
-  return `https://api.pimlico.io/v2/${chain}/rpc?apikey=${apiKey}`;
+function pimlicoRpcUrl(apiKey: string, chainId: number = 42161): string {
+  return `https://api.pimlico.io/v2/${chainId}/rpc?apikey=${apiKey}`;
 }
 
 // ── Interface ─────────────────────────────────────────────────────────────────

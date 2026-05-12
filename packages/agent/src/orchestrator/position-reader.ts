@@ -71,6 +71,8 @@ const UNIV3_POS_MGR_ABI = [
     uint128 tokensOwed0,
     uint128 tokensOwed1
   )`,
+  'function balanceOf(address owner) view returns (uint256)',
+  'function tokenOfOwnerByIndex(address owner, uint256 index) view returns (uint256)',
 ];
 
 const UNIV3_POOL_ABI = [
@@ -350,7 +352,6 @@ async function readUniV3Value(
   vaultAddress?: string,
 ): Promise<RealPositionRead> {
   const posMgr = new ethers.Contract(ADDR.UNIV3_POS_MGR, UNIV3_POS_MGR_ABI, provider);
-
   let pos: Awaited<ReturnType<typeof posMgr.positions>>;
   try {
     pos = await posMgr.positions(BigInt(tokenId));
@@ -488,28 +489,64 @@ async function readUniV3Value(
     ? addDecimalStrings(fees0USDExact, fees1USDExact)
     : feesUSD.toString();
 
-  // When liquidity = 0, position is between close and remint — check vault idle balances.
-  // If WETH/ARB are sitting in balances[user][token] (from a successful close whose remint
-  // failed), count them as NAV so the drawdown circuit breaker doesn't fire a false alarm.
+  // When liquidity = 0, position is between close and remint — check idle token balances.
+  // V1: tokens credited to vault.balances[user][token] after executeWithdrawMulti.
+  // V2: tokens sit directly in the smart account (ERC20.balanceOf(smartAccount)).
+  // Strategy: try vault first; if vault returns 0, fall back to direct ERC20 balance.
+  // This works for both: V1 vault always has the balance after close (vault > 0 → no fallback);
+  // V2 vault always returns 0 for smart account → ERC20 fallback reads actual tokens.
   let idleNAV = 0;
-  if (!hasPrincipal && userAddress && vaultAddress) {
+  if (!hasPrincipal && userAddress) {
     try {
-      const vaultC = new ethers.Contract(vaultAddress, ['function balances(address,address) view returns (uint256)'], provider);
-      const [idle0, idle1] = await Promise.all([
-        vaultC.balances(userAddress, token0).catch(() => 0n) as Promise<bigint>,
-        vaultC.balances(userAddress, token1).catch(() => 0n) as Promise<bigint>,
-      ]);
+      let idle0 = 0n, idle1 = 0n;
+
+      // Try vault accounting (V1 path)
+      if (vaultAddress) {
+        const vaultC = new ethers.Contract(vaultAddress, ['function balances(address,address) view returns (uint256)'], provider);
+        [idle0, idle1] = await Promise.all([
+          vaultC.balances(userAddress, token0).catch(() => 0n) as Promise<bigint>,
+          vaultC.balances(userAddress, token1).catch(() => 0n) as Promise<bigint>,
+        ]);
+      }
+
+      // Fallback to direct ERC20 balance (V2 path — smart account holds tokens directly)
+      if (idle0 === 0n && idle1 === 0n) {
+        const erc20ABI = ['function balanceOf(address) view returns (uint256)'];
+        const [bal0, bal1] = await Promise.all([
+          new ethers.Contract(token0, erc20ABI, provider).balanceOf(userAddress).catch(() => 0n) as Promise<bigint>,
+          new ethers.Contract(token1, erc20ABI, provider).balanceOf(userAddress).catch(() => 0n) as Promise<bigint>,
+        ]);
+        idle0 = bal0; idle1 = bal1;
+      }
+
       idleNAV = (Number(idle0) / dec0) * price0 + (Number(idle1) / dec1) * price1;
-    } catch { /* non-fatal */ }
+
+      // V2 Fallback: if pool tokens are 0, check for normalized USDC balance (Arb USDC: 0xaf88...)
+      if (idleNAV < 0.01 && userAddress) {
+        const USDC_ARB = '0xaf88d065e77c8cC2239327C5EDb3A432268e5831';
+        if (token0.toLowerCase() !== USDC_ARB.toLowerCase() && token1.toLowerCase() !== USDC_ARB.toLowerCase()) {
+          const usdcBal = await new ethers.Contract(USDC_ARB, ['function balanceOf(address) view returns (uint256)'], provider).balanceOf(userAddress).catch(() => 0n) as bigint;
+          if (usdcBal > 0n) {
+            idleNAV += Number(usdcBal) / 1_000_000;
+          }
+        }
+      }
+    } catch (err: any) {
+      console.warn(`[Reader] Idle balance check failed: ${err.message}`);
+    }
   }
-  const currentUSD = hasPrincipal ? principalUSD + feesUSD : idleNAV;
+  // currentUSD = PRINCIPAL ONLY (excluding accrued fees).
+  // Fees are tracked separately in incomeEarnedUSD so they are not double-counted
+  // in portfolio.totalReturnUSD = totalValueUSD + incomeEarnedUSD - entryUSD.
+  // The true portfolio value is currentUSD + incomeEarnedUSD.
+  const currentUSD = hasPrincipal ? principalUSD : idleNAV;
   // Out-of-range: position earns 0 fees until price re-enters the tick range
   const outOfRange = currentTick < tickLower || currentTick >= tickUpper;
 
   return {
     currentUSD,
-    incomeEarnedUSD:   feesUSD,   // fees = realised income, principal is NAV
-    pendingRewardsUSD: feesUSD,   // tokensOwed = claimable via collect() right now
+    incomeEarnedUSD:   feesUSD,   // accrued LP fees (tracked separately from principal)
+    pendingRewardsUSD: feesUSD,   // same — claimable via collect()
     currentUSDExact:        currentUSD.toString(),
     incomeEarnedUSDExact:   feesUSDExact,
     pendingRewardsUSDExact: feesUSDExact,

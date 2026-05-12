@@ -1,13 +1,49 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect, memo } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
-import { useAccount } from 'wagmi'
+import { useAccount, useDisconnect } from 'wagmi'
+import { useAppKit } from '@reown/appkit/react'
 import { WalletAvatar } from '../components/WalletAvatar'
 import Image from 'next/image'
 import Link from 'next/link'
 import { ThemeToggle } from '../components/ThemeToggle'
+import { HeaderProvider, useHeaderContent } from '../components/HeaderContext'
 import GlobalLoading from '../components/GlobalLoading'
+import OnboardingGuard from '../components/OnboardingGuard'
+
+const LayoutHeaderSlot = () => {
+  const content = useHeaderContent()
+  if (!content) return null
+  return (
+    <div className="mobile-hide" style={{ 
+      width: '100%', 
+      display: 'flex', 
+      justifyContent: 'center',
+      position: 'sticky',
+      top: 0,
+      zIndex: 140,
+      padding: '0 24px', // Minimal horizontal gaps
+      pointerEvents: 'none'
+    }}>
+      <div style={{ 
+        maxWidth: 1200, 
+        width: '100%', 
+        height: 64, 
+        display: 'flex', 
+        alignItems: 'center', 
+        justifyContent: 'space-between',
+        padding: '0 24px',
+        background: 'var(--background)',
+        backdropFilter: 'blur(12px)',
+        borderBottom: '1px solid rgba(128, 128, 128, 0.15)',
+        pointerEvents: 'auto'
+      }}>
+        {content}
+      </div>
+    </div>
+  )
+}
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
 
@@ -112,14 +148,23 @@ function NavItem({
   return (
     <button onClick={onClick} style={{
       display: 'flex', alignItems: 'center', gap: 14, width: '100%',
-      padding: '10px 16px', borderRadius: 12, border: 'none', cursor: 'pointer',
-      background: 'transparent',
+      padding: '10px 16px', borderRadius: 10, border: 'none', cursor: 'pointer',
+      background: active ? 'var(--surface)' : 'transparent',
       color: active ? '#EA580C' : 'var(--text-secondary)',
       fontSize: 15, fontWeight: active ? 600 : 500, fontFamily: 'inherit',
       transition: 'all 120ms', textAlign: 'left',
+      boxShadow: active ? '0 1px 2px rgba(0,0,0,0.05)' : 'none',
     }}
-      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = 'var(--text-primary)' }}
-      onMouseLeave={e => { if (!active) (e.currentTarget as HTMLElement).style.color = 'var(--text-secondary)' }}
+      onMouseEnter={e => {
+        (e.currentTarget as HTMLElement).style.color = 'var(--text-primary)';
+        if (!active) (e.currentTarget as HTMLElement).style.background = 'var(--surface)';
+      }}
+      onMouseLeave={e => {
+        if (!active) {
+          (e.currentTarget as HTMLElement).style.color = 'var(--text-secondary)';
+          (e.currentTarget as HTMLElement).style.background = 'transparent';
+        }
+      }}
     >
       <span style={{
         display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -135,52 +180,134 @@ function NavItem({
 
 // ── Sidebar content (shared between desktop + mobile drawer) ──────────────────
 
-function SidebarContent({
-  address, pathname, router, onNav,
-}: { address?: string; pathname: string; router: ReturnType<typeof useRouter>; onNav?: () => void }) {
+const SidebarContent = React.memo(({
+  address, pathname, router, onNav, agentUserId,
+}: { address?: string; pathname: string; router: any; onNav?: () => void; agentUserId?: string | null }) => {
   const shortAddr = address ? `${address.slice(0, 6)}...${address.slice(-4)}` : ''
   const isPortfolio = pathname === '/app'
   const isStrategy = pathname.startsWith('/app/strategy')
+  const isSettings = pathname === '/app/settings'
+
+  const [dropdownOpen, setDropdownOpen] = useState(false)
+  const { disconnect } = useDisconnect()
 
   function go(path: string) { router.push(path); onNav?.() }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, padding: '0 8px' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: '0 8px' }}>
 
       {/* Logo Area */}
-      <div style={{ padding: '24px 16px 20px' }}>
+      <div style={{ padding: '24px 16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <Link href="/app" onClick={onNav} style={{ display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none' }}>
           <Image src="/logo.svg" alt="YieldGeko" width={28} height={28} />
           <span style={{ fontSize: 20, fontWeight: 800, color: '#EA580C', letterSpacing: '-.02em' }}>
             yieldgeko
           </span>
         </Link>
+        <ThemeToggle />
       </div>
 
       {/* Account / Connect State */}
-      <div style={{ padding: '0 16px 24px' }}>
+      <div style={{ padding: '0 16px 24px', position: 'relative' }}>
         {address ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 0' }}>
-            <WalletAvatar address={address} size={40} />
-            <div style={{ minWidth: 0, flex: 1 }}>
-              <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {shortAddr}
+          <>
+            <div
+              onClick={() => setDropdownOpen(!dropdownOpen)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 12, padding: '8px 12px',
+                borderRadius: 12, cursor: 'pointer', transition: 'background 120ms',
+                background: dropdownOpen ? 'var(--surface)' : 'transparent',
+                marginLeft: -12, marginRight: -12,
+              }}
+              onMouseEnter={e => { if (!dropdownOpen) e.currentTarget.style.background = 'var(--surface)' }}
+              onMouseLeave={e => { if (!dropdownOpen) e.currentTarget.style.background = 'transparent' }}
+            >
+              <WalletAvatar address={address} size={40} />
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {shortAddr}
+                </div>
+                <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 2 }}>$1,240.50</div>
               </div>
-              <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 2 }}>$1,240.50</div>
+              <svg
+                width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2"
+                style={{ opacity: 0.4, transition: 'transform 200ms', transform: dropdownOpen ? 'rotate(180deg)' : 'rotate(0deg)' }}
+              >
+                <path d="M3 4.5L6 7.5L9 4.5" />
+              </svg>
             </div>
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" style={{ opacity: 0.4 }}>
-              <path d="M3 4.5L6 7.5L9 4.5" />
-            </svg>
-          </div>
+
+            {dropdownOpen && (
+              <div style={{
+                position: 'absolute', top: '100%', left: 16, right: 16, zIndex: 100,
+                marginTop: 4, padding: '6px', borderRadius: 12,
+                background: 'var(--surface)', border: '1px solid var(--border)',
+                boxShadow: '0 10px 25px -5px rgba(0,0,0,0.1), 0 8px 10px -6px rgba(0,0,0,0.1)',
+                animation: 'dropdownFadeIn 150ms ease-out'
+              }}>
+                <a
+                  href={`https://arbiscan.io/address/${address}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 10,
+                    padding: '10px 12px', borderRadius: 8, textDecoration: 'none',
+                    color: 'var(--text-secondary)', fontSize: 13,
+                    fontWeight: 500, cursor: 'pointer', transition: 'all 100ms',
+                    fontFamily: 'inherit'
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.background = 'var(--background)'; e.currentTarget.style.color = 'var(--text-primary)' }}
+                  onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-secondary)' }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                    <polyline points="15 3 21 3 21 9" />
+                    <line x1="10" y1="14" x2="21" y2="3" />
+                  </svg>
+                  View on Explorer
+                </a>
+
+                <div style={{ height: 1, background: 'var(--border)', margin: '4px 8px', opacity: 0.5 }} />
+
+                <button
+                  onClick={() => { disconnect(); setDropdownOpen(false) }}
+                  style={{
+                    width: '100%', display: 'flex', alignItems: 'center', gap: 10,
+                    padding: '10px 12px', borderRadius: 8, border: 'none',
+                    background: 'transparent', color: '#EF4444', fontSize: 13,
+                    fontWeight: 600, cursor: 'pointer', textAlign: 'left',
+                    fontFamily: 'inherit', transition: 'background 100ms'
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.background = 'rgba(239, 68, 68, 0.08)'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                    <polyline points="16 17 21 12 16 7" />
+                    <line x1="21" y1="12" x2="9" y2="12" />
+                  </svg>
+                  Disconnect
+                </button>
+              </div>
+            )}
+          </>
         ) : (
           <div style={{ marginTop: 8 }}>
-            <div style={{ fontSize: 22, fontWeight: 800, color: 'var(--text-primary)', lineHeight: 1.2 }}>Welcome to YieldGeko</div>
-            <div style={{ fontSize: 14, color: 'var(--text-muted)', marginTop: 8, lineHeight: 1.4 }}>Your autonomous yield agent for everything onchain</div>
+            <div style={{
+              fontSize: 18, fontWeight: 800, color: 'var(--text-primary)',
+              lineHeight: 1.1, letterSpacing: '-0.02em',
+              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'
+            }}>
+              Welcome to YieldGeko
+            </div>
+            <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 6, lineHeight: 1.4 }}>
+              Your autonomous yield agent for everything onchain
+            </div>
             <button
-              onClick={() => go('/onboard')}
+              onClick={() => router.push('/app/connect')}
               style={{
-                marginTop: 20, width: '100%', height: 44, borderRadius: 12,
-                background: '#EA580C', border: 'none', color: '#fff',
+                marginTop: 20, width: '100%', padding: '12px', borderRadius: 12,
+                background: '#EA580C', color: '#fff', border: 'none',
                 fontSize: 15, fontWeight: 700, cursor: 'pointer',
                 display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
                 fontFamily: 'inherit',
@@ -192,19 +319,24 @@ function SidebarContent({
         )}
       </div>
 
-      {/* Navigation */}
-      <nav style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4, padding: '0 4px' }}>
+      {/* Navigation - Scrollable Area */}
+      <nav style={{
+        flex: 1, display: 'flex', flexDirection: 'column', gap: 4,
+        padding: '0 4px', overflowY: 'auto', overflowX: 'hidden',
+        scrollbarWidth: 'none', msOverflowStyle: 'none'
+      }}>
+        <style>{`nav::-webkit-scrollbar { display: none; }`}</style>
         <NavItem icon={<IcoPortfolio />} label="Overview" active={isPortfolio} onClick={() => go('/app')} />
-        <NavItem icon={<IcoStrategy />} label="Explore" active={isStrategy} onClick={() => address ? go(`/app/strategy/${address}`) : go('/onboard')} />
+        <NavItem icon={<IcoStrategy />} label="Explore" active={isStrategy} onClick={() => address ? go(agentUserId ? `/app/strategy/${agentUserId}` : '/app') : go('/app/onboard')} />
         <NavItem icon={<IcoActivity />} label="Rewards" active={false} onClick={() => go('/app')} />
-        <NavItem icon={<IcoSettings />} label="Favorites" onClick={() => go('/onboard')} />
+        <NavItem icon={<IcoSettings />} label="Favorites" onClick={() => go('/app/onboard')} />
         <div style={{ height: 1, background: 'var(--border)', margin: '12px 16px', opacity: 0.5 }} />
-        <NavItem icon={<IcoSend />} label="Send" onClick={() => go('/onboard')} />
-        <NavItem icon={<IcoSwap />} label="Swap" onClick={() => go('/onboard')} />
-        <NavItem icon={<IcoBridge />} label="Bridge" onClick={() => go('/onboard')} />
-        <NavItem icon={<IcoEarn />} label="Earn" onClick={() => go('/onboard')} />
-        <NavItem icon={<IcoFund />} label="Fund" onClick={() => go('/onboard')} />
-        <NavItem icon={<IcoSettings />} label="Settings" onClick={() => go('/onboard')} />
+        <NavItem icon={<IcoSend />} label="Send" onClick={() => go('/app/onboard')} />
+        <NavItem icon={<IcoSwap />} label="Swap" onClick={() => go('/app/onboard')} />
+        <NavItem icon={<IcoBridge />} label="Bridge" onClick={() => go('/app/onboard')} />
+        <NavItem icon={<IcoEarn />} label="Earn" onClick={() => go('/app/onboard')} />
+        <NavItem icon={<IcoFund />} label="Fund" onClick={() => go('/app/onboard')} />
+        <NavItem icon={<IcoSettings />} label="Settings" active={isSettings} onClick={() => go('/app/settings')} />
       </nav>
 
       {/* Bottom Widgets */}
@@ -241,7 +373,8 @@ function SidebarContent({
       </div>
     </div>
   )
-}
+})
+SidebarContent.displayName = 'SidebarContent'
 
 // ── Layout ────────────────────────────────────────────────────────────────────
 
@@ -250,11 +383,14 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const { address } = useAccount()
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const [isMounted, setIsMounted] = useState(false)
   const [isProcessing, setIsProcessing] = useState(false)
 
-  // Expose a way to trigger loading globally for demo purposes
   useEffect(() => {
-    (window as any).setGlobalLoading = setIsProcessing
+    setIsMounted(true)
+    if (typeof window !== 'undefined') {
+      (window as any).setGlobalLoading = setIsProcessing
+    }
   }, [])
 
   // Close drawer on route change
@@ -269,6 +405,20 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   const isPortfolio = pathname === '/app'
   const isStrategy = pathname.startsWith('/app/strategy')
+  const isSettings = pathname === '/app/settings'
+
+  const [agentUserId, setAgentUserId] = useState<string | null>(null)
+  
+  useEffect(() => {
+    if (!address) { setAgentUserId(null); return }
+    const AGENT_BASE = (process.env.NEXT_PUBLIC_AGENT_SSE_URL ?? 'http://localhost:3001/events').replace('/events', '')
+    fetch(`${AGENT_BASE}/api/dashboard/${address}`)
+      .then(res => res.json())
+      .then(dashboard => {
+        if (dashboard?.userId) setAgentUserId(dashboard.userId)
+      })
+      .catch(() => {})
+  }, [address])
 
   return (
     <>
@@ -281,7 +431,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           position: fixed;
           left: 0; top: 0;
           z-index: 100;
-          background: var(--background);
+          background: var(--sidebar-bg);
           border-right: 1px solid var(--border);
           display: flex;
           flex-direction: column;
@@ -317,7 +467,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             height: 52px;
             padding: 0 16px;
             border-bottom: 1px solid var(--border);
-            background: var(--background);
+            background: var(--sidebar-bg);
             position: sticky; top: 0; z-index: 110;
           }
           .app-mobile-bottomnav { display: none; }
@@ -340,7 +490,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             position: absolute;
             top: 0; left: 0; bottom: 0;
             width: 260px;
-            background: var(--background);
+            background: var(--sidebar-bg);
             border-right: 1px solid var(--border);
             transform: translateX(-100%);
             transition: transform 240ms cubic-bezier(0.16,1,0.3,1);
@@ -354,7 +504,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
         {/* ── Desktop sidebar ──────────────────────────────────────────── */}
         <aside className="app-layout-sidebar">
-          <SidebarContent address={address} pathname={pathname} router={router} />
+          <SidebarContent address={address} pathname={pathname} router={router} agentUserId={agentUserId} />
         </aside>
 
         {/* ── Mobile drawer (overlay) ──────────────────────────────────── */}
@@ -370,53 +520,59 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                 <IcoClose />
               </button>
             </div>
-            <SidebarContent address={address} pathname={pathname} router={router} onNav={() => setDrawerOpen(false)} />
+            <SidebarContent address={address} pathname={pathname} router={router} onNav={() => setDrawerOpen(false)} agentUserId={agentUserId} />
           </div>
         </div>
 
         {/* ── Main area ────────────────────────────────────────────────── */}
-        <div className="app-layout-main">
+        <HeaderProvider>
+          <OnboardingGuard>
+            <div className="app-layout-main">
+              <LayoutHeaderSlot />
 
-          {/* Mobile top bar */}
-          <div className="app-mobile-topbar">
-            <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-              <button
-                onClick={() => setDrawerOpen(true)}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-primary)', padding: 0, display: 'flex' }}
-              >
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M9 3v18" /></svg>
-              </button>
-              <Image src="/logo.svg" alt="YieldGeko" width={24} height={24} />
+              {/* Mobile top bar */}
+              <div className="app-mobile-topbar">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                <button
+                  onClick={() => setDrawerOpen(true)}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-primary)', padding: 0, display: 'flex' }}
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M9 3v18" /></svg>
+                </button>
+                <Image src="/logo.svg" alt="YieldGeko" width={24} height={24} />
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 18 }}>
+                <ThemeToggle />
+                <button style={{ background: 'none', border: 'none', color: 'var(--text-primary)', opacity: 0.7, padding: 0 }}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg></button>
+                <button style={{ background: 'none', border: 'none', color: 'var(--text-primary)', opacity: 0.7, padding: 0 }}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></svg></button>
+                {isMounted && address ? (
+                  <WalletAvatar address={address} size={28} />
+                ) : (
+                  <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'var(--surface)' }} />
+                )}
+              </div>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 18 }}>
-              <button style={{ background: 'none', border: 'none', color: 'var(--text-primary)', opacity: 0.7, padding: 0 }}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg></button>
-              <button style={{ background: 'none', border: 'none', color: 'var(--text-primary)', opacity: 0.7, padding: 0 }}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></svg></button>
-              {address ? (
-                <WalletAvatar address={address} size={28} />
-              ) : (
-                <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'var(--surface)' }} />
-              )}
-            </div>
+
+            {/* Page content */}
+            <main className="app-content-wrapper">
+              {children}
+            </main>
+
+            {/* Mobile bottom nav */}
+            <nav className="app-mobile-bottomnav">
+              {[
+                { icon: <IcoPortfolio />, label: 'Portfolio', active: isPortfolio, onClick: () => router.push('/app') },
+                { icon: <IcoStrategy />, label: 'Strategy', active: isStrategy, onClick: () => address ? router.push(agentUserId ? `/app/strategy/${agentUserId}` : '/app') : router.push('/app/onboard') },
+                { icon: <IcoWallet />, label: 'Wallet', active: false, onClick: () => router.push('/app/onboard') },
+                { icon: <IcoSettings />, label: 'Settings', active: isSettings, onClick: () => router.push('/app/settings') },
+              ].map(item => (
+                <NavItem key={item.label} {...item} mobile />
+              ))}
+            </nav>
           </div>
-
-          {/* Page content */}
-          <main className="app-content-wrapper">
-            {children}
-          </main>
-
-          {/* Mobile bottom nav */}
-          <nav className="app-mobile-bottomnav">
-            {[
-              { icon: <IcoPortfolio />, label: 'Portfolio', active: isPortfolio, onClick: () => router.push('/app') },
-              { icon: <IcoStrategy />, label: 'Strategy', active: isStrategy, onClick: () => address ? router.push(`/app/strategy/${address}`) : router.push('/onboard') },
-              { icon: <IcoWallet />, label: 'Wallet', active: false, onClick: () => router.push('/onboard') },
-              { icon: <IcoSettings />, label: 'Settings', active: false, onClick: () => router.push('/onboard') },
-            ].map(item => (
-              <NavItem key={item.label} {...item} mobile />
-            ))}
-          </nav>
-        </div>
-      </div>
+        </OnboardingGuard>
+      </HeaderProvider>
+    </div>
     </>
   )
 }

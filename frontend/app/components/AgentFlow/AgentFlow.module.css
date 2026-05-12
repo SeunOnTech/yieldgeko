@@ -110,12 +110,15 @@
 
 .shell {
   position: relative;
-  min-height: 100vh;
-  min-height: 100dvh;
-  background: var(--background);
+  min-height: 100%;
+  width: 100%;
+  background: #FFFFFF;
   color: var(--foreground);
-  overflow-x: hidden;
   transition: background 400ms ease, color 400ms ease;
+}
+
+:global(.dark) .shell {
+  background: var(--background);
 }
 
 .shellDark {
@@ -139,10 +142,10 @@
 /* ─── Onboarding top nav — Back + Exit (fixed, safe-area aware) ───────────── */
 
 .onboardNavLeft {
-  position: fixed;
+  position: absolute;
   z-index: 50;
-  top: max(0.625rem, env(safe-area-inset-top, 0px));
-  left: max(0.625rem, env(safe-area-inset-left, 0px));
+  top: 24px;
+  left: 24px;
   max-width: min(20rem, calc(100vw - 5.5rem));
 }
 
@@ -254,9 +257,9 @@
 /* ─── Progress dots ──────────────────────────────────────────────────────── */
 
 .progressDots {
-  position: fixed;
-  top: max(1rem, env(safe-area-inset-top, 0px));
-  right: max(1rem, env(safe-area-inset-right, 0px));
+  position: absolute;
+  top: 24px;
+  right: 24px;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -303,17 +306,16 @@
 
 .stage {
   position: relative;
-  min-height: 100vh;
-  min-height: 100dvh;
+  min-height: calc(100vh - 100px);
 }
 
 .screen {
-  min-height: 100vh;
+  min-height: calc(100vh - 100px);
   width: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 96px 24px 72px;
+  padding: 60px 24px 60px;
 }
 
 /* Chain step manages its own spacing + sticky footer */
@@ -1423,6 +1425,12 @@
 
 .chainStepHeader {
   max-width: 42rem;
+  border-bottom: 1px solid #E5E7EB;
+  padding-bottom: 24px;
+}
+
+:global(.dark) .chainStepHeader {
+  border-color: rgba(255, 255, 255, 0.1);
 }
 
 .chainStepKicker {
@@ -1458,9 +1466,26 @@
 
 @media (min-width: 900px) {
   .chainStepGrid {
-    grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
-    gap: clamp(2rem, 4vw, 3rem);
+    grid-template-columns: minmax(280px, 340px) 1px minmax(0, 1fr);
+    gap: clamp(1.5rem, 3vw, 2.5rem);
   }
+}
+
+.gridDivider {
+  width: 1px;
+  height: 100%;
+  background: #E5E7EB;
+  display: none;
+}
+
+@media (min-width: 900px) {
+  .gridDivider {
+    display: block;
+  }
+}
+
+:global(.dark) .gridDivider {
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .chainPickList {
@@ -1510,15 +1535,19 @@
   gap: 14px;
   padding: 14px 14px 14px 16px;
   border-radius: 14px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  box-shadow: none;
+  border: 1px solid #E2E8F0;
+  background: #F9FAFB;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
   cursor: pointer;
   font-family: inherit;
   text-align: left;
-  transition:
-    border-color 0.18s ease,
-    background-color 0.18s ease;
+  transition: all 0.18s ease;
+}
+
+:global(.dark) .chainOption {
+  background: var(--surface);
+  border-color: var(--border);
+  box-shadow: none;
 }
 
 .chainOption:hover {
@@ -1534,6 +1563,7 @@
 .chainOptionSelected {
   border-color: var(--primary);
   background: var(--primary-light);
+  box-shadow: 0 4px 12px rgba(234, 88, 12, 0.08);
 }
 
 :global(.dark) .chainOptionSelected {
@@ -1667,14 +1697,19 @@
 /* Preview pane — desktop/tablet only */
 .chainPreview {
   border-radius: 16px;
-  border: 1px solid var(--border);
+  border: 1px solid #E5E7EB;
   background: var(--surface);
-  box-shadow: none;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.03);
   padding: clamp(1.25rem, 3vw, 1.75rem);
   display: none;
   flex-direction: column;
   gap: 1.25rem;
   animation: fadeInSwap 0.28s ease-out;
+}
+
+:global(.dark) .chainPreview {
+  border-color: var(--border);
+  box-shadow: none;
 }
 
 @media (min-width: 900px) {
@@ -1741,7 +1776,15 @@
 .chainPreviewFacts {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
+  gap: 12px;
+  border-top: 1px solid #E5E7EB;
+  border-bottom: 1px solid #E5E7EB;
+  padding: 16px 0;
+  margin: 4px 0;
+}
+
+:global(.dark) .chainPreviewFacts {
+  border-color: rgba(255, 255, 255, 0.1);
 }
 
 @media (max-width: 520px) {
@@ -1888,4 +1931,259 @@
 
 .chainCtaBarMobile .chainCtaContinue:active {
   transform: none;
+}
+
+/* ─── Connect Step (Copied from connect.module.css) ────────────────────────── */
+
+.connectContainer {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  width: 100%;
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+.connectTitle {
+  font-size: 32px;
+  font-weight: 500;
+  color: var(--text-primary);
+  margin-bottom: 40px;
+  letter-spacing: -0.03em;
+  text-align: left;
+  width: 100%;
+}
+
+.connectGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 24px 12px;
+  width: 100%;
+  margin-bottom: 40px;
+}
+
+.walletOption {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  padding: 8px;
+  transition: transform 120ms ease;
+}
+
+.walletOption:hover {
+  transform: translateY(-2px);
+}
+
+.walletIcon {
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.walletName {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
+  font-family: inherit;
+}
+
+.promoBanner {
+  width: 100%;
+  background: var(--primary-light);
+  border-radius: 16px;
+  padding: 16px 20px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 40px;
+  border: 1px solid var(--primary-border);
+}
+
+:global(.dark) .promoBanner {
+  background: rgba(234, 88, 12, 0.05);
+  border: 1px solid rgba(234, 88, 12, 0.1);
+}
+
+.promoIcon {
+  width: 40px;
+  height: 40px;
+  background: #fff;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+}
+
+.promoContent {
+  flex: 1;
+}
+
+.promoTitle {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--primary-dark);
+  margin-bottom: 2px;
+}
+
+:global(.dark) .promoTitle {
+  color: var(--primary);
+}
+
+.promoSub {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.downloadBtn {
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 120ms;
+  font-family: inherit;
+}
+
+.downloadBtn:hover {
+  opacity: 0.9;
+}
+
+.divider {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 40px;
+}
+
+.dividerLine {
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.dividerText {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.socialSection {
+  width: 100%;
+}
+
+.socialGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.socialBtn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 16px 8px;
+  cursor: pointer;
+  transition: all 150ms ease;
+  color: var(--text-primary);
+}
+
+.socialBtn:hover {
+  border-color: var(--primary);
+  background: rgba(234, 88, 12, 0.05);
+  transform: translateY(-2px);
+}
+
+.socialBtn span {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.emailGroup {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.emailInput {
+  flex: 1;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 16px;
+  font-size: 14px;
+  color: var(--text-primary);
+  font-family: inherit;
+  transition: border-color 120ms;
+}
+
+.emailInput:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+.emailSubmitBtn {
+  background: var(--text-primary);
+  color: var(--background);
+  border: none;
+  padding: 0 24px;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 120ms;
+}
+
+:global(.dark) .emailSubmitBtn {
+  background: #fff;
+  color: #000;
+}
+
+.emailSubmitBtn:hover {
+  opacity: 0.9;
+}
+
+.connectFooter {
+  margin-top: 60px;
+  text-align: left;
+  width: 100%;
+}
+
+.connectFooterTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+.connectFooterText {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+@media (max-width: 480px) {
+  .connectGrid {
+    grid-template-columns: repeat(3, 1fr);
+  }
 }

@@ -7,20 +7,67 @@ import { formatUnits } from 'viem'
 import { VAULT_ADDRESS, USDC_ADDRESS } from '@/config'
 import { yieldGekoAbi } from '@/src/generated'
 import { StatusPill, ChainChip, ProtocolMark } from '../../../components/ui'
+import { useHeader } from '../../../components/HeaderContext'
+import { AppHeader } from '../../../components/AppHeader'
 
 // ── Agent state ───────────────────────────────────────────────────────────────
 
 const AGENT_BASE = (process.env.NEXT_PUBLIC_AGENT_SSE_URL ?? 'http://localhost:3001/events').replace('/events', '')
-const AGENT_KEY  = process.env.NEXT_PUBLIC_AGENT_API_KEY ?? ''
+const AGENT_KEY = process.env.NEXT_PUBLIC_AGENT_API_KEY ?? ''
 const authHdr: Record<string, string> = AGENT_KEY ? { Authorization: `Bearer ${AGENT_KEY}` } : {}
 
-async function fetchAgentUser(address: string): Promise<any | null> {
+function BrainIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round">
+      {/* Brain Cloud Outline */}
+      <path d="M12 4c-3.5 0-4.5 2-4.5 2s-2.5-1-4 1-1 4.5 0 5c-1 1-1 3 0 4.5 0 0 .5 3.5 4.5 3.5.5 2.5 2.5 2 2.5 2s1.5-1 2.5-1 1 1 2.5 1 2-1 2.5-2c4 0 4.5-3.5 4.5-3.5 1-1.5 1-3.5 0-4.5 1-.5 1.5-3 0-5-1.5-2-4-1-4-1s-1-2-4.5-2Z" />
+      {/* Internal Nodes (Circles) */}
+      <circle cx="9" cy="9" r="1" fill="currentColor" />
+      <circle cx="15" cy="8" r="1" fill="currentColor" />
+      <circle cx="12" cy="12" r="1" fill="currentColor" />
+      <circle cx="16" cy="14" r="1" fill="currentColor" />
+      <circle cx="8" cy="15" r="1" fill="currentColor" />
+      {/* Circuit lines connecting nodes */}
+      <path d="M4.5 11.5l2-1h2.5" />
+      <path d="M11.5 4.5v2l1 2.5" />
+      <path d="M19.5 10.5l-2.5 1-2 3.5" />
+      <path d="M13.5 18.5l-1.5-2-4-1.5" />
+    </svg>
+  )
+}
+
+type AmbiguousStrategyChoice = {
+  userId: string;
+  displayName: string;
+  phase?: string;
+};
+
+type StrategyLookupResult =
+  | Record<string, any>
+  | { __ambiguousStrategies: AmbiguousStrategyChoice[] };
+
+async function fetchAgentUser(idOrAddress: string): Promise<any | null> {
   try {
-    const res = await fetch(`${AGENT_BASE}/state`, { signal: AbortSignal.timeout(3000) })
+    // Address (0x + 40 hex chars) → fetch all strategies for that wallet, return first active
+    const isAddress = /^0x[a-fA-F0-9]{40}$/.test(idOrAddress)
+    if (isAddress) {
+      const res = await fetch(`${AGENT_BASE}/api/strategies/${idOrAddress}`, { signal: AbortSignal.timeout(3000) })
+      if (!res.ok) return null
+      const strategies = await res.json() as any[]
+      if (!Array.isArray(strategies) || strategies.length === 0) return null
+      if (strategies.length === 1) return strategies[0]
+      return {
+        __ambiguousStrategies: strategies.map((strategy) => ({
+          userId: strategy.userId,
+          displayName: strategy.policy?.displayName ?? strategy.userId,
+          phase: strategy.phase,
+        })),
+      }
+    }
+    // userId (e.g. 0xgeko-apex-alpha) → fetch directly
+    const res = await fetch(`${AGENT_BASE}/state/${idOrAddress}`, { signal: AbortSignal.timeout(3000) })
     if (!res.ok) return null
-    const state = await res.json()
-    const users = Object.values(state.users ?? {}) as any[]
-    return users.find(u => u.policy?.userAddress?.toLowerCase() === address.toLowerCase()) ?? null
+    return await res.json()
   } catch { return null }
 }
 
@@ -37,8 +84,8 @@ async function agentPost(path: string, body: object): Promise<any> {
 
 function relativeTime(ts: number): string {
   const d = (Date.now() - ts) / 1000
-  if (d < 60)    return 'just now'
-  if (d < 3600)  return `${Math.floor(d / 60)}m ago`
+  if (d < 60) return 'just now'
+  if (d < 3600) return `${Math.floor(d / 60)}m ago`
   if (d < 86400) return `${Math.floor(d / 3600)}h ago`
   return `${Math.floor(d / 86400)}d ago`
 }
@@ -48,41 +95,46 @@ function formatDate(ts: number): string {
 }
 
 function actionColor(a: string) {
-  if (a === 'GENESIS')  return '#22C55E'
+  if (a === 'GENESIS') return '#22C55E'
   if (a === 'WITHDRAW') return '#EF4444'
-  if (a === 'MIGRATE')  return '#3B82F6'
+  if (a === 'MIGRATE') return '#3B82F6'
   if (a?.includes('REBALANCE')) return '#8B5CF6'
   if (a === 'SAFETY_EXIT') return '#EF4444'
   return '#EA580C'
 }
 
 function actionLabel(a: string) {
-  if (a === 'GENESIS')       return 'Deployed'
-  if (a === 'WITHDRAW')      return 'Withdrew'
-  if (a === 'MIGRATE')       return 'Migrated'
-  if (a === 'SAFETY_EXIT')   return 'Safety exit'
+  if (a === 'GENESIS') return 'Deployed'
+  if (a === 'WITHDRAW') return 'Withdrew'
+  if (a === 'MIGRATE') return 'Migrated'
+  if (a === 'SAFETY_EXIT') return 'Safety exit'
   if (a?.includes('REBALANCE')) return 'Rebalanced'
-  if (a === 'HARVEST')       return 'Harvested'
+  if (a === 'HARVEST') return 'Harvested'
   return a
 }
 
 function actionEmoji(a: string) {
-  if (a === 'GENESIS')       return '🌱'
-  if (a === 'WITHDRAW')      return '📤'
-  if (a === 'MIGRATE')       return '🔄'
-  if (a === 'SAFETY_EXIT')   return '🛡️'
+  if (a === 'GENESIS') return '🌱'
+  if (a === 'WITHDRAW') return '📤'
+  if (a === 'MIGRATE') return '🔄'
+  if (a === 'SAFETY_EXIT') return '🛡️'
   if (a?.includes('REBALANCE')) return '⚖️'
-  if (a === 'HARVEST')       return '🌾'
+  if (a === 'HARVEST') return '🌾'
   return '⚡'
 }
 
 function parseTokenPair(raw: string): [string, string] | null {
-  const m = raw.match(/\b([A-Z]{2,6})-([A-Z]{2,6})\b/)
+  const normalized = raw.replace(/USD[₮Ꞇ]0?/g, 'USDT')
+  const m = normalized.match(/\b([A-Z]{2,6})-([A-Z]{2,6})\b/)
   return m ? [m[1], m[2]] : null
 }
 
 function cleanVenueName(raw: string): string {
-  return raw.replace(/\(LVR-screened\)/gi, '').replace(/\s+/g, ' ').trim()
+  return raw
+    .replace(/\(LVR-screened\)/gi, '')
+    .replace(/USD[₮Ꞇ]0?/g, 'USDT')   // USD₮0, USD₮ → USDT
+    .replace(/\s+/g, ' ')
+    .trim()
 }
 
 function strategyTag(ex: any): string {
@@ -175,29 +227,29 @@ function OrbitalSpinner({ label }: { label: string }) {
 // ── Agent Intelligence Feed (real data) ──────────────────────────────────────
 
 type FeedEntry =
-  | { id: string; type: 'log';  level: string; message: string; detail?: string; ts: number }
+  | { id: string; type: 'log'; level: string; message: string; detail?: string; ts: number }
   | { id: string; type: 'exec'; data: any; ts: number }
 
 function levelColor(level: string) {
   if (level === 'SUCCESS') return '#22C55E'
-  if (level === 'WARN')    return '#F59E0B'
-  if (level === 'ERROR')   return '#EF4444'
+  if (level === 'WARN') return '#F59E0B'
+  if (level === 'ERROR') return '#EF4444'
   return 'var(--text-muted)'
 }
 
 function levelIcon(level: string) {
   if (level === 'SUCCESS') return '✓'
-  if (level === 'WARN')    return '⚠'
-  if (level === 'ERROR')   return '✗'
+  if (level === 'WARN') return '⚠'
+  if (level === 'ERROR') return '✗'
   return '🧠'
 }
 
 function phaseStatus(phase: string) {
-  if (phase === 'SCANNING')    return 'Scanning for yield opportunities…'
-  if (phase === 'MIGRATING')   return 'Executing position migration…'
+  if (phase === 'SCANNING') return 'Scanning for yield opportunities…'
+  if (phase === 'MIGRATING') return 'Executing position migration…'
   if (phase === 'WITHDRAWING') return 'Unwinding position…'
-  if (phase === 'PAUSED')      return 'Agent paused — position held open'
-  if (phase === 'IDLE')        return 'Idle — awaiting deployment'
+  if (phase === 'PAUSED') return 'Agent paused — position held open'
+  if (phase === 'IDLE') return 'Idle — awaiting deployment'
   if (phase === 'SAFETY_EXIT') return 'Safety exit triggered'
   return 'Actively monitoring position…'
 }
@@ -349,9 +401,20 @@ function ConfirmModal({ title, body, confirmLabel, confirmStyle = 'danger', onCo
 
 type WithdrawPhase = 'confirm' | 'agent-closing' | 'ready-to-sign' | 'signing-tx' | 'done' | 'error'
 
-function WithdrawModal({ userAddress, onClose, onDone }: { userAddress: string; onClose: () => void; onDone: () => void }) {
+function WithdrawModal({
+  userId,
+  userAddress,
+  onClose,
+  onDone,
+}: {
+  userId: string;
+  userAddress: string;
+  onClose: () => void;
+  onDone: () => void;
+}) {
   const [phase, setPhase] = useState<WithdrawPhase>('confirm')
   const [idleRaw, setIdleRaw] = useState<bigint>(BigInt(0))
+  const [isSmartAccount, setIsSmartAccount] = useState(false)
   const [errMsg, setErrMsg] = useState('')
   const { writeContract } = useWriteContract()
   const idleUSDC = Number(idleRaw) / 1e6
@@ -361,16 +424,18 @@ function WithdrawModal({ userAddress, onClose, onDone }: { userAddress: string; 
     const setGlobal = (window as any).setGlobalLoading
     if (setGlobal) setGlobal(true)
     let cancelled = false
-    agentPost('/api/withdraw', { userAddress }).then((res: any) => {
+    agentPost('/api/withdraw', { userId, userAddress }).then((res: any) => {
       if (cancelled) return
       if (res.ok || res.status === 'IDLE_ONLY') {
-        setIdleRaw(BigInt(res.idleUSDCRaw ?? '0')); setPhase('ready-to-sign')
+        setIdleRaw(BigInt(res.idleUSDCRaw ?? '0'))
+        setIsSmartAccount(!!(res.isSmartAccount))
+        setPhase('ready-to-sign')
       } else { setErrMsg(res.error ?? 'Agent could not unwind the position.'); setPhase('error') }
     }).catch((e: any) => { if (!cancelled) { setErrMsg(e.message); setPhase('error') } })
       .finally(() => { if (!cancelled && setGlobal) setGlobal(false) })
     return () => { cancelled = true; if (setGlobal) setGlobal(false) }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, userAddress, userId])
 
   function signWithdraw() {
     if (!VAULT_ADDRESS || idleRaw === BigInt(0)) return
@@ -392,7 +457,7 @@ function WithdrawModal({ userAddress, onClose, onDone }: { userAddress: string; 
           <span style={{ fontWeight: 700, fontSize: 18, color: 'var(--text-primary)' }}>Withdraw funds</span>
           {phase !== 'agent-closing' && <button onClick={onClose} style={{ background: 'rgba(255,255,255,0.05)', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 14, width: 28, height: 28, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>}
         </div>
-        
+
         {phase === 'agent-closing' && (
           <div style={{ textAlign: 'center', padding: '10px 0' }}>
             <OrbitalSpinner label="Agent closing position on-chain…" />
@@ -408,28 +473,36 @@ function WithdrawModal({ userAddress, onClose, onDone }: { userAddress: string; 
           <>
             <div style={{ textAlign: 'center', marginBottom: 32, padding: '24px 0', background: 'rgba(34,197,94,0.05)', borderRadius: 20, border: '1px dotted rgba(34,197,94,0.3)' }}>
               <div style={{ fontSize: 36, fontWeight: 800, color: '#22C55E', letterSpacing: '-0.03em' }}>{idleUSDC.toFixed(4)} <span style={{ fontSize: 18, opacity: 0.8 }}>USDC</span></div>
-              <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>Available in vault</div>
+              <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>{isSmartAccount ? 'Sent to your wallet' : 'Available in vault'}</div>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginBottom: 32 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                 <div style={{ width: 24, height: 24, borderRadius: '50%', background: '#22C55E', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: '#fff' }}>✓</div>
-                <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Position closed by agent</div>
+                <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Position closed &amp; converted to USDC</div>
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                <div style={{ width: 24, height: 24, borderRadius: '50%', border: '2px solid #EA580C', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, color: '#EA580C' }}>2</div>
-                <div style={{ fontSize: 13, color: 'var(--text-primary)', fontWeight: 600 }}>Sign wallet transfer</div>
-              </div>
+              {!isSmartAccount && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <div style={{ width: 24, height: 24, borderRadius: '50%', border: '2px solid #EA580C', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, color: '#EA580C' }}>2</div>
+                  <div style={{ fontSize: 13, color: 'var(--text-primary)', fontWeight: 600 }}>Sign wallet transfer</div>
+                </div>
+              )}
             </div>
 
-            <button className="btn-primary" style={{ width: '100%', height: 52, borderRadius: 14, fontWeight: 700, fontSize: 15 }} onClick={signWithdraw}>
-              Sign to receive funds
-            </button>
+            {isSmartAccount ? (
+              <button className="btn-primary" style={{ width: '100%', height: 52, borderRadius: 14, fontWeight: 700, fontSize: 15 }} onClick={() => { onDone(); onClose() }}>
+                Done
+              </button>
+            ) : (
+              <button className="btn-primary" style={{ width: '100%', height: 52, borderRadius: 14, fontWeight: 700, fontSize: 15 }} onClick={signWithdraw}>
+                Sign to receive funds
+              </button>
+            )}
           </>
         )}
 
         {phase === 'signing-tx' && <OrbitalSpinner label="Check your wallet to sign…" />}
-        
+
         {phase === 'done' && (
           <div style={{ textAlign: 'center', padding: '20px 0' }}>
             <div style={{ width: 80, height: 80, borderRadius: '50%', background: 'rgba(34,197,94,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 40, margin: '0 auto 24px' }}>🎉</div>
@@ -438,13 +511,16 @@ function WithdrawModal({ userAddress, onClose, onDone }: { userAddress: string; 
             <button className="btn-primary" style={{ width: '100%', height: 48, borderRadius: 12 }} onClick={() => { onDone(); onClose() }}>Done</button>
           </div>
         )}
-        
+
         {phase === 'error' && (
           <div style={{ textAlign: 'center' }}>
             <div style={{ fontSize: 14, color: '#ef4444', background: 'rgba(239,68,68,0.08)', borderRadius: 12, padding: '20px', marginBottom: 24, border: '1px solid rgba(239,68,68,0.2)' }}>
               {errMsg || 'An unexpected error occurred.'}
             </div>
-            <button className="btn-ghost" style={{ width: '100%', height: 48, borderRadius: 12 }} onClick={onClose}>Close</button>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button className="btn-primary" style={{ flex: 1, height: 48, borderRadius: 12 }} onClick={() => { setErrMsg(''); setPhase('confirm') }}>Try again</button>
+              <button className="btn-ghost" style={{ flex: 1, height: 48, borderRadius: 12 }} onClick={onClose}>Close</button>
+            </div>
           </div>
         )}
       </div>
@@ -459,9 +535,9 @@ function WithdrawModal({ userAddress, onClose, onDone }: { userAddress: string; 
 function PolicyHUD({ minAPY, maxDD, currentAPY, totalValue, earned }: { minAPY: number; maxDD: number; currentAPY: number; totalValue: number; earned: number }) {
   // We use a 3-axis radar: Performance (APY), Safety (Drawdown), and Stability
   // Normalized to 0-100 for the SVG
-  const apyPct = Math.min(100, (currentAPY / (minAPY || 1)) * 50) 
+  const apyPct = Math.min(100, (currentAPY / (minAPY || 1)) * 50)
   const safetyPct = Math.min(100, (1 - (maxDD / 50)) * 100)
-  const stability = 85 
+  const stability = 85
 
   const size = 180; const center = size / 2; const radius = (size / 2) - 20
   const getPoint = (pct: number, angleDeg: number) => {
@@ -538,8 +614,8 @@ function PolicyHUD({ minAPY, maxDD, currentAPY, totalValue, earned }: { minAPY: 
 // ── 0G Proof badges ───────────────────────────────────────────────────────────
 
 function ProofBadges({ ex }: { ex: any }) {
-  const hasChain  = Boolean(ex.zgChainExplorer)
-  const hasTrace  = Boolean(ex.zgTraceCID)
+  const hasChain = Boolean(ex.zgChainExplorer)
+  const hasTrace = Boolean(ex.zgTraceCID)
   const hasAttest = Boolean(ex.zgAttestCID)
   if (!hasChain && !hasTrace && !hasAttest) return null
   return (
@@ -567,7 +643,7 @@ function ProofBadges({ ex }: { ex: any }) {
 
 function ExecRow({ ex, compact = false }: { ex: any; compact?: boolean }) {
   const color = actionColor(ex.action)
-  const tag   = strategyTag(ex)
+  const tag = strategyTag(ex)
   return (
     <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: compact ? '9px 0' : '14px 0', borderBottom: '1px solid var(--border)' }}>
       {/* Icon */}
@@ -597,7 +673,7 @@ function ExecRow({ ex, compact = false }: { ex: any; compact?: boolean }) {
         {ex.receiptHash && ex.receiptHash !== '0x' && (
           <div style={{ marginTop: 5 }}>
             <a
-              href={`/verify/${ex.receiptHash}`}
+              href={`/verify/${ex.receiptHash}${ex.zgChainTxHash ? `?tx=${ex.zgChainTxHash}` : ''}`}
               target="_blank"
               rel="noopener noreferrer"
               style={{ fontSize: 10, color: '#EA580C', fontWeight: 600, textDecoration: 'none', opacity: 0.85 }}
@@ -629,98 +705,112 @@ const ACTION_FILTERS = ['All', 'GENESIS', 'REBALANCE', 'MIGRATE', 'WITHDRAW']
 
 export default function StrategyPage({ params }: { params: Promise<{ id: string }> }) {
   const router = useRouter()
-  const { id: userAddress } = React.use(params)
+  const { id: idOrAddress } = React.use(params)
+  const header = useMemo(() => <AppHeader />, [])
+  useHeader(header)
 
-  const [agentUser, setAgentUser]           = useState<any>(null)
-  const [agentReady, setAgentReady]         = useState(false)
-  const [tab, setTab]                       = useState<'overview' | 'executions' | 'position'>('overview')
-  const [range, setRange]                   = useState('1M')
-  const [execFilter, setExecFilter]         = useState('All')
-  const [showWithdraw, setShowWithdraw]     = useState(false)
+  const [agentUser, setAgentUser] = useState<any>(null)
+  const [agentReady, setAgentReady] = useState(false)
+  const [tab, setTab] = useState<'overview' | 'executions' | 'position'>('overview')
+  const [range, setRange] = useState('1M')
+  const [execFilter, setExecFilter] = useState('All')
+  const [showWithdraw, setShowWithdraw] = useState(false)
   const [showPauseConfirm, setShowPauseConfirm] = useState(false)
-  const [pauseLoading, setPauseLoading]     = useState(false)
+  const [pauseLoading, setPauseLoading] = useState(false)
+
+  const ambiguousStrategies = agentUser && '__ambiguousStrategies' in (agentUser as Record<string, unknown>)
+    ? (agentUser as { __ambiguousStrategies: AmbiguousStrategyChoice[] }).__ambiguousStrategies
+    : null
+  const strategyId = agentUser?.userId || (!idOrAddress.startsWith('0x') ? idOrAddress : undefined)
+  const contractTarget = agentUser?.policy?.userAddress || (idOrAddress.startsWith('0x') ? idOrAddress : undefined)
 
   const { data: availableRaw } = useReadContract({
     address: VAULT_ADDRESS || undefined, abi: yieldGekoAbi, functionName: 'balances',
-    args: userAddress && VAULT_ADDRESS ? [userAddress as `0x${string}`, USDC_ADDRESS] : undefined,
-    query: { enabled: Boolean(userAddress && VAULT_ADDRESS), refetchInterval: 30_000 },
+    args: contractTarget && VAULT_ADDRESS ? [contractTarget as `0x${string}`, USDC_ADDRESS] : undefined,
+    query: { enabled: Boolean(contractTarget && VAULT_ADDRESS), refetchInterval: 30_000 },
   })
   const { data: workingRaw } = useReadContract({
     address: VAULT_ADDRESS || undefined, abi: yieldGekoAbi, functionName: 'deployed',
-    args: userAddress && VAULT_ADDRESS ? [userAddress as `0x${string}`, USDC_ADDRESS] : undefined,
-    query: { enabled: Boolean(userAddress && VAULT_ADDRESS), refetchInterval: 30_000 },
+    args: contractTarget && VAULT_ADDRESS ? [contractTarget as `0x${string}`, USDC_ADDRESS] : undefined,
+    query: { enabled: Boolean(contractTarget && VAULT_ADDRESS), refetchInterval: 30_000 },
   })
   const { data: policyRaw } = useReadContract({
     address: VAULT_ADDRESS || undefined, abi: yieldGekoAbi, functionName: 'policies',
-    args: userAddress && VAULT_ADDRESS ? [userAddress as `0x${string}`] : undefined,
-    query: { enabled: Boolean(userAddress && VAULT_ADDRESS), refetchInterval: 60_000 },
+    args: contractTarget && VAULT_ADDRESS ? [contractTarget as `0x${string}`] : undefined,
+    query: { enabled: Boolean(contractTarget && VAULT_ADDRESS), refetchInterval: 60_000 },
   })
 
-  const available   = availableRaw !== undefined ? Number(formatUnits(availableRaw as bigint, 6)) : null
-  const working     = workingRaw   !== undefined ? Number(formatUnits(workingRaw as bigint, 6))   : null
+  const available = availableRaw !== undefined ? Number(formatUnits(availableRaw as bigint, 6)) : null
+  const working = workingRaw !== undefined ? Number(formatUnits(workingRaw as bigint, 6)) : null
   const readsLoaded = available !== null && working !== null
-  const vaultTotal  = (available ?? 0) + (working ?? 0)
+  const vaultTotal = (available ?? 0) + (working ?? 0)
 
-  const policy       = policyRaw as any
+  const policy = policyRaw as any
   const policyActive = policy ? (policy.active ?? policy[0]) : undefined
-  const minAPY       = policy ? Number((policy.minAPY ?? policy[2]) ?? BigInt(0)) / 100 : null
-  const maxDD        = policy ? Number((policy.maxDrawdownBps ?? policy[3]) ?? BigInt(0)) / 100 : null
-  const paused       = policyActive === false
+  const minAPY = policy ? Number((policy.minAPY ?? policy[2]) ?? BigInt(0)) / 100 : null
+  const maxDD = policy ? Number((policy.maxDrawdownBps ?? policy[3]) ?? BigInt(0)) / 100 : null
+  const paused = policyActive === false
 
   useEffect(() => {
-    if (!userAddress) return
-    fetchAgentUser(userAddress).then(u => { setAgentUser(u); setAgentReady(true) })
-    const id = setInterval(() => fetchAgentUser(userAddress).then(setAgentUser), 30_000)
+    if (!idOrAddress) return
+    fetchAgentUser(idOrAddress).then(u => { setAgentUser(u); setAgentReady(true) })
+    const id = setInterval(() => fetchAgentUser(idOrAddress).then(setAgentUser), 30_000)
     return () => clearInterval(id)
-  }, [userAddress])
+  }, [idOrAddress])
 
   const executePauseResume = useCallback(async () => {
-    if (!userAddress || pauseLoading) return
+    if (!strategyId || pauseLoading) return
     const setGlobal = (window as any).setGlobalLoading
     if (setGlobal) setGlobal(true)
     setShowPauseConfirm(false); setPauseLoading(true)
     try {
-      await agentPost(paused ? '/api/resume-user' : '/api/pause-user', { userAddress })
-      const updated = await fetchAgentUser(userAddress)
+      await agentPost(paused ? '/api/resume-user' : '/api/pause-user', { userId: strategyId })
+      const updated = await fetchAgentUser(idOrAddress)
       if (updated) setAgentUser(updated)
     } finally {
       setPauseLoading(false)
       if (setGlobal) setGlobal(false)
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userAddress, paused, pauseLoading])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [strategyId, paused, pauseLoading, idOrAddress])
 
   const handlePauseResume = useCallback(() => {
-    if (!userAddress || pauseLoading) return
+    if (!strategyId || pauseLoading) return
     paused ? executePauseResume() : setShowPauseConfirm(true)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userAddress, paused, pauseLoading, executePauseResume])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [strategyId, paused, pauseLoading, executePauseResume])
 
-  const metrics     = agentUser?.portfolio?.metrics
-  const currentAPY  = (metrics?.weightedNetAPY as number | undefined) ?? 0
-  const earned      = (metrics?.incomeEarnedUSD as number | undefined) ?? 0
-  const positions: any[]  = agentUser?.portfolio?.positions ?? []
+  const metrics = agentUser?.portfolio?.metrics
+  const currentAPY = (metrics?.weightedNetAPY as number | undefined) ?? 0
+  const earned = (metrics?.incomeEarnedUSD as number | undefined) ?? 0
+  const positions: any[] = agentUser?.portfolio?.positions ?? []
   const executions: any[] = agentUser?.executions ?? []
   const pnlHistory: any[] = agentUser?.pnlHistory ?? []
-  const phase        = (agentUser?.phase as string | undefined) ?? 'INITIALIZING'
-  const displayName  = agentUser?.policy?.displayName?.split('—')[0]?.trim() ?? 'My Strategy'
-  const isRunning    = ['ALLOCATED', 'MONITORING', 'SCANNING', 'MIGRATING'].includes(phase)
+  const phase = (agentUser?.phase as string | undefined) ?? 'INITIALIZING'
+  const displayName = agentUser?.policy?.displayName?.split('—')[0]?.trim() ?? 'My Strategy'
+  const isRunning = ['ALLOCATED', 'MONITORING', 'SCANNING', 'MIGRATING'].includes(phase)
   const sessionStart = (agentUser?.activeSessionStartedAt as number | undefined) ?? 0
 
-  // Agent NAV takes priority over vault contract read
-  const agentTotal  = (metrics?.totalValueUSD as number | undefined) ?? null
-  const displayTotal = agentTotal ?? vaultTotal
-  const entryUSD    = metrics?.totalEntryUSD ?? displayTotal
-  const pnlUSD      = displayTotal > 0 ? (displayTotal - entryUSD) + earned : 0
-  const pnlPct      = entryUSD > 0 ? (pnlUSD / entryUSD) * 100 : 0
+  // Agent NAV takes priority. When totalValueUSD is 0 but strategy is running,
+  // fall back to totalEntryUSD (the deployed capital) so the UI shows a meaningful
+  // value while the NAV reader is healing / restarting.
+  const agentTotal = (metrics?.totalValueUSD as number | undefined) ?? null
+  const entryUSD = (metrics?.totalEntryUSD as number | undefined) ?? vaultTotal
+  const displayTotal = (agentTotal !== null && agentTotal > 0)
+    ? agentTotal
+    : (isRunning && entryUSD > 0 ? entryUSD : (vaultTotal || 0))
+  // trueTotal = principal + fees (fees tracked separately from principal in agent state)
+  const trueTotal = displayTotal + earned
+  const pnlUSD = trueTotal > 0 ? trueTotal - entryUSD : 0
+  const pnlPct = entryUSD > 0 ? (pnlUSD / entryUSD) * 100 : 0
 
-  const animTotal = useCountUp(displayTotal)
+  const animTotal = useCountUp(trueTotal)
 
   const chartData = useMemo(() => {
     const lengths: Record<string, number> = { '1W': 7, '1M': 30, '3M': 90 }
     const n = lengths[range] ?? 30
     const hist = sessionStart > 0 ? pnlHistory.filter((p: any) => p.ts >= sessionStart) : pnlHistory
-    if (hist.length >= 2) {
+    if (hist.length >= 2 && hist.some((p: any) => (p.totalUSD ?? 0) > 0)) {
       const step = Math.max(1, Math.floor(hist.length / n))
       return hist.filter((_: any, i: number) => i % step === 0).slice(-n).map((p: any) => p.totalUSD ?? 0)
     }
@@ -747,10 +837,180 @@ export default function StrategyPage({ params }: { params: Promise<{ id: string 
     return Object.entries(groups)
   }, [filteredExecs])
 
+  if (agentReady && ambiguousStrategies && ambiguousStrategies.length > 0) {
+    return (
+      <div style={{
+        flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+        padding: 60, textAlign: 'center', animation: 'contentSlide 600ms cubic-bezier(0.16, 1, 0.3, 1)'
+      }}>
+        <h1 style={{ fontSize: 32, fontWeight: 800, color: 'var(--text-primary)', marginBottom: 16, letterSpacing: '-0.03em' }}>
+          Choose a strategy
+        </h1>
+        <p style={{ fontSize: 17, color: 'var(--text-muted)', maxWidth: 560, lineHeight: 1.6, marginBottom: 36, fontWeight: 400 }}>
+          This wallet has multiple strategies under one account. Open the exact strategy you want to inspect or control.
+        </p>
+
+        <div style={{ width: '100%', maxWidth: 520, display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {ambiguousStrategies.map((strategy) => (
+            <button
+              key={strategy.userId}
+              onClick={() => router.push(`/app/strategy/${strategy.userId}`)}
+              style={{
+                width: '100%',
+                padding: '16px 18px',
+                borderRadius: 16,
+                background: 'var(--surface)',
+                color: 'var(--text-primary)',
+                border: '1px solid var(--border)',
+                cursor: 'pointer',
+                textAlign: 'left',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 16,
+              }}
+            >
+              <div>
+                <div style={{ fontSize: 15, fontWeight: 700 }}>{strategy.displayName}</div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
+                  {strategy.userId}
+                </div>
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                {(strategy.phase ?? 'INITIALIZING').toLowerCase().replace(/_/g, ' ')} →
+              </div>
+            </button>
+          ))}
+        </div>
+
+        <button
+          onClick={() => router.push('/app')}
+          style={{
+            marginTop: 20,
+            padding: '14px 28px',
+            borderRadius: 14,
+            background: 'transparent',
+            color: 'var(--text-primary)',
+            fontSize: 14,
+            fontWeight: 600,
+            border: '1px solid var(--border)',
+            cursor: 'pointer',
+          }}
+        >
+          Return to Dashboard
+        </button>
+      </div>
+    )
+  }
+
+  // ── Strategy Not Found (Empty State) ──
+  if (agentReady && !agentUser) {
+    return (
+      <div style={{
+        flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+        padding: 60, textAlign: 'center', animation: 'contentSlide 600ms cubic-bezier(0.16, 1, 0.3, 1)'
+      }}>
+        {/* Abstract "Searching" Visual */}
+        <div style={{ position: 'relative', width: 220, height: 220, marginBottom: 48, animation: 'float 6s ease-in-out infinite' }}>
+          {/* Outer Ring */}
+          <div style={{
+            position: 'absolute', inset: 0, borderRadius: '50%', border: '1px dashed rgba(128,128,128,0.12)',
+            animation: 'spin 40s linear infinite'
+          }}>
+            {/* Node on Outer Ring */}
+            <div style={{ position: 'absolute', top: -4, left: '50%', width: 8, height: 8, borderRadius: '50%', background: 'rgba(128,128,128,0.4)', border: '1px solid var(--border)' }} />
+          </div>
+
+          {/* Middle Ring with Nodes */}
+          <div style={{
+            position: 'absolute', inset: 40, borderRadius: '50%', border: '1px solid rgba(128,128,128,0.08)',
+            animation: 'spin 25s linear infinite reverse'
+          }}>
+            <div style={{ position: 'absolute', top: -3, left: '20%', width: 6, height: 6, borderRadius: '50%', background: 'var(--orange)', opacity: 0.6 }} />
+            <div style={{ position: 'absolute', bottom: -3, right: '20%', width: 5, height: 5, borderRadius: '50%', background: 'rgba(128,128,128,0.3)' }} />
+          </div>
+
+          {/* Inner Ring with Nodes */}
+          <div style={{
+            position: 'absolute', inset: 80, borderRadius: '50%', border: '1px solid rgba(234,88,12,0.1)',
+            animation: 'pulseRing 4s ease-in-out infinite'
+          }}>
+            <div style={{ position: 'absolute', right: -3, top: '50%', width: 4, height: 4, borderRadius: '50%', background: 'var(--orange)' }} />
+          </div>
+
+          {/* Connecting "Search" Line */}
+          <div style={{
+            position: 'absolute', top: '50%', left: '50%', width: 1, height: 80,
+            background: 'linear-gradient(to top, var(--orange), transparent)',
+            transformOrigin: 'top', transform: 'rotate(45deg)', opacity: 0.3,
+            animation: 'spin 8s cubic-bezier(0.4, 0, 0.2, 1) infinite'
+          }} />
+
+          {/* Central Core */}
+          <div style={{
+            position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
+            width: 10, height: 10, borderRadius: '50%', background: 'var(--orange)',
+            boxShadow: '0 0 30px var(--orange), 0 0 60px rgba(234,88,12,0.4)',
+            animation: 'heartbeat 2s ease-in-out infinite'
+          }} />
+
+          <style>{`
+            @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+            @keyframes float { 
+              0%, 100% { transform: translateY(0); }
+              50% { transform: translateY(-15px); }
+            }
+            @keyframes heartbeat {
+              0%, 100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+              50% { transform: translate(-50%, -50%) scale(1.4); opacity: 0.8; }
+            }
+            @keyframes pulseRing {
+              0%, 100% { transform: scale(1); opacity: 0.3; }
+              50% { transform: scale(1.1); opacity: 0.6; }
+            }
+          `}</style>
+        </div>
+
+        <h1 style={{ fontSize: 32, fontWeight: 800, color: 'var(--text-primary)', marginBottom: 16, letterSpacing: '-0.03em' }}>
+          Awaiting Genesis
+        </h1>
+        <p style={{ fontSize: 17, color: 'var(--text-muted)', maxWidth: 460, lineHeight: 1.6, marginBottom: 48, fontWeight: 400 }}>
+          The coordinates <code style={{ color: 'var(--orange)', fontWeight: 600, fontSize: 14 }}>{idOrAddress.slice(0, 12)}...</code> lead to uncharted space. This strategy hasn’t been initialized on the agent network yet.
+        </p>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14, width: '100%', maxWidth: 300 }}>
+          <button
+            onClick={() => router.push('/app/onboard')}
+            style={{
+              padding: '16px 28px', borderRadius: 14, background: 'var(--orange)', color: '#000',
+              fontSize: 15, fontWeight: 700, border: 'none', cursor: 'pointer', transition: 'all 300ms cubic-bezier(0.16, 1, 0.3, 1)',
+              boxShadow: '0 8px 24px rgba(234,88,12,0.25)'
+            }}
+            onMouseEnter={e => { e.currentTarget.style.transform = 'scale(1.02) translateY(-2px)'; e.currentTarget.style.boxShadow = '0 12px 32px rgba(234,88,12,0.35)' }}
+            onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = '0 8px 24px rgba(234,88,12,0.25)' }}
+          >
+            Launch this Strategy
+          </button>
+          <button
+            onClick={() => router.push('/app')}
+            style={{
+              padding: '14px 28px', borderRadius: 14, background: 'transparent', color: 'var(--text-primary)',
+              fontSize: 14, fontWeight: 600, border: '1px solid var(--border)', cursor: 'pointer', transition: 'all 200ms'
+            }}
+            onMouseEnter={e => e.currentTarget.style.background = 'var(--surface)'}
+            onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+          >
+            Return to Dashboard
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <>
-      {showWithdraw && userAddress && (
-        <WithdrawModal userAddress={userAddress} onClose={() => setShowWithdraw(false)} onDone={() => fetchAgentUser(userAddress).then(u => u && setAgentUser(u))} />
+      {showWithdraw && contractTarget && strategyId && (
+        <WithdrawModal userId={strategyId} userAddress={contractTarget} onClose={() => setShowWithdraw(false)} onDone={() => fetchAgentUser(idOrAddress).then(u => u && setAgentUser(u))} />
       )}
       {showPauseConfirm && (
         <ConfirmModal icon="⏸" title="Pause the agent?" body={<>The agent will stop managing your position. Your funds stay in the vault and your LP position remains open — no swaps will happen.<br /><br />You can resume at any time.</>} confirmLabel="Yes, pause agent" confirmStyle="warn" onConfirm={executePauseResume} onCancel={() => setShowPauseConfirm(false)} />
@@ -840,8 +1100,15 @@ export default function StrategyPage({ params }: { params: Promise<{ id: string 
 
             {/* Right: action buttons */}
             <div className="strategy-actions" style={{ display: 'flex', gap: 8, flexShrink: 0, marginTop: 4, flexWrap: 'wrap' }}>
-              <button onClick={() => router.push('/onboard')} style={{ height: 36, padding: '0 16px', borderRadius: 10, border: 'none', background: '#EA580C', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
-                + Add funds
+              <button onClick={() => router.push('/app/create')} style={{
+                height: 36, padding: '0 16px', borderRadius: 10, border: 'none',
+                background: '#EA580C', color: '#fff',
+                fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+                display: 'flex', alignItems: 'center', gap: 8,
+                boxShadow: '0 4px 12px rgba(234,88,12,0.2)'
+              }}>
+                <BrainIcon size={16} />
+                Create agent
               </button>
               <button onClick={handlePauseResume} disabled={pauseLoading} style={{ height: 36, padding: '0 14px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-primary)', fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit', opacity: pauseLoading ? 0.6 : 1 }}>
                 {pauseLoading ? (paused ? 'Resuming…' : 'Pausing…') : (paused ? 'Resume agent' : 'Pause agent')}
@@ -913,10 +1180,10 @@ export default function StrategyPage({ params }: { params: Promise<{ id: string 
                     <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>Strategy Intelligence Hub</span>
                     <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 600 }}>Active Enforcement</span>
                   </div>
-                  <PolicyHUD 
-                    minAPY={minAPY ?? 0} 
-                    maxDD={maxDD ?? 0} 
-                    currentAPY={currentAPY} 
+                  <PolicyHUD
+                    minAPY={minAPY ?? 0}
+                    maxDD={maxDD ?? 0}
+                    currentAPY={currentAPY}
                     totalValue={displayTotal}
                     earned={earned}
                   />
@@ -936,7 +1203,7 @@ export default function StrategyPage({ params }: { params: Promise<{ id: string 
                 </div>
                 <div style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 500 }}>v1.0.4-aura</div>
               </div>
-              
+
               <LiveAgentFeed agentUser={agentUser} executions={executions} phase={phase} />
             </div>
           </div>
@@ -984,19 +1251,21 @@ export default function StrategyPage({ params }: { params: Promise<{ id: string 
                   {agentReady ? 'Agent is deploying your capital — check back shortly.' : <><Skel h={14} /><div style={{ height: 10 }} /><Skel h={14} w="60%" /></>}
                 </div>
               ) : positions.map((pos: any, i: number) => {
-                const protocol  = (pos.protocol as string ?? '').toLowerCase()
-                const protoId   = protocol.includes('aave') ? 'aave' : protocol.includes('morpho') ? 'morpho' : protocol.includes('pendle') ? 'pendle' : protocol.includes('gmx') ? 'gmx' : 'uniswap'
-                const apy        = (pos.currentNetAPY as number ?? 0)
-                const usd        = (pos.currentUSD as number ?? 0)
+                const protocol = (pos.protocol as string ?? '').toLowerCase()
+                const protoId = protocol.includes('aave') ? 'aave' : protocol.includes('morpho') ? 'morpho' : protocol.includes('pendle') ? 'pendle' : protocol.includes('gmx') ? 'gmx' : 'uniswap'
+                const apy = (pos.currentNetAPY as number ?? 0)
+                const posUSDBase = ((pos.currentUSD as number > 0 ? pos.currentUSD : null) ?? pos.allocationUSD ?? pos.entryUSD ?? 0) as number
+                const usd = posUSDBase + (pos.incomeEarnedUSD as number ?? 0)
                 const feesEarned = (pos.feesEarnedUSD as number ?? 0)
                 const pendingFees = ((pos.uniV3PendingFees0USD ?? 0) + (pos.uniV3PendingFees1USD ?? 0)) as number
-                const ilUSD      = Math.abs(pos.ilUSD as number ?? 0)
+                const ilUSD = Math.abs(pos.ilUSD as number ?? 0)
                 const totalReturn = (pos.totalReturnUSD as number ?? 0)
-                const drawdown   = (pos.drawdownPct as number ?? 0)
-                const daysHeld   = (pos.daysHeld as number ?? 0)
+                const drawdown = (pos.drawdownPct as number ?? 0)
+                const daysHeld = (pos.daysHeld as number ?? 0)
                 const entryUSDPos = (pos.entryUSD as number ?? 0)
-                const venueName  = pos.venueName ?? pos.protocol ?? 'Strategy'
-                const pair       = parseTokenPair(venueName)
+                const venueName = pos.venueName ?? pos.protocol ?? 'Strategy'
+                const venueNameClean = cleanVenueName(venueName)
+                const pair = parseTokenPair(venueNameClean)
 
                 return (
                   <div key={i} style={{ background: 'var(--surface)', borderRadius: 14, border: '1px solid var(--border)', marginBottom: 16, overflow: 'hidden' }}>
@@ -1006,7 +1275,7 @@ export default function StrategyPage({ params }: { params: Promise<{ id: string 
                         <ProtocolMark id={protoId} size={38} />
                         <div>
                           <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>
-                            {pair ? `${pair[0]} / ${pair[1]}` : cleanVenueName(venueName)}
+                            {pair ? `${pair[0]} / ${pair[1]}` : venueNameClean}
                           </div>
                           <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
                             {pos.strategyType?.replace(/_/g, ' ')} · Arbitrum

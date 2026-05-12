@@ -13,6 +13,8 @@
     "@0g-agentkit/sdk": "^0.1.1",
     "@0gfoundation/0g-storage-ts-sdk": "^1.2.8",
     "@0gfoundation/0g-ts-sdk": "^1.2.8",
+    "@metamask/smart-accounts-kit": "^1.4.0",
+    "@privy-io/react-auth": "^3.24.0",
     "@reown/appkit": "^1.8.19",
     "@reown/appkit-adapter-wagmi": "^1.8.19",
     "@tanstack/react-query": "^5.100.9",

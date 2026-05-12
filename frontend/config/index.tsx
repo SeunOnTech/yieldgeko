@@ -47,6 +47,12 @@ export const wagmiAdapter = new WagmiAdapter({
 
 export const config = wagmiAdapter.wagmiConfig
 
-// Contract addresses — set via env after deployment
+// Legacy vault address — kept for older screens/hooks while V2 onboarding migrates.
 export const VAULT_ADDRESS = (process.env.NEXT_PUBLIC_VAULT_ADDRESS ?? '') as `0x${string}`
-export const USDC_ADDRESS  = '0xaf88d065e77c8cC2239327C5EDb3A432268e5831' as `0x${string}`
+
+// V2 public execution config
+export const USDC_ADDRESS = '0xaf88d065e77c8cC2239327C5EDb3A432268e5831' as `0x${string}`
+export const EXECUTOR_ADDRESS = (process.env.NEXT_PUBLIC_EXECUTOR_ADDRESS ?? '0x94DE8790BEd6Be0395C6BE7f42FD677b7B8cBcFb') as `0x${string}`
+export const SWAPPER_ADDRESS = (process.env.NEXT_PUBLIC_SWAPPER_ADDRESS ?? '0x4313539C4fF1b93891B6A66D6a2eb690153A1b33') as `0x${string}`
+export const ENFORCER_ADDRESS = (process.env.NEXT_PUBLIC_ENFORCER_ADDRESS ?? '0x21b25E099CA7AF1BEa3a4558E437C56680B4b925') as `0x${string}`
+export const TREASURY_ADDRESS = (process.env.NEXT_PUBLIC_TREASURY_ADDRESS ?? '0xd61E4Bfb67514d8ad797495A584f70Cd0878fc5A') as `0x${string}`

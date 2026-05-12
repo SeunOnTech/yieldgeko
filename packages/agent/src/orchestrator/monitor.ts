@@ -179,6 +179,8 @@ export async function updatePortfolioPositionsReal(
         ...formulaPos,
         currentUSD,
         incomeEarnedUSD,
+        // Self-heal: if NAV reader found a better tokenId (0-liquidity → active),
+        // patch it into the position so future reads use the correct one directly.
         totalReturnUSD,
         totalReturnPct,
         effectiveAPY,

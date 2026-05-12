@@ -19,6 +19,12 @@
  */
 
 import { ethers } from 'ethers';
+import {
+  createArbitrumAggregator,
+  type SwapRoute as AggregatorSwapRoute,
+  type QuoteParams,
+} from '@yieldgeko/swap-aggregator';
+import type { Address } from 'viem';
 
 // ── Addresses (Arbitrum mainnet) ──────────────────────────────────────────────
 
@@ -75,6 +81,33 @@ function encodeUniswapPath(tokens: string[], fees: number[]): string {
     packed += tokens[i + 1].toLowerCase().replace('0x', '');
   }
   return '0x' + packed;
+}
+
+/**
+ * Reverse a Uniswap V3 packed path for use in the opposite swap direction.
+ * e.g. USDC→WETH→ARB becomes ARB→WETH→USDC
+ * Path format: address(40hex) fee(6hex) address(40hex) fee(6hex) ... address(40hex)
+ */
+export function reverseUniswapPath(path: string): string {
+  const hex    = path.startsWith('0x') ? path.slice(2) : path;
+  const tokens: string[] = [];
+  const fees:   number[] = [];
+  let i = 0;
+  while (i < hex.length) {
+    tokens.push(hex.slice(i, i + 40));
+    i += 40;
+    if (i < hex.length) {
+      fees.push(parseInt(hex.slice(i, i + 6), 16));
+      i += 6;
+    }
+  }
+  tokens.reverse();
+  fees.reverse();
+  let result = tokens[0];
+  for (let j = 0; j < fees.length; j++) {
+    result += fees[j].toString(16).padStart(6, '0') + tokens[j + 1];
+  }
+  return '0x' + result;
 }
 
 // ── Route cache ───────────────────────────────────────────────────────────────
@@ -225,3 +258,97 @@ export async function quoteSwapFromUSDC(
     return 0n;
   }
 }
+
+
+/**
+ * Simulate a token→USDC swap using Quoter V2 (eth_call — free, no gas).
+ * Used to compute minAmountOut for normalize swaps (volatile → USDC after position close).
+ * Returns 0n on any error — caller must fall back to minOut=0 or skip.
+ */
+export async function quoteSwapToUSDC(
+  route:    SwapRoute,       // resolveSwapRoute result for this token (USDC→token direction)
+  amountIn: bigint,          // amount of volatile token to swap
+  provider: ethers.JsonRpcProvider,
+): Promise<bigint> {
+  if (amountIn === 0n) return 0n;
+
+  try {
+    const quoter = new ethers.Contract(QUOTER2, QUOTER2_ABI, provider);
+
+    if (route.singleHop) {
+      // Same pool works in both directions — just swap tokenIn/tokenOut
+      const result = await quoter.quoteExactInputSingle.staticCall({
+        tokenIn:           ethers.getAddress(route.tokenOut.toLowerCase()), // volatile token
+        tokenOut:          ethers.getAddress(route.tokenIn.toLowerCase()),  // USDC
+        amountIn,
+        fee:               route.fee,
+        sqrtPriceLimitX96: 0n,
+      }) as [bigint, bigint, number, bigint];
+      return result[0] as bigint;
+    } else {
+      // Multi-hop: reverse the stored path (USDC→WETH→token becomes token→WETH→USDC)
+      const reversedPath = reverseUniswapPath(route.path!);
+      const result = await quoter.quoteExactInput.staticCall(reversedPath, amountIn);
+      return result[0] as bigint;
+    }
+  } catch (err: any) {
+    console.warn(
+      `[SwapRouter] quoteSwapToUSDC failed for ${route.tokenOut}: ` +
+      (err?.shortMessage ?? err?.message ?? String(err)),
+    );
+    return 0n;
+  }
+}
+
+// ── V2: Multi-DEX Swap Aggregator ─────────────────────────────────────────────
+//
+// Used for actual on-chain swaps in V2 delegation executions.
+// Queries Odos, Uniswap V3, Camelot, and GMX in parallel,
+// picks the best net-output route (gas-normalised), and returns
+// the calldata ready to pass to YieldGekoSwapper.swap().
+
+let _aggregator: ReturnType<typeof createArbitrumAggregator> | null = null;
+
+function getAggregator(): ReturnType<typeof createArbitrumAggregator> {
+  if (!_aggregator) {
+    _aggregator = createArbitrumAggregator(
+      process.env.ARB_RPC_URL ?? 'https://arb1.arbitrum.io/rpc',
+    );
+  }
+  return _aggregator;
+}
+
+/**
+ * Get the best swap route from tokenIn → tokenOut using the multi-DEX aggregator.
+ * Returns the full SwapRoute including calldata ready for YieldGekoSwapper.
+ *
+ * @param tokenIn       Input token address (USDC for most strategies)
+ * @param tokenOut      Output token address
+ * @param amountIn      Amount of tokenIn to swap (in token native decimals)
+ * @param slippageBps   Slippage tolerance in basis points (e.g. 50 = 0.5%)
+ * @param recipient     Address to receive output tokens (user's smart account)
+ */
+export async function findBestSwapRoute(
+  tokenIn:    string,
+  tokenOut:   string,
+  amountIn:   bigint,
+  slippageBps: number,
+  recipient:  string,
+): Promise<AggregatorSwapRoute | null> {
+  try {
+    return await getAggregator().findBestRoute({
+      chainId:    42161,
+      tokenIn:    tokenIn  as Address,
+      tokenOut:   tokenOut as Address,
+      amountIn,
+      slippageBps,
+      recipient:  recipient as Address,
+    });
+  } catch (err: any) {
+    console.warn('[SwapAggregator] findBestRoute failed:', err?.message ?? err);
+    return null;
+  }
+}
+
+// Re-export the aggregator type for callers that need to inspect route fields
+export type { AggregatorSwapRoute };

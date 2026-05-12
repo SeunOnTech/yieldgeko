@@ -11,59 +11,71 @@ const REGISTRY_ADDR = '0xd7185a3Aa4b23EBE84e7bd60CF5e78B71dd21c8e'
 const CHAIN_SCAN    = 'https://chainscan.0g.ai'
 const STORAGE_SCAN  = 'https://storagescan.0g.ai/submission'
 
-// Minimal ABI-encoded call to getProof(bytes32)
-// Function selector: keccak256("getProof(bytes32)")[0:4] = 0x9f90dee0
+// ProofAnchored event topic: keccak256("ProofAnchored(bytes32,address,bytes32,string,string,string,uint256)")
+const PROOF_ANCHORED_TOPIC = '0x3e6bdef8f774b69375e8d3824eaf732c225c3f5ee9ac4484c6a155440e6d54ce'
+
 async function fetchProof(receiptHash: string): Promise<ProofData | null> {
-  // Pad receiptHash to 32 bytes
-  const hash = receiptHash.startsWith('0x') ? receiptHash.slice(2) : receiptHash
-  const padded = hash.padStart(64, '0')
-  const data = `0x9f90dee0${padded}`
+  // Pad receiptHash to 32-byte topic
+  const raw    = receiptHash.startsWith('0x') ? receiptHash.slice(2) : receiptHash
+  const topic1 = '0x' + raw.padStart(64, '0')
 
   const res = await fetch(ZG_RPC, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      jsonrpc: '2.0', id: 1, method: 'eth_call',
-      params: [{ to: REGISTRY_ADDR, data }, 'latest'],
+      jsonrpc: '2.0', id: 1, method: 'eth_getLogs',
+      params: [{
+        address:   REGISTRY_ADDR,
+        topics:    [PROOF_ANCHORED_TOPIC, topic1],
+        fromBlock: '0x0',
+        toBlock:   'latest',
+      }],
     }),
   })
   const json = await res.json()
-  if (!json.result || json.result === '0x') return null
-
-  // Decode ABI-encoded Proof struct
-  // Layout: receiptHash(32) userAddress(32) anchoredBy(32) strategyId(32)
-  //         action_offset(32) traceCID_offset(32) attestCID_offset(32) anchoredAt(32)
-  //         then dynamic string data
-  return decodeProof(json.result, receiptHash)
+  const logs: any[] = json.result ?? []
+  if (logs.length === 0) return null
+  return decodeProofFromLog(logs[0], receiptHash)
 }
 
-function decodeProof(hex: string, originalHash: string): ProofData | null {
+function decodeProofFromLog(log: any, originalHash: string): ProofData | null {
   try {
-    const data = hex.startsWith('0x') ? hex.slice(2) : hex
-    const readWord = (offset: number) => data.slice(offset * 64, offset * 64 + 64)
-    const readAddr  = (offset: number) => '0x' + readWord(offset).slice(24)
-    const readUint  = (offset: number) => parseInt(readWord(offset), 16)
-    const readStr   = (baseOffset: number, strOffset: number) => {
-      const start = (strOffset / 32) * 64
-      const len   = parseInt(data.slice(start, start + 64), 16)
-      const bytes = data.slice(start + 64, start + 64 + len * 2)
-      return Buffer.from(bytes, 'hex').toString('utf8')
+    // Indexed topics: [0]=event sig, [1]=receiptHash, [2]=userAddress, [3]=strategyId
+    const userAddress = '0x' + log.topics[2].slice(26)
+
+    // Non-indexed data: abi.encode(string action, string traceCID, string attestCID, uint256 anchoredAt)
+    const data     = (log.data as string).startsWith('0x') ? (log.data as string).slice(2) : log.data
+    const readWord = (i: number) => data.slice(i * 64, i * 64 + 64)
+    const readUint = (i: number) => parseInt(readWord(i), 16)
+    // ABI offsets are byte-based; multiply by 2 to get hex-char position in data string
+    const readStr  = (byteOffset: number) => {
+      const c    = byteOffset * 2
+      const len  = parseInt(data.slice(c, c + 64), 16)
+      const hex  = data.slice(c + 64, c + 64 + len * 2)
+      return Buffer.from(hex, 'hex').toString('utf8')
     }
 
-    const userAddress  = readAddr(1)
-    const anchoredBy   = readAddr(2)
-    const actionOff    = readUint(4)
-    const traceCIDOff  = readUint(5)
-    const attestCIDOff = readUint(6)
-    const anchoredAt   = readUint(7)
+    const actionOff    = readUint(0)   // byte offset to action string
+    const traceCIDOff  = readUint(1)   // byte offset to traceCID string
+    const attestCIDOff = readUint(2)   // byte offset to attestCID string
+    const anchoredAt   = readUint(3)
 
-    const action    = readStr(4, actionOff)
-    const traceCID  = readStr(5, traceCIDOff)
-    const attestCID = readStr(6, attestCIDOff)
+    const action    = readStr(actionOff)
+    const traceCID  = readStr(traceCIDOff)
+    const attestCID = readStr(attestCIDOff)
 
     if (!anchoredAt) return null
 
-    return { receiptHash: originalHash, userAddress, anchoredBy, action, traceCID, attestCID, anchoredAt }
+    return {
+      receiptHash: originalHash,
+      userAddress,
+      anchoredBy: '0x' + (log.topics[2] ?? '').slice(26),
+      action,
+      traceCID,
+      attestCID,
+      anchoredAt,
+      txHash: log.transactionHash,
+    }
   } catch { return null }
 }
 
@@ -75,6 +87,7 @@ interface ProofData {
   traceCID:     string
   attestCID:    string
   anchoredAt:   number
+  txHash?:      string
 }
 
 // ── UI helpers ────────────────────────────────────────────────────────────────
@@ -132,8 +145,9 @@ function ProofLink({ label, href, color, icon }: { label: string; href: string; 
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
-export default function VerifyPage({ params }: { params: Promise<{ receiptHash: string }> }) {
+export default function VerifyPage({ params, searchParams }: { params: Promise<{ receiptHash: string }>; searchParams: Promise<{ tx?: string }> }) {
   const { receiptHash } = React.use(params)
+  const { tx: chainTxHash } = React.use(searchParams)
   const [proof,   setProof]   = useState<ProofData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error,   setError]   = useState('')
@@ -224,12 +238,14 @@ export default function VerifyPage({ params }: { params: Promise<{ receiptHash: 
             {/* Proof links */}
             <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 12 }}>Proof trail</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 32 }}>
-              <ProofLink
-                label="Anchored on 0G Chain"
-                href={`${CHAIN_SCAN}/tx/${proof.receiptHash}`}
-                color="#22C55E"
-                icon="⛓"
-              />
+              {chainTxHash && (
+                <ProofLink
+                  label="Anchored on 0G Chain"
+                  href={`${CHAIN_SCAN}/tx/${chainTxHash}`}
+                  color="#22C55E"
+                  icon="⛓"
+                />
+              )}
               {proof.traceCID && (
                 <ProofLink
                   label="Execution trace on 0G Storage"
@@ -256,6 +272,9 @@ export default function VerifyPage({ params }: { params: Promise<{ receiptHash: 
                 { label: 'Anchored by', value: proof.anchoredBy, mono: true },
                 { label: 'Action', value: proof.action, mono: false },
                 { label: 'Anchored at', value: new Date(proof.anchoredAt * 1000).toISOString(), mono: true },
+                ...(chainTxHash ? [{ label: '0G Chain tx', value: chainTxHash, mono: true }] : []),
+                ...(proof.traceCID  ? [{ label: 'Trace CID', value: proof.traceCID,  mono: true }] : []),
+                ...(proof.attestCID ? [{ label: 'Attest CID', value: proof.attestCID, mono: true }] : []),
                 { label: 'Registry', value: REGISTRY_ADDR, mono: true },
                 { label: 'Network', value: '0G Chain — Chain ID 16661', mono: false },
               ].map(({ label, value, mono }, i, arr) => (

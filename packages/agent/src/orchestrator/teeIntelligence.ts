@@ -29,9 +29,11 @@
  *   RPC_URL                     — 0G Chain RPC (default: https://evmrpc.0g.ai)
  */
 
-import * as dns from 'node:dns';
+import * as dns    from 'node:dns';
+import * as crypto from 'node:crypto';
 import { ethers } from 'ethers';
 import type { Opportunity, AllocationDecision } from './types';
+import { detect0GConfig } from './persistence';
 
 dns.setDefaultResultOrder('ipv4first');
 
@@ -386,27 +388,30 @@ export async function generateTEEAttestation(
     console.log('[TEE] Fallback: EIP-191 signed attestation (0G Compute unavailable)');
   }
 
-  // Upload to 0G Storage
+  // Upload to 0G Storage using the shared singleton signer (avoids nonce conflicts
+  // with concurrent state-save and trace-upload transactions from the same wallet)
+  const cfg = detect0GConfig();
+  if (!cfg) {
+    console.warn('[TEE] 0G Storage not configured — skipping attestation upload');
+    return null;
+  }
+
   try {
     const { persistJsonArtifact } = await import('../storage/persist');
-    const provider = new ethers.JsonRpcProvider(evmRpcUrl);
-    const wallet   = new ethers.Wallet(AGENT_PRIVATE_KEY, provider);
-    const { NonceManager } = await import('ethers');
-    const nm = new NonceManager(wallet);
-
     const artifact = await persistJsonArtifact(blob, {
-      indexerUrl,
-      evmRpcUrl,
-      signer: nm as any,
+      indexerUrl: cfg.indexerUrl,
+      evmRpcUrl:  cfg.evmRpcUrl,
+      signer:     cfg.signer,
     });
 
     console.log(`[TEE] ✅ Attestation stored on 0G Storage (mode: ${mode})`);
     console.log(`[TEE]    CID:         ${artifact.cid}`);
     console.log(`[TEE]    🔗 StorageScan: https://storagescan.0g.ai/submission/${artifact.txSeq}`);
+    console.log(`[TEE]    🔗 ChainScan:   https://chainscan.0g.ai/tx/${artifact.txHash}`);
 
     return { attestCID: artifact.cid, mode };
   } catch (err: any) {
-    console.warn('[TEE] 0G Storage upload failed (non-fatal):', err.message?.slice(0, 80));
+    console.warn('[TEE] 0G Storage upload failed:', err.message?.slice(0, 120));
     return null;
   }
 }

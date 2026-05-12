@@ -40,17 +40,17 @@ export default function Landing() {
   const { open } = useAppKit()
   const [pendingOnboard, setPendingOnboard] = useState(false)
 
-  // After wallet connects, navigate to onboard if user had clicked Start Earning
+  // After wallet connects, navigate to app if user had clicked Start Earning
   useEffect(() => {
     if (isConnected && pendingOnboard) {
       setPendingOnboard(false)
-      router.push('/onboard')
+      router.push('/app')
     }
   }, [isConnected, pendingOnboard, router])
 
   const handleStartEarning = () => {
     if (isConnected) {
-      router.push('/onboard')
+      router.push('/app')
     } else {
       setPendingOnboard(true)
       open()
@@ -481,7 +481,7 @@ export default function Landing() {
                   <li><a href="#features">How it works</a></li>
                   <li><a href="#protocols">Protocols</a></li>
                   <li><a href="/agent">Live Demo</a></li>
-                  <li><a href="/onboard">Launch App</a></li>
+                  <li><a href="/app/onboard">Launch App</a></li>
                 </ul>
               </div>
               <div className={styles['footer-col']}>

@@ -21,10 +21,12 @@ dns.setDefaultResultOrder('ipv4first');
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-const ZG_CHAIN_RPC        = process.env.RPC_URL ?? 'https://evmrpc.0g.ai';
-const ZG_CHAIN_ID         = 16661;
-const REGISTRY_ADDRESS    = process.env.ZG_REGISTRY_ADDRESS ?? '';
-const AGENT_PRIVATE_KEY   = process.env.PRIVATE_KEY!;  // same wallet that deployed + has OG
+const ZG_CHAIN_RPC = process.env.RPC_URL ?? 'https://evmrpc.0g.ai';
+const ZG_CHAIN_ID  = 16661;
+
+// Read at call time — dotenv may not have applied yet at module load
+function getRegistryAddress(): string { return process.env.ZG_REGISTRY_ADDRESS ?? ''; }
+function getAgentPrivateKey(): string  { return process.env.PRIVATE_KEY ?? ''; }
 
 // ── ABI (minimal — only what we call) ────────────────────────────────────────
 
@@ -53,15 +55,18 @@ const REGISTRY_ABI = [
 let _contract: ethers.Contract | null = null;
 
 function getContract(): ethers.Contract | null {
-  if (!REGISTRY_ADDRESS) {
+  const addr = getRegistryAddress();
+  if (!addr) {
     console.warn('[0GChain] ZG_REGISTRY_ADDRESS not set — skipping anchor');
     return null;
   }
   if (_contract) return _contract;
   try {
+    const pk = getAgentPrivateKey();
+    if (!pk) { console.warn('[0GChain] PRIVATE_KEY not set — skipping anchor'); return null; }
     const provider = new ethers.JsonRpcProvider(ZG_CHAIN_RPC, ZG_CHAIN_ID, { staticNetwork: true });
-    const signer   = new ethers.Wallet(AGENT_PRIVATE_KEY, provider);
-    _contract      = new ethers.Contract(REGISTRY_ADDRESS, REGISTRY_ABI, signer);
+    const signer   = new ethers.Wallet(pk, provider);
+    _contract      = new ethers.Contract(addr, REGISTRY_ABI, signer);
     return _contract;
   } catch (err: any) {
     console.warn('[0GChain] Failed to initialise registry contract:', err.message);
@@ -75,7 +80,7 @@ export interface AnchorParams {
   receiptHash:  string;   // 0x-prefixed bytes32
   userAddress:  string;   // Arbitrum wallet of the user
   strategyId?:  string;   // bytes32 strategy scope (0x0 = default single strategy)
-  action:       'GENESIS' | 'MIGRATE' | 'REBALANCE' | 'WITHDRAW';
+  action:       'GENESIS' | 'MIGRATE' | 'REBALANCE' | 'WITHDRAW' | 'REGISTER' | 'DEPOSIT';
   traceCID:     string;   // 0G Storage CID of execution trace
   attestCID?:   string;   // 0G Storage CID of TEE attestation (empty if not available)
 }

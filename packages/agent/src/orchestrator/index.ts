@@ -28,15 +28,16 @@ import type {
 import { fetchUniverse }                                      from './universe';
 import { decideAllocation, runSafetyGate }                   from './allocation';
 import { updatePortfolioPositions, updatePortfolioPositionsReal, checkCircuitBreakers, hasRedBreaker, buildExecutionRecord } from './monitor';
-import { broadcast, setLatestState, startSSEServer, setRegisterCallback, setResetCallback, setWithdrawCallback, setPauseCallback, setResumeCallback } from './sse';
+import { broadcast, setLatestState, startSSEServer, setRegisterCallback, setIsIdTakenCallback, setResetCallback, setWithdrawCallback, setPauseCallback, setResumeCallback, setForceMigrateCallback, setPatchPolicyCallback } from './sse';
 import { OnChainProvider }                                   from './protocols';
 import { PersistenceStore, uploadExecutionTrace }            from './persistence';
+import { getJournal }                                        from './journal';
 import { anchorExecutionProof }                              from './zgChain';
 import { generateTEEAttestation }                           from './teeIntelligence';
 import { UserRegistry, DEMO_POLICIES }                       from './users';
 import { openPortfolio, planAllocation, buildPnLPoint }      from './portfolio';
 import { evaluatePortfolioHarvests }                         from './compounder';
-import { getExecutor, resolveAgentAddress, TOKEN_ADDRESSES }  from './execution';
+import { getExecutor, resolveAgentAddress, TOKEN_ADDRESSES, parseUniV3MintFromReceipt } from './execution';
 import type { ExecutionInput, OnChainExecutionResult }        from './execution';
 import { assessAllDrifts }                                    from './driftMonitor';
 import type { DriftResult }                                   from './driftMonitor';
@@ -101,36 +102,55 @@ function mkEntry(level: LogEntry['level'], message: string, detail?: string): Lo
 }
 
 function globalLog(level: LogEntry['level'], message: string, detail?: string): void {
-  const e = mkEntry(level, message, detail);
+  const e = getJournal().addLog('__global__', level, message, detail);
+  // Keep ephemeral globalLog in AgentState for immediate UI snapshot
   agentState.globalLog = [e, ...agentState.globalLog].slice(0, MAX_LOG);
   broadcast({ type: 'LOG', ts: Date.now(), payload: { userId: '__global__', entry: e } });
 }
 
 function userLog(userId: string, level: LogEntry['level'], message: string, detail?: string): void {
   const user = registry.get(userId);
-  const e    = { ...mkEntry(level, message, detail), sessionId: user?.activeSessionId };
-  if (user) registry.update(userId, { log: [e, ...user.log].slice(0, MAX_LOG) });
+  const e = getJournal().addLog(userId, level, message, detail, user?.activeSessionId);
   broadcast({ type: 'LOG', ts: Date.now(), payload: { userId, entry: e } });
 }
 
-function newSessionId(): string {
-  return `session-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
-}
+
 
 function pushState(): void {
   agentState.users = registry.toRecord();
+  // Inject hot history into the snapshot so the UI has immediate context on refresh
+  for (const userId in agentState.users) {
+    const journal = getJournal();
+    (agentState.users[userId] as any).log = journal.getHotLogs(userId, 40);
+    (agentState.users[userId] as any).executions = journal.getExecutions(userId, 10);
+    (agentState.users[userId] as any).pnlHistory = journal.getPnLHistory(userId, 200).reverse();
+  }
   setLatestState({ ...agentState });
 }
 
-function findUserByIdOrAddress(input: { userId?: string; userAddress?: string }): UserState | undefined {
+
+
+function requireUniqueStrategyTarget(input: { userId?: string; userAddress?: string }): UserState {
   if (input.userId) {
     const byId = registry.get(input.userId);
-    if (byId) return byId;
+    if (!byId) throw new Error(`Strategy not found: ${input.userId}`);
+    return byId;
   }
 
   const wanted = input.userAddress?.toLowerCase();
-  if (!wanted) return undefined;
-  return registry.all().find(u => u.policy.userAddress?.toLowerCase() === wanted);
+  if (!wanted) throw new Error('Strategy target missing: provide userId');
+
+  const matches = registry.all().filter(u => u.policy.userAddress?.toLowerCase() === wanted);
+  if (matches.length === 0) {
+    throw new Error(`Strategy not found for wallet ${input.userAddress}`);
+  }
+  if (matches.length > 1) {
+    throw new Error(
+      `Ambiguous wallet target ${input.userAddress}: ${matches.length} strategies found. ` +
+      `Provide userId to target a specific strategy.`,
+    );
+  }
+  return matches[0];
 }
 
 // ── Timeout wrapper ───────────────────────────────────────────────────────────
@@ -204,9 +224,10 @@ function filterLiveExecutableOpportunities(opportunities: Opportunity[], userId:
 }
 
 function buildLiveExecutionInput(
-  opportunity:   Opportunity,
-  policy:        UserState['policy'],
-  currentPrice?: number,
+  opportunity:    Opportunity,
+  policy:         UserState['policy'],
+  currentPrice?:  number,
+  portfolioValueUSD?: number,
 ): ExecutionInput {
   if (!policy.userAddress) throw new Error('Real execution requires userAddress');
   if (!resolvesToLiveUSDCExecution(opportunity)) {
@@ -256,6 +277,11 @@ function buildLiveExecutionInput(
     tokenPrices:   onChain.getPrices(),
     assertedAPY:   Math.round((opportunity.netAPY ?? 0) * 100),
     rangePct,
+    // V2: thread userId + portfolio value for delegation lookup + ExecutionArgs
+    userId:            policy.id,
+    portfolioValueUSD: portfolioValueUSD ?? policy.managedUSD,
+    // V2: yield must accrue to smart account, not vault or EOA
+    recipientAddress:  policy.smartAccountAddress,
   };
 }
 
@@ -290,7 +316,7 @@ async function tickUser(
 ): Promise<void> {
   const { userId, policy } = user;
 
-  if (user.phase === 'WITHDRAWING') {
+  if (user.phase === 'WITHDRAWING' || user.phase === 'WITHDRAWN') {
     return;
   }
 
@@ -299,7 +325,14 @@ async function tickUser(
   // If policy.active is true again, auto-clear the PAUSED phase and resume managing.
   if (user.phase === 'PAUSED') {
     const vaultAddr = process.env.VAULT_ADDRESS ?? '';
-    if (policy.isReal && policy.userAddress && vaultAddr) {
+    // V2 users have no vault pause mechanism — their policy enforcer handles it on-chain.
+    // Auto-resume V2 users so the agent can continue managing.
+    if (policy.signedDelegation) {
+      registry.setPhase(userId, 'MONITORING');
+      userLog(userId, 'SUCCESS', 'V2 user auto-resumed — no vault pause, enforcer handles policy on-chain');
+      store.save(userId, registry.get(userId)!);
+      pushState();
+    } else if (policy.isReal && policy.userAddress && vaultAddr) {
       try {
         const vaultCheck = new (await import('ethers')).ethers.Contract(
           vaultAddr,
@@ -332,9 +365,15 @@ async function tickUser(
   // ── Universe engine ──────────────────────────────────────────────────────
   let opportunities: Opportunity[] = agentState.opportunities;
   try {
-    const result  = await fetchUniverse(provider, policy.riskTier, ocSnapshot);
-    opportunities = result.opportunities;
-    agentState.opportunities = opportunities;
+    const result = await fetchUniverse(provider, policy.riskTier, ocSnapshot);
+    // Only update the global cache when the result is non-empty.
+    // An empty result typically means a DeFiLlama rate-limit on a back-to-back call
+    // from another user's tick. Overwriting the cache with [] would cause every
+    // subsequent user on this tick to get HOLD — so fall back to the last snapshot.
+    if (result.opportunities.length > 0) {
+      opportunities = result.opportunities;
+      agentState.opportunities = opportunities;
+    }
 
     const verified = opportunities.filter(o => o.verifiedOnChain).length;
     broadcast({ type: 'OPPORTUNITIES', ts: Date.now(), payload: { opportunities, count: opportunities.length } });
@@ -354,18 +393,24 @@ async function tickUser(
     // Real users: read actual on-chain balances from each protocol.
     // Demo users (Alice/Bob/Carol): formula-based accrual — /agent page unchanged.
     const VAULT_ADDRESS = process.env.VAULT_ADDRESS ?? '';
-    const updatedPortfolio = (policy.isReal && policy.userAddress && VAULT_ADDRESS)
+    // V2: read protocol balances using smartAccountAddress; V1: use vault + EOA address
+    const effectiveUserAddr = policy.smartAccountAddress ?? policy.userAddress;
+    const canReadOnChain    = policy.isReal && policy.userAddress
+      && (VAULT_ADDRESS || !!policy.smartAccountAddress);
+    const updatedPortfolio = canReadOnChain
       ? await updatePortfolioPositionsReal(
-          currentUser.portfolio, opportunities, elapsed, prices, provider, VAULT_ADDRESS, policy.userAddress,
+          currentUser.portfolio, opportunities, elapsed, prices, provider, VAULT_ADDRESS, effectiveUserAddr,
         )
       : updatePortfolioPositions(
           currentUser.portfolio, opportunities, elapsed, prices,
         );
 
+    const pnlPoint = buildPnLPoint(updatedPortfolio);
+    getJournal().addPnL(userId, pnlPoint);
     registry.update(userId, {
       portfolio:  updatedPortfolio,
-      pnlHistory: [...currentUser.pnlHistory, buildPnLPoint(updatedPortfolio)].slice(-MAX_PNL),
     });
+
     broadcast({ type: 'PORTFOLIO', ts: Date.now(), payload: { userId, portfolio: updatedPortfolio } });
 
     // Report current portfolio value on-chain for real users.
@@ -407,14 +452,20 @@ async function tickUser(
           );
 
         if (shouldReport) {
-          executor.reportValueOnChain(policy.userAddress, currentUSD)
-            .then(() => {
-              registry.update(userId, {
-                _lastReportedUSD:  currentUSD,
-                _lastReportTick:   agentState.tickCount,
-              } as any);
-            })
-            .catch((err: Error) => userLog(userId, 'WARN', `reportValue failed: ${err.message}`));
+          // V2: update delegation pre-value so ExecutionArgs are accurate next execution
+          executor.updateDelegationPreValue(userId, currentUSD);
+
+          // V1: report value on-chain (only for V1 vault users)
+          if (!policy.signedDelegation) {
+            executor.reportValueOnChain(policy.userAddress, currentUSD)
+              .then(() => {
+                registry.update(userId, {
+                  _lastReportedUSD:  currentUSD,
+                  _lastReportTick:   agentState.tickCount,
+                } as any);
+              })
+              .catch((err: Error) => userLog(userId, 'WARN', `reportValue failed: ${err.message}`));
+          }
         }
       }
     }
@@ -444,6 +495,45 @@ async function tickUser(
         return; // let next tick handle GENESIS
       }
 
+      // Backfill missing tokenId for V2 DELTA_NEUTRAL positions.
+      // Uses the GENESIS txHash to re-parse the IncreaseLiquidity event — this is
+      // the only approach that correctly handles multiple strategies in the same pool,
+      // since the receipt is specific to THIS strategy's deployment transaction.
+      for (const pos of portfolioNow.positions) {
+        const needsBackfill =
+          pos.strategyType === 'DELTA_NEUTRAL' &&
+          policy.smartAccountAddress &&
+          (!pos.uniV3TokenId || pos.uniV3Liquidity === '0' || pos.uniV3Liquidity === null);
+
+        if (!needsBackfill) continue;
+
+        // Find the GENESIS execution record for this position
+        const genesisExec = getJournal().getExecutions(currentUser.userId).find(
+          (e: any) => e.action === 'GENESIS' && e.txHash && e.txHash !== '0x',
+        );
+
+        if (!genesisExec?.txHash) continue;
+
+        try {
+          const receipt = await (provider as JsonRpcProvider).getTransactionReceipt(genesisExec.txHash);
+          if (!receipt) continue;
+
+          const parsed = parseUniV3MintFromReceipt(receipt);
+          if (parsed && parsed.tokenId.toString() !== pos.uniV3TokenId) {
+            userLog(userId, 'SUCCESS',
+              `Backfilled tokenId=${parsed.tokenId} for position ${pos.id} (parsed from GENESIS tx ${genesisExec.txHash.slice(0, 10)}…)`,
+            );
+            const patched = portfolioNow.positions.map(p =>
+              p.id === pos.id
+                ? { ...p, uniV3TokenId: parsed.tokenId.toString(), uniV3Liquidity: parsed.liquidity.toString() }
+                : p,
+            );
+            registry.update(userId, { portfolio: { ...portfolioNow, positions: patched } });
+            store.save(userId, registry.get(userId)!);
+          }
+        } catch { /* non-fatal — will retry next tick */ }
+      }
+
       for (const pos of portfolioNow.positions) {
         if (pos.strategyType !== 'DELTA_NEUTRAL' || !pos.uniV3TokenId) continue;
 
@@ -467,15 +557,17 @@ async function tickUser(
           const rangePct   = pos.uniV3RangePct ?? 10;
           const assertedAPY = BigInt(Math.round((pos.currentNetAPY ?? pos.entryAPY) * 100));
           const rebalResult = await executor.rebalanceUniV3Position({
-            tokenId:        BigInt(pos.uniV3TokenId),
-            userAddress:    policy.userAddress,
-            poolAddress:    drift.poolAddress,
+            tokenId:          BigInt(pos.uniV3TokenId),
+            userAddress:      policy.userAddress,
+            poolAddress:      drift.poolAddress,
             rangePct,
-            liquidity:      drift.liquidity,
-            feesPendingUSD: pos.pendingRewardsUSD ?? 0,
-            amountUSD:      pos.allocationUSD,
-            assertedAPY:    Number(assertedAPY),
-            tokenPrices:    onChain.getPrices(),
+            liquidity:        drift.liquidity,
+            feesPendingUSD:   pos.pendingRewardsUSD ?? 0,
+            amountUSD:        pos.allocationUSD,
+            assertedAPY:      Number(assertedAPY),
+            tokenPrices:      onChain.getPrices(),
+            userId:           policy.signedDelegation ? policy.id : undefined,
+            recipientAddress: policy.signedDelegation ? policy.smartAccountAddress : undefined,
           });
 
           if (rebalResult.success) {
@@ -498,20 +590,18 @@ async function tickUser(
             const portfolioAfterRebal = registry.get(userId)!.portfolio!;
             const metricsAfterRebal = portfolioAfterRebal.metrics ?? {};
             const resetPeak = pos.allocationUSD > 0 ? pos.allocationUSD : (metricsAfterRebal.peakValueUSD ?? 0);
+            getJournal().addExecution(userId, rebalanceRecord);
             registry.update(userId, {
               portfolio: {
                 ...portfolioAfterRebal,
                 positions: rebaledPositions,
                 metrics: { ...metricsAfterRebal, peakValueUSD: resetPeak },
               },
-              executions: [
-                rebalanceRecord,
-                ...registry.get(userId)!.executions,
-              ].slice(0, MAX_EXEC),
               // Skip reportValue for 2 ticks after rebalance so the position reader
               // can settle on the new NAV before the on-chain drawdown check runs.
               _skipReportValueUntilTick: agentState.tickCount + 2,
             } as any);
+
             userLog(userId, 'SUCCESS',
               `Rebalanced ${pos.venueName}: new tokenId ${rebalResult.uniV3TokenId?.toString() ?? '?'} tx:${rebalResult.txHash.slice(0, 10)}…`,
             );
@@ -559,17 +649,17 @@ async function tickUser(
                   if (anchor || traceCID || teeResult) {
                     rebalanceRecord.zgChainTxHash   = anchor?.txHash;
                     rebalanceRecord.zgChainExplorer = anchor?.explorerUrl;
-                    rebalanceRecord.zgTraceCID      = traceCID  ?? undefined;
+                    rebalanceRecord.zgTraceCID      = traceCID ?? undefined;
                     rebalanceRecord.zgAttestCID     = teeResult?.attestCID ?? undefined;
                     const cur = registry.get(userId);
-                    if (cur) {
-                      registry.update(userId, {
-                        executions: cur.executions.map(e =>
-                          e.receiptHash === rebalReceiptHash ? { ...e, ...rebalanceRecord } : e,
-                        ),
-                      });
-                      pushState();
-                    }
+                    getJournal().updateExecution(userId, rebalReceiptHash, {
+                      zgChainTxHash:   anchor?.txHash,
+                      zgChainExplorer: anchor?.explorerUrl,
+                      zgTraceCID:      traceCID ?? undefined,
+                      zgAttestCID:     teeResult?.attestCID ?? undefined,
+                    });
+                    pushState();
+
                   }
                 } catch (e: any) {
                   console.warn('[0G] Rebalance proof trail failed (non-fatal):', e.message?.slice(0, 80));
@@ -660,6 +750,9 @@ async function tickUser(
     ? filterLiveExecutableOpportunities(opportunities, userId)
     : opportunities;
   const decision = decideAllocation(decisionOpportunities, policy, freshUser.portfolio, redFlag);
+  if (policy.forceMigrateTargetId && decision.action === 'MIGRATE') {
+    registry.update(userId, { policy: { ...policy, forceMigrateTargetId: undefined } });
+  }
   broadcast({ type: 'ALLOCATION', ts: Date.now(), payload: { userId, decision } });
 
   userLog(userId, decision.action === 'HOLD' ? 'INFO' : 'WARN',
@@ -708,8 +801,9 @@ async function tickUser(
           const executor = getExecutor();
           if (executor) {
             try {
-              const currentPrice = onChain.getPrices().get('WETH')?.priceUSD;
-              const toInput = buildLiveExecutionInput(target, policy, currentPrice);
+              const currentPrice    = onChain.getPrices().get('WETH')?.priceUSD;
+              const portfolioValueUSD = currentUser.portfolio?.metrics.totalValueUSD ?? policy.managedUSD;
+              const toInput = buildLiveExecutionInput(target, policy, currentPrice, portfolioValueUSD);
               // Pass screener's optimal range to execution so tick range is LVR-calibrated
               if (target.lvrOptimalRangePct) toInput.rangePct = target.lvrOptimalRangePct;
 
@@ -749,12 +843,29 @@ async function tickUser(
               let exitAmountRaw = BigInt(Math.round(policy.managedUSD * 1e6));
               let exitAmountUSD = policy.managedUSD;
               if ((decision.action === 'MIGRATE' || decision.action === 'SAFETY_EXIT') && fromPos) {
-                const deployedRaw = await executor.deployedBalance(policy.userAddress, TOKEN_ADDRESSES.USDC);
-                if (deployedRaw > 0n) {
-                  exitAmountRaw = deployedRaw;
-                  exitAmountUSD = Number(deployedRaw) / 1e6;
-                  toInput.amount = deployedRaw;
+                // V2: deployed funds sit in the smart account under the protocol, not the V1 vault.
+                // For V2 users we read the protocol balance via smartAccountBalance;
+                // for V1 users we use the vault's deployed() mapping.
+                if (policy.smartAccountAddress) {
+                  // V2: funds are in the LP NFT, not in liquid USDC.
+                  // smartAccountBalance(USDC) ≈ 0 while position is open — using it as
+                  // the portfolio value would cause a false DrawdownExceeded on the enforcer.
+                  // Use the agent's known portfolio value (or policy.managedUSD as floor).
+                  const knownValueUSD = fromPos?.currentUSD > 0
+                    ? fromPos.currentUSD
+                    : (policy.managedUSD ?? 1);
+                  exitAmountUSD = knownValueUSD;
+                  exitAmountRaw = BigInt(Math.round(knownValueUSD * 1e6));
+                  toInput.amount    = exitAmountRaw;
                   toInput.amountUSD = exitAmountUSD;
+                } else {
+                  const deployedRaw = await executor.deployedBalance(policy.userAddress, TOKEN_ADDRESSES.USDC);
+                  if (deployedRaw > 0n) {
+                    exitAmountRaw = deployedRaw;
+                    exitAmountUSD = Number(deployedRaw) / 1e6;
+                    toInput.amount    = deployedRaw;
+                    toInput.amountUSD = exitAmountUSD;
+                  }
                 }
               }
               // For UniV3 positions, use the live on-chain liquidity from the drift monitor
@@ -769,14 +880,37 @@ async function tickUser(
                 console.log(`[Execute:${userId}] action=${decision.action} fromPos=${fromPos?.uniV3TokenId ?? 'none'} liveLiquidity=${liveLiquidity?.toString() ?? 'none'}`);
                 console.log(`[Execute:${userId}] will migrate=${!!((decision.action === 'MIGRATE' || decision.action === 'SAFETY_EXIT') && prevUser.portfolio && fromPos)}`);
               }
-              // Fix A-1/A-2: Before GENESIS deposit, verify vault holds enough USDC to avoid reverts.
-              // If the user's vault balance is below the intended deployment amount, skip and wait.
+              // Before GENESIS, verify enough UNALLOCATED USDC is available.
+              // For V2 multi-strategy: subtract capital reserved by other IDLE
+              // strategies on the same smart account — they haven't deployed yet
+              // so their USDC is still in the smart account but already committed.
               if (decision.action === 'GENESIS') {
-                const actualVaultBalance = await executor.idleBalance(policy.userAddress, TOKEN_ADDRESSES.USDC);
-                if (actualVaultBalance < toInput.amount) {
+                const rawBalance = policy.smartAccountAddress
+                  ? await executor.smartAccountBalance(policy.smartAccountAddress, TOKEN_ADDRESSES.USDC)
+                  : await executor.idleBalance(policy.userAddress, TOKEN_ADDRESSES.USDC);
+
+                // Capital reserved by OTHER idle strategies on the same smart account
+                const reservedByOtherIdle = policy.smartAccountAddress
+                  ? registry.all()
+                      .filter(u =>
+                        u.userId !== userId &&
+                        u.policy.smartAccountAddress === policy.smartAccountAddress &&
+                        u.phase === 'IDLE'
+                      )
+                      .reduce((sum, u) => sum + u.policy.managedUSD, 0)
+                  : 0;
+
+                const reservedRaw        = BigInt(Math.round(reservedByOtherIdle * 1e6));
+                const effectiveBalance   = rawBalance > reservedRaw ? rawBalance - reservedRaw : 0n;
+
+                if (effectiveBalance < toInput.amount) {
                   userLog(userId, 'ERROR',
-                    `GENESIS skipped — vault balance ${(Number(actualVaultBalance) / 1e6).toFixed(2)} USDC < required ${(Number(toInput.amount) / 1e6).toFixed(2)} USDC. ` +
-                    `User must deposit more USDC into the vault before the agent can deploy.`,
+                    `GENESIS skipped — ` +
+                    `${policy.smartAccountAddress ? 'smart account' : 'vault'} has ` +
+                    `$${(Number(rawBalance) / 1e6).toFixed(2)} USDC, ` +
+                    `$${reservedByOtherIdle.toFixed(2)} reserved by other strategies, ` +
+                    `$${(Number(effectiveBalance) / 1e6).toFixed(2)} unallocated < ` +
+                    `$${(Number(toInput.amount) / 1e6).toFixed(2)} needed.`,
                   );
                   registry.setPhase(userId, 'IDLE');
                   pushState();
@@ -787,17 +921,21 @@ async function tickUser(
               const result = ((decision.action === 'MIGRATE' || decision.action === 'SAFETY_EXIT') && prevUser.portfolio && fromPos)
                 ? await executor.migrate(
                     {
-                      strategyType:  fromPos.strategyType,
-                      asset:         TOKEN_ADDRESSES.USDC,
-                      amount:        exitAmountRaw,
-                      amountUSD:     exitAmountUSD,
-                      userAddress:   policy.userAddress,
-                      marketAddress: fromPos.venueAddress ?? fromPos.venueId,
-                      tokenId:       fromPos.uniV3TokenId ? BigInt(fromPos.uniV3TokenId) : undefined,
-                      liquidity:     liveLiquidity,
-                      hedgeSizeUSD:  fromPos.hedgeSizeUSD,
-                      maturityDate:  fromPos.maturityDate,
-                      ytAddress:     fromPos.ytAddress,
+                      strategyType:     fromPos.strategyType,
+                      asset:            TOKEN_ADDRESSES.USDC,
+                      amount:           exitAmountRaw,
+                      amountUSD:        exitAmountUSD,
+                      userAddress:      policy.userAddress,
+                      marketAddress:    fromPos.venueAddress ?? fromPos.venueId,
+                      tokenId:          fromPos.uniV3TokenId ? BigInt(fromPos.uniV3TokenId) : undefined,
+                      liquidity:        liveLiquidity,
+                      hedgeSizeUSD:     fromPos.hedgeSizeUSD,
+                      maturityDate:     fromPos.maturityDate,
+                      ytAddress:        fromPos.ytAddress,
+                      // V2: thread userId + smart account so close path can use delegation
+                      userId:           policy.signedDelegation ? policy.id : undefined,
+                      recipientAddress: policy.signedDelegation ? policy.smartAccountAddress : undefined,
+                      portfolioValueUSD: exitAmountUSD,
                     },
                     toInput,
                   )
@@ -856,18 +994,17 @@ async function tickUser(
                     if (anchor || traceCID || teeResult) {
                       record.zgChainTxHash   = anchor?.txHash;
                       record.zgChainExplorer = anchor?.explorerUrl;
-                      record.zgTraceCID      = traceCID  ?? undefined;
+                      record.zgTraceCID      = traceCID ?? undefined;
                       record.zgAttestCID     = teeResult?.attestCID ?? undefined;
                       // Patch the stored record with 0G links
-                      const current = registry.get(userId);
-                      if (current) {
-                        registry.update(userId, {
-                          executions: current.executions.map(e =>
-                            e.receiptHash === result.receiptHash ? { ...e, ...record } : e,
-                          ),
-                        });
-                        pushState();
-                      }
+                      getJournal().updateExecution(userId, result.receiptHash, {
+                        zgChainTxHash:   anchor?.txHash,
+                        zgChainExplorer: anchor?.explorerUrl,
+                        zgTraceCID:      traceCID ?? undefined,
+                        zgAttestCID:     teeResult?.attestCID ?? undefined,
+                      });
+                      pushState();
+
                     }
                   } catch (e: any) {
                     console.warn('[0G] Proof trail failed (non-fatal):', e.message?.slice(0, 80));
@@ -1062,14 +1199,12 @@ async function tickUser(
             };
           }
 
+          getJournal().addExecution(userId, record);
           registry.update(userId, {
             portfolio:  newPortfolio,
-            executions: [record, ...prevUser.executions].slice(0, MAX_EXEC),
             phase:      'ALLOCATED',
-            // Reset pnlHistory on new GENESIS so the chart starts clean
-            // from this deployment, not from previous sessions.
-            pnlHistory: decision.action === 'GENESIS' ? [] : prevUser.pnlHistory,
           });
+
           broadcast({ type: 'EXECUTION', ts: Date.now(), payload: { userId, record } });
           broadcast({ type: 'PORTFOLIO', ts: Date.now(), payload: { userId, portfolio: newPortfolio } });
         }
@@ -1108,6 +1243,10 @@ async function tickUser(
               const ethPrice = onChain.getPrices().get('WETH')?.priceUSD ?? 3000;
               const result = await executor.collectUniV3Fees(
                 BigInt(pos.uniV3TokenId), policy.userAddress, h.pendingRewardsUSD, ethPrice,
+                policy.signedDelegation ? policy.id : undefined,
+                policy.signedDelegation ? policy.smartAccountAddress : undefined,
+                policy.signedDelegation ? (freshUser.portfolio?.metrics.totalValueUSD ?? policy.managedUSD) : undefined,
+                policy.signedDelegation ? policy.maxFeeBps : undefined,
               );
               record.txHash      = result.txHash;
               record.receiptHash = result.receiptHash;
@@ -1122,9 +1261,8 @@ async function tickUser(
         }
       }
 
-      registry.update(userId, {
-        executions: [record, ...freshUser.executions].slice(0, MAX_EXEC),
-      });
+      getJournal().addExecution(userId, record);
+
       broadcast({ type: 'HARVEST', ts: Date.now(), payload: { userId, harvest: h } });
       } // end else (HWM gate passed)
     }
@@ -1187,22 +1325,37 @@ async function tick(): Promise<void> {
     );
   }
 
-  // Process each user in parallel with full isolation
-  await Promise.allSettled(
-    registry.all().map(async user => {
-      const u = registry.get(user.userId)!;
-      if (u.tickErrors >= MAX_ERRORS) {
-        userLog(user.userId, 'WARN', `Quarantined after ${u.tickErrors} consecutive errors — skipping`);
-        return;
-      }
+  // Group users by smart account address so that multiple strategies sharing
+  // the same smart account are processed sequentially — prevents GENESIS race
+  // conditions where two strategies read the same USDC balance before either
+  // executes and both believe they have sufficient capital.
+  // Different smart accounts (or V1 vault users) still run in parallel.
+  const saGroups = new Map<string, UserState[]>();
+  for (const user of registry.all()) {
+    const key = user.policy.smartAccountAddress ?? `__v1__${user.userId}`;
+    if (!saGroups.has(key)) saGroups.set(key, []);
+    saGroups.get(key)!.push(registry.get(user.userId)!);
+  }
 
-      const result = await withTimeout(tickUser(user, elapsed, ocSnapshot, driftMap), TICK_TIMEOUT);
-      if (result === null) {
-        const errs = registry.incrementErrors(user.userId);
-        userLog(user.userId, 'ERROR', `Tick timeout after ${TICK_TIMEOUT / 1_000}s (${errs}/${MAX_ERRORS})`);
-      } else {
-        registry.resetErrors(user.userId);
-      }
+  const runUser = async (user: UserState) => {
+    const u = registry.get(user.userId)!;
+    if (u.tickErrors >= MAX_ERRORS) {
+      userLog(user.userId, 'WARN', `Quarantined after ${u.tickErrors} consecutive errors — skipping`);
+      return;
+    }
+    const result = await withTimeout(tickUser(user, elapsed, ocSnapshot, driftMap), TICK_TIMEOUT);
+    if (result === null) {
+      const errs = registry.incrementErrors(user.userId);
+      userLog(user.userId, 'ERROR', `Tick timeout after ${TICK_TIMEOUT / 1_000}s (${errs}/${MAX_ERRORS})`);
+    } else {
+      registry.resetErrors(user.userId);
+    }
+  };
+
+  // Parallel across smart accounts, sequential within each smart account's strategies
+  await Promise.allSettled(
+    Array.from(saGroups.values()).map(async (group) => {
+      for (const user of group) await runUser(user);
     })
   );
 
@@ -1257,41 +1410,145 @@ async function main(): Promise<void> {
   store    = new PersistenceStore();
   registry = new UserRegistry();
 
+  setIsIdTakenCallback((id) => !!registry.get(id));
+
   // Wire real-user registration — called by POST /api/register from the frontend.
   // Demo users (Alice/Bob/Carol) keep running alongside any real users who sign in.
-  setRegisterCallback((policy) => {
-    const state = registry.registerReal(policy);
-    globalLog('SUCCESS', `Real user registered: ${policy.displayName} (${policy.userAddress})`);
-    store.registerInIndex(policy.id);  // write to users.index before saving state
-    store.save(policy.id, state);      // persist state (non-blocking)
-    pushState();                       // broadcast to frontend
+  setRegisterCallback(async (policy) => {
+    // ── Capital commitment check (V2 smart account strategies only) ──────────
+    //
+    // Ensures the smart account holds enough UNALLOCATED USDC to cover this
+    // strategy's managedUSD before accepting the registration.
+    //
+    //   unallocated = smartAccountUSDC − Σ managedUSD of all IDLE strategies
+    //                                     on the same smart account
+    //
+    // IDLE strategies have registered but not yet deployed — their capital is
+    // still sitting as USDC in the smart account (reserved, not available).
+    // MONITORING strategies have already deployed so their capital is NOT in
+    // the smart account — they don't reduce the available USDC.
+    // WITHDRAWN strategies have sent capital to EOA — they also don't count.
+    //
+    // This prevents over-commitment where N strategies all register against
+    // the same USDC and only the first one successfully deploys.
+    if (policy.smartAccountAddress && policy.managedUSD > 0) {
+      const exec = getExecutor();
+      if (exec) {
+        const [usdcRaw] = await Promise.all([
+          exec.smartAccountBalance(policy.smartAccountAddress, TOKEN_ADDRESSES.USDC),
+        ]);
+        const usdcAvailable = Number(usdcRaw) / 1e6;
+
+        // Sum managedUSD of all IDLE strategies on the same smart account.
+        // These are registered but not yet deployed — their USDC is reserved.
+        const reservedByIdleStrategies = registry.all()
+          .filter(u =>
+            u.policy.smartAccountAddress === policy.smartAccountAddress &&
+            u.phase === 'IDLE'
+          )
+          .reduce((sum, u) => sum + u.policy.managedUSD, 0);
+
+        const unallocated = usdcAvailable - reservedByIdleStrategies;
+
+        if (unallocated < policy.managedUSD) {
+          throw new Error(
+            `Insufficient unallocated capital. ` +
+            `Smart account has $${usdcAvailable.toFixed(2)} USDC — ` +
+            `$${reservedByIdleStrategies.toFixed(2)} reserved by ${
+              registry.all().filter(u =>
+                u.policy.smartAccountAddress === policy.smartAccountAddress &&
+                u.phase === 'IDLE'
+              ).length
+            } pending strategy(s) — ` +
+            `$${unallocated.toFixed(2)} unallocated. ` +
+            `Need $${policy.managedUSD.toFixed(2)}. ` +
+            `Deposit more USDC to your smart account or reduce the strategy amount.`
+          );
+        }
+
+        globalLog('INFO',
+          `Capital check passed for ${policy.displayName}: ` +
+          `$${usdcAvailable.toFixed(2)} available, ` +
+          `$${reservedByIdleStrategies.toFixed(2)} reserved, ` +
+          `$${unallocated.toFixed(2)} unallocated ≥ $${policy.managedUSD.toFixed(2)} needed`
+        );
+      }
+    }
+
+    let state: ReturnType<typeof registry.registerReal>;
+
+    // V2: if the policy includes a signed delegation, use V2 registration path
+    if (policy.signedDelegation && policy.smartAccountAddress) {
+      state = registry.registerV2(policy, policy.smartAccountAddress, policy.signedDelegation);
+      // Wire delegation into the executor singleton
+      const exec = getExecutor();
+      if (exec) {
+        exec.setUserDelegation(policy.id, policy.signedDelegation);
+        globalLog('SUCCESS',
+          `V2 user registered: ${policy.displayName} | smartAccount: ${policy.smartAccountAddress}`);
+      }
+
+      // ── 0G: anchor registration on 0G Chain (non-blocking, non-fatal) ─────
+      // Creates a permanent public record: "user X registered with YieldGeko,
+      // signed delegation Y, at time Z" — verifiable by anyone on 0G Chain.
+      const delegationSig = policy.signedDelegation.signature;
+      const registrationHash = '0x' + crypto
+        .createHash('sha256')
+        .update(`REGISTER:${policy.userAddress}:${policy.smartAccountAddress}:${delegationSig.slice(0, 32)}`)
+        .digest('hex');
+      // Anchor registration on 0G Chain after a short delay so the concurrent
+      // state save (store.save below) settles its 0G Storage tx first.
+      // Skipping trace upload here — the state save already persists the full
+      // user state (including delegation) to 0G Storage.
+      setTimeout(() => {
+        anchorExecutionProof({
+          receiptHash: registrationHash,
+          userAddress: policy.userAddress!,
+          action:      'REGISTER',
+          traceCID:    '',   // state save covers storage; no separate trace upload
+          attestCID:   '',
+        }).then(anchor => {
+          if (anchor) {
+            console.log(`[0GChain] ✅ Registration anchored for ${policy.displayName} → ${anchor.explorerUrl}`);
+          }
+        }).catch((e: any) => {
+          console.warn('[0G] Registration anchor failed (non-fatal):', e.message?.slice(0, 80));
+        });
+      }, 8_000); // 8 s — let state save tx confirm first
+    } else {
+      state = registry.registerReal(policy, policy.userAddress || '0x0000000000000000000000000000000000000000');
+
+
+      globalLog('SUCCESS', `Real user registered: ${policy.displayName} (${policy.userAddress})`);
+    }
+
+    store.registerActiveUser(policy.id);
+    store.save(policy.id, state);
+    pushState();
     return state;
   });
 
   // Force-reset a user to IDLE — clears stale portfolio/positions from memory.
   // Called by POST /api/reset-user. Safe to call while agent is running.
-  setResetCallback((userId: string) => {
+  setResetCallback(async (userId: string) => {
     const existing = registry.get(userId);
     if (!existing) return false;
-    const now = Date.now();
-    registry.update(userId, {
-      phase:     'IDLE',
-      portfolio: undefined,
-      breakers:  [],
-      pnlHistory: [],
-      activeSessionId:        newSessionId(),
-      activeSessionStartedAt: now,
-    } as any);
-    const resetState = registry.get(userId)!;
-    store.save(userId, resetState);
-    globalLog('WARN', `User ${userId} force-reset to IDLE — stale state cleared`);
+    // Write WITHDRAWN to both local disk AND 0G Storage before deregistering.
+    // Drain waits for the 0G upload to confirm — ensures the next agent restart
+    // loads WITHDRAWN from 0G and skips this strategy permanently.
+    const tombstone = { ...existing, phase: 'WITHDRAWN' as const, portfolio: null, breakers: [] };
+    store.save(userId, tombstone);   // saves to local immediately
+    store.markUserArchived(userId);
+    registry.deregister(userId);
+    globalLog('WARN', `User ${userId} deregistered — WITHDRAWN written to disk (0G syncs in background)`);
     pushState();
+    // Drain 0G in background — don't block the API response
+    store.drain().catch((e: any) => console.warn('[Reset] 0G drain failed:', e.message));
     return true;
   });
 
   setWithdrawCallback(async (input) => {
-    const user = findUserByIdOrAddress(input);
-    if (!user) throw new Error('User not found');
+    const user = requireUniqueStrategyTarget(input);
     if (!user.policy.isReal || !user.policy.userAddress) {
       throw new Error('Withdrawal is only available for real registered users');
     }
@@ -1329,19 +1586,46 @@ async function main(): Promise<void> {
           throw new Error(`Position ${pos.id} is DELTA_NEUTRAL but missing uniV3TokenId`);
         }
 
+        // Resolve pool address — prefer stored venueAddress; fall back to on-chain
+        // lookup via NFT positions() + factory.getPool() when venueAddress is absent
+        // (can happen for positions created before venueAddress was written to state).
+        let resolvedMarket = pos.venueAddress ?? pos.uniV3EntryPool;
+        if (!resolvedMarket && pos.strategyType === 'DELTA_NEUTRAL' && pos.uniV3TokenId) {
+          try {
+            const { ethers: _ethers } = await import('ethers');
+            const posMgr  = new _ethers.Contract('0xC36442b4a4522E871399CD717aBDD847Ab11FE88', [
+              'function positions(uint256) view returns (uint96,address,address,address,uint24,int24,int24,uint128,uint256,uint256,uint128,uint128)',
+            ], provider);
+            const factory = new _ethers.Contract('0x1F98431c8aD98523631AE4a59f267346ea31F984', [
+              'function getPool(address,address,uint24) view returns (address)',
+            ], provider);
+            const nftPos = await posMgr.positions(BigInt(pos.uniV3TokenId));
+            resolvedMarket = await factory.getPool(nftPos[2], nftPos[3], nftPos[4]);
+            userLog(user.userId, 'INFO', `Resolved pool from NFT ${pos.uniV3TokenId}: ${resolvedMarket}`);
+          } catch (lookupErr: any) {
+            console.warn(`[Withdraw] Pool lookup from NFT failed: ${lookupErr.message}`);
+          }
+        }
+        if (!resolvedMarket) resolvedMarket = pos.venueId;  // last resort (may still be wrong)
+
         const amountRaw = BigInt(Math.max(0, Math.round((pos.currentUSD || pos.allocationUSD || user.policy.managedUSD) * 1e6)));
         const prepared = await executor.prepareWithdrawal({
-          strategyType:  pos.strategyType,
-          asset:         TOKEN_ADDRESSES.USDC,
-          amount:        amountRaw,
-          amountUSD:     pos.currentUSD || pos.allocationUSD || user.policy.managedUSD,
-          userAddress:   user.policy.userAddress,
-          marketAddress: pos.venueAddress ?? pos.uniV3EntryPool ?? pos.venueId,
-          tokenId:       pos.uniV3TokenId ? BigInt(pos.uniV3TokenId) : undefined,
-          liquidity:     pos.uniV3Liquidity ? BigInt(pos.uniV3Liquidity) : undefined,
-          hedgeSizeUSD:  pos.hedgeSizeUSD,
-          maturityDate:  pos.maturityDate,
-          ytAddress:     pos.ytAddress,
+          strategyType:      pos.strategyType,
+          asset:             TOKEN_ADDRESSES.USDC,
+          amount:            amountRaw,
+          amountUSD:         pos.currentUSD || pos.allocationUSD || user.policy.managedUSD,
+          userAddress:       user.policy.userAddress,
+          marketAddress:     resolvedMarket,
+          tokenId:           pos.uniV3TokenId ? BigInt(pos.uniV3TokenId) : undefined,
+          liquidity:         pos.uniV3Liquidity ? BigInt(pos.uniV3Liquidity) : undefined,
+          hedgeSizeUSD:      pos.hedgeSizeUSD,
+          maturityDate:      pos.maturityDate,
+          ytAddress:         pos.ytAddress,
+          // V2 delegation fields — required for smart-account positions
+          userId:            user.policy.smartAccountAddress ? user.userId : undefined,
+          recipientAddress:  user.policy.smartAccountAddress,
+          portfolioValueUSD: pos.currentUSD || pos.allocationUSD || user.policy.managedUSD,
+          managedUSD:        user.policy.managedUSD,
         });
 
         txs.push({
@@ -1351,11 +1635,16 @@ async function main(): Promise<void> {
         });
       }
 
-      const idleUSDC = await executor.idleBalance(user.policy.userAddress, TOKEN_ADDRESSES.USDC);
+      // V2: USDC lands in user's EOA after normalize — read from EOA.
+      // V1: USDC is credited to vault accounting — read idleBalance.
+      const isV2 = !!(user.policy.smartAccountAddress);
+      const idleUSDC = isV2
+        ? await executor.smartAccountBalance(user.policy.userAddress, TOKEN_ADDRESSES.USDC)
+        : await executor.idleBalance(user.policy.userAddress, TOKEN_ADDRESSES.USDC);
       const record = buildExecutionRecord(
         'WITHDRAW',
         user.portfolio.positions.map(p => p.venueName).join(' + '),
-        'Vault idle USDC',
+        isV2 ? 'Smart account USDC' : 'Vault idle USDC',
         Number(idleUSDC) / 1e6,
         user.portfolio.metrics.totalValueUSD,
       );
@@ -1365,32 +1654,78 @@ async function main(): Promise<void> {
 
       // Phase → IDLE: position is closed, funds are idle in vault.
       // Agent stops managing this user until they re-register or re-deposit.
+      getJournal().addExecution(user.userId, record);
       registry.update(user.userId, {
-        phase: 'IDLE',
-        portfolio: undefined,
+        phase: 'WITHDRAWN',
+        portfolio: null,
         breakers: [],
-        executions: [record, ...registry.get(user.userId)!.executions].slice(0, MAX_EXEC),
       });
+
+      const isV2User = !!(user.policy.smartAccountAddress);
       userLog(
         user.userId,
         'SUCCESS',
-        'Withdrawal prepared — funds are idle USDC in vault',
-        `User must call vault.withdraw(USDC, ${idleUSDC.toString()}) to receive wallet funds`,
+        isV2User
+          ? 'Withdrawal complete — USDC is in your EOA wallet'
+          : 'Withdrawal prepared — funds are idle USDC in vault',
+        isV2User
+          ? `${Number(idleUSDC) / 1e6} USDC sent to EOA ${user.policy.userAddress}`
+          : `User must call vault.withdraw(USDC, ${idleUSDC.toString()}) to receive wallet funds`,
       );
 
       const updated = registry.get(user.userId)!;
+      // Save to local immediately — respond to frontend without waiting for 0G.
+      // 0G upload + anchor fire in background so the UI isn't blocked 30-60s.
       store.save(user.userId, updated);
+      store.markUserArchived(user.userId);
       pushState();
 
+      // Fire 0G proof trail in background — does NOT block the response
+      ;(async () => {
+        try {
+          await store.drain();
+          const traceCID = await uploadExecutionTrace({
+            action:         'WITHDRAW',
+            userId:         user.userId,
+            userAddress:    user.policy.userAddress!,
+            receiptHash:    record.receiptHash,
+            arbitrumTxHash: record.txHash ?? '0x',
+            timestamp:      Date.now(),
+            amountUSD:      Number(idleUSDC) / 1e6,
+          });
+          const anchor = await anchorExecutionProof({
+            receiptHash: record.receiptHash,
+            userAddress: user.policy.userAddress!,
+            action:      'WITHDRAW',
+            traceCID:    traceCID ?? '',
+            attestCID:   '',
+          });
+          if (anchor) {
+            getJournal().updateExecution(user.userId, record.receiptHash, {
+              zgTraceCID:      traceCID ?? undefined,
+              zgChainTxHash:   anchor.txHash,
+              zgChainExplorer: anchor.explorerUrl,
+            });
+            console.log(`[Withdraw] ✅ 0G proof anchored: ${anchor.explorerUrl}`);
+          }
+        } catch (e: any) {
+          console.warn('[Withdraw] 0G proof trail failed (non-fatal):', e.message?.slice(0, 80));
+        }
+      })();
+
       return {
-        userId:       user.userId,
-        status:       'READY_FOR_USER_WITHDRAW',
-        idleUSDCRaw:  idleUSDC.toString(),
-        idleUSDC:     Number(idleUSDC) / 1e6,
-        vaultAddress: process.env.VAULT_ADDRESS,
-        asset:        TOKEN_ADDRESSES.USDC,
-        userAddress:  user.policy.userAddress,
-        nextStep:     `Call vault.withdraw(USDC, ${idleUSDC.toString()}) from your wallet to receive funds.`,
+        userId:             user.userId,
+        status:             'READY_FOR_USER_WITHDRAW',
+        idleUSDCRaw:        idleUSDC.toString(),
+        idleUSDC:           Number(idleUSDC) / 1e6,
+        isSmartAccount:     isV2User,
+        smartAccountAddress: user.policy.smartAccountAddress,
+        vaultAddress:       process.env.VAULT_ADDRESS,
+        asset:              TOKEN_ADDRESSES.USDC,
+        userAddress:        user.policy.userAddress,
+        nextStep:           isV2User
+          ? `${Number(idleUSDC) / 1e6} USDC is now in your smart account ${user.policy.smartAccountAddress}`
+          : `Call vault.withdraw(USDC, ${idleUSDC.toString()}) from your wallet to receive funds.`,
         txs,
       };
     } catch (err: any) {
@@ -1402,9 +1737,8 @@ async function main(): Promise<void> {
   });
 
   // Pause: freeze agent management for a user without closing their position.
-  setPauseCallback((userAddress: string) => {
-    const user = findUserByIdOrAddress({ userAddress });
-    if (!user) return false;
+  setPauseCallback((target) => {
+    const user = requireUniqueStrategyTarget(target);
     registry.update(user.userId, { phase: 'PAUSED' });
     userLog(user.userId, 'WARN', 'Agent paused by user request — position held open, no new actions');
     pushState();
@@ -1413,14 +1747,44 @@ async function main(): Promise<void> {
   });
 
   // Resume: re-enable management for a user who self-paused.
-  setResumeCallback((userAddress: string) => {
-    const user = findUserByIdOrAddress({ userAddress });
-    if (!user) return false;
+  setResumeCallback((target) => {
+    const user = requireUniqueStrategyTarget(target);
     const nextPhase = user.portfolio && user.portfolio.positions.length > 0 ? 'MONITORING' : 'IDLE';
     registry.update(user.userId, { phase: nextPhase });
     userLog(user.userId, 'SUCCESS', `Agent resumed by user request — phase=${nextPhase}`);
     pushState();
     store.save(user.userId, registry.get(user.userId)!);
+    return true;
+  });
+
+  // Force migrate to a specific pool — used by testV2Rebalance.ts
+  setForceMigrateCallback(async (userId: string, targetPoolAddress: string) => {
+    const user = registry.get(userId);
+    if (!user) return false;
+    // Find the target opportunity by address
+    const opp = agentState.opportunities.find(
+      o => o.address?.toLowerCase() === targetPoolAddress.toLowerCase(),
+    );
+    if (!opp) {
+      userLog(userId, 'WARN', `force-migrate: pool ${targetPoolAddress} not in opportunity list`);
+      return false;
+    }
+    // Set the forced target ID so the next tick triggers MIGRATE to this specific pool
+    registry.update(userId, {
+      policy: { ...user.policy, forceMigrateTargetId: opp.id },
+    });
+    userLog(userId, 'INFO', `force-migrate: targeted ${opp.pool} → will execute on next tick`);
+    pushState();
+    return true;
+  });
+
+  // Patch user policy fields — used by testV2Rebalance.ts
+  setPatchPolicyCallback((userId: string, patch: { migrationThresholdPct?: number }) => {
+    const user = registry.get(userId);
+    if (!user) return false;
+    registry.update(userId, { policy: { ...user.policy, ...patch } });
+    userLog(userId, 'INFO', `patch-policy: ${JSON.stringify(patch)}`);
+    pushState();
     return true;
   });
 
@@ -1455,9 +1819,11 @@ async function main(): Promise<void> {
   const isProduction = process.env.AGENT_ENVIRONMENT === 'production';
   const demoPoliciesToLoad = isProduction ? [] : DEMO_POLICIES;
 
-  const realUserIds = store.getRealUserIds();
-  const allIds      = [...demoPoliciesToLoad.map(p => p.id), ...realUserIds];
+  const activeRealUserIds = store.getActiveUserIds();
+  console.log(`  🔍  Found ${activeRealUserIds.length} active real user IDs in index:`, activeRealUserIds);
+  const allIds      = [...demoPoliciesToLoad.map(p => p.id), ...activeRealUserIds];
   const persisted   = await store.loadAll(allIds);
+  console.log(`  📦  Loaded ${persisted.size} states from persistence. Keys:`, [...persisted.keys()]);
 
   for (const policy of demoPoliciesToLoad) {
     const saved = persisted.get(policy.id);
@@ -1473,18 +1839,32 @@ async function main(): Promise<void> {
   }
 
   // Restore real users — their full portfolio state (positions, tokenIds, PnL history) survives restart
+  // Skip WITHDRAWN users — they have no active position and should not re-enter the tick loop.
   let restoredReal = 0;
-  for (const userId of realUserIds) {
+  for (const userId of activeRealUserIds) {
     const saved = persisted.get(userId);
     if (saved) {
+      if (saved.phase === 'WITHDRAWN') {
+        store.markUserArchived(userId);
+        console.log(`  ⏭️  Skipped (WITHDRAWN): ${saved.policy.displayName}`);
+        continue;
+      }
+      store.registerActiveUser(userId);
       registry.restore(saved);
       restoredReal++;
       console.log(`  ✅  Real user: ${saved.policy.displayName} (${saved.policy.userAddress?.slice(0, 10)}…)${saved.portfolio ? ` — ${saved.portfolio.positions.length} position(s)` : ''}`);
       globalLog('SUCCESS', `Restored real user: ${saved.policy.displayName}`, saved.portfolio ? `${saved.portfolio.positions.length} positions` : 'no portfolio');
+
+      // V2: re-wire delegation into executor on boot (delegations stored in policy survive persistence)
+      if (saved.policy.signedDelegation) {
+        const exec = getExecutor();
+        exec?.setUserDelegation(userId, saved.policy.signedDelegation);
+        console.log(`  🔗  V2 delegation re-wired: ${saved.policy.displayName} → ${saved.policy.smartAccountAddress?.slice(0, 10)}…`);
+      }
     }
   }
-  if (realUserIds.length > 0) {
-    console.log(`  ✅  ${restoredReal}/${realUserIds.length} real users restored from persistence\n`);
+  if (activeRealUserIds.length > 0) {
+    console.log(`  ✅  ${restoredReal}/${activeRealUserIds.length} real users restored from persistence\n`);
   }
 
   console.log('');

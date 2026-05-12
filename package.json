@@ -35,5 +35,11 @@
     "*.sol": [
       "forge fmt"
     ]
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3"
+    ]
   }
 }
+

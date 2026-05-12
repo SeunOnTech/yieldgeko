@@ -20,9 +20,9 @@ import { evaluatePortfolioHarvests } from './compounder';
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function decideAllocation(
-  opportunities:     Opportunity[],
-  policy:            UserPolicy,
-  portfolio:         Portfolio | null,
+  opportunities: Opportunity[],
+  policy: UserPolicy,
+  portfolio: Portfolio | null,
   circuitBreakerRed: boolean,
 ): AllocationDecision {
   const topOpp = opportunities[0] ?? null;
@@ -60,11 +60,11 @@ export function decideAllocation(
     }
 
     return {
-      action:             'SAFETY_EXIT',
-      targetOpportunity:  safeHaven,
+      action: 'SAFETY_EXIT',
+      targetOpportunity: safeHaven,
       currentOpportunity: topCurrentOpp(portfolio, opportunities),
-      reason:             safeHavenReason,
-      upliftPct:          0,
+      reason: safeHavenReason,
+      upliftPct: 0,
     };
   }
 
@@ -74,11 +74,11 @@ export function decideAllocation(
     if (harvests.length > 0) {
       const best = harvests[0];
       return {
-        action:             'HARVEST',
-        targetOpportunity:  opportunities.find(o => o.id === portfolio.positions.find(p => p.id === best.positionId)?.venueId) ?? null,
+        action: 'HARVEST',
+        targetOpportunity: opportunities.find(o => o.id === portfolio.positions.find(p => p.id === best.positionId)?.venueId) ?? null,
         currentOpportunity: topCurrentOpp(portfolio, opportunities),
-        reason:             best.reason,
-        upliftPct:          0,
+        reason: best.reason,
+        upliftPct: 0,
       };
     }
   }
@@ -128,8 +128,8 @@ export function decideAllocation(
 
     const topAlloc = plan.allocations[0];
     return {
-      action:             'GENESIS',
-      targetOpportunity:  topAlloc.opportunity,
+      action: 'GENESIS',
+      targetOpportunity: topAlloc.opportunity,
       currentOpportunity: null,
       reason: `Opening ${plan.allocations.length}-position portfolio: ${plan.allocations.map(a => `${a.opportunity.strategyType} ${a.allocationPct.toFixed(0)}%`).join(' · ')}`,
       upliftPct: plan.allocations.reduce((s, a) => s + a.opportunity.netAPY * a.allocationPct / 100, 0),
@@ -148,11 +148,11 @@ export function decideAllocation(
       );
       if (replacement) {
         return {
-          action:             'MIGRATE',
-          targetOpportunity:  replacement,
+          action: 'MIGRATE',
+          targetOpportunity: replacement,
           currentOpportunity: opportunities.find(o => o.id === pos.venueId) ?? null,
-          reason:             `IL exit on ${pos.venueName}: ${ilCheck.reason} → migrating to ${replacement.protocol} ${replacement.pool}`,
-          upliftPct:          replacement.netAPY - pos.currentNetAPY,
+          reason: `IL exit on ${pos.venueName}: ${ilCheck.reason} → migrating to ${replacement.protocol} ${replacement.pool}`,
+          upliftPct: replacement.netAPY - pos.currentNetAPY,
         };
       }
     }
@@ -160,6 +160,20 @@ export function decideAllocation(
 
   // ── REBALANCE / MIGRATE ──────────────────────────────────────────────────
   if (portfolio) {
+    // 0. Forced migration override (testing / manual)
+    if (policy.forceMigrateTargetId) {
+      const target = opportunities.find(o => o.id === policy.forceMigrateTargetId);
+      if (target) {
+        return {
+          action: 'MIGRATE',
+          targetOpportunity: target,
+          currentOpportunity: topCurrentOpp(portfolio, opportunities),
+          reason: `Forced migration to ${target.protocol} ${target.pool} (manual override)`,
+          upliftPct: target.netAPY - (portfolio.metrics.weightedNetAPY ?? 0),
+        };
+      }
+    }
+
     const currentWeightedAPY = portfolio.metrics.weightedNetAPY;
 
     // Check if any position has a significantly better replacement.
@@ -173,14 +187,14 @@ export function decideAllocation(
         o.netAPY >= policy.minAPY * 0.8
       );
       if (better) {
-        const uplift      = better.netAPY - pos.currentNetAPY;
+        const uplift = better.netAPY - pos.currentNetAPY;
         const scoreUpgrade = better.geckoScore > pos.geckoScore * 1.15;
-        const bigAPYGap    = better.netAPY >= pos.currentNetAPY * 2 && uplift >= policy.migrationThresholdPct;
+        const bigAPYGap = better.netAPY >= pos.currentNetAPY * 2 && uplift >= policy.migrationThresholdPct;
 
         if ((scoreUpgrade && uplift >= policy.migrationThresholdPct) || bigAPYGap) {
           return {
-            action:             'MIGRATE',
-            targetOpportunity:  better,
+            action: 'MIGRATE',
+            targetOpportunity: better,
             currentOpportunity: opportunities.find(o => o.id === pos.venueId) ?? null,
             reason: `Migrating: ${pos.venueName} (${pos.currentNetAPY.toFixed(1)}%) → ${better.protocol} ${better.pool} (${better.netAPY.toFixed(1)}%) +${uplift.toFixed(1)}% APY`,
             upliftPct: uplift,
@@ -193,8 +207,8 @@ export function decideAllocation(
     const topName = portfolio.positions
       .sort((a, b) => b.allocationPct - a.allocationPct)[0]?.venueName ?? 'portfolio';
     return {
-      action:             'HOLD',
-      targetOpportunity:  topCurrentOpp(portfolio, opportunities),
+      action: 'HOLD',
+      targetOpportunity: topCurrentOpp(portfolio, opportunities),
       currentOpportunity: topCurrentOpp(portfolio, opportunities),
       reason: `${portfolio.positions.length}-position portfolio healthy — weighted APY ${currentWeightedAPY.toFixed(2)}%, no better opportunities (+${topOpp ? (topOpp.netAPY - currentWeightedAPY).toFixed(2) : 0}% uplift below ${policy.migrationThresholdPct}% threshold)`,
       upliftPct: topOpp ? topOpp.netAPY - currentWeightedAPY : 0,
@@ -212,15 +226,15 @@ function topCurrentOpp(portfolio: Portfolio, opportunities: Opportunity[]): Oppo
 // ── Safety gate ───────────────────────────────────────────────────────────────
 
 export interface SafetyCheck {
-  name:     string;
-  passed:   boolean;
-  value:    string;
+  name: string;
+  passed: boolean;
+  value: string;
   required: string;
 }
 
 export interface SafetyGateResult {
-  passed:      boolean;
-  checks:      SafetyCheck[];
+  passed: boolean;
+  checks: SafetyCheck[];
   abortReason: string | null;
 }
 
@@ -231,7 +245,7 @@ export function runSafetyGate(target: Opportunity, policy: UserPolicy): SafetyGa
   checks.push({ name: 'Net APY floor', passed: apyOk, value: `${target.netAPY.toFixed(2)}%`, required: `≥ ${(policy.minAPY * 0.8).toFixed(1)}%` });
 
   const minTVL = policy.managedUSD * 30;
-  const tvlOk  = target.tvlUSD >= minTVL;
+  const tvlOk = target.tvlUSD >= minTVL;
   checks.push({ name: 'Pool liquidity', passed: tvlOk, value: `$${(target.tvlUSD / 1e6).toFixed(2)}M`, required: `≥ $${(minTVL / 1e6).toFixed(2)}M` });
 
   let oiOk = true;

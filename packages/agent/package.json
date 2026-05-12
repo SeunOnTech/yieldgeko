@@ -24,7 +24,10 @@
     "@0gfoundation/0g-compute-ts-sdk": "0.8.3",
     "@0gfoundation/0g-storage-ts-sdk": "^1.2.8",
     "@0gfoundation/0g-ts-sdk": "^1.2.8",
+    "@metamask/smart-accounts-kit": "^1.4.0",
     "@yieldgeko/core": "workspace:*",
+    "@yieldgeko/swap-aggregator": "workspace:*",
+    "better-sqlite3": "^12.10.0",
     "dotenv": "^17.4.2",
     "ethers": "^6.16.0",
     "p-queue": "^9.2.0",
@@ -32,8 +35,11 @@
     "viem": "^2.48.8"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.6.0",
     "ts-node": "^10.9.2",
     "typescript": "^6.0.3"
   }
 }
+
+

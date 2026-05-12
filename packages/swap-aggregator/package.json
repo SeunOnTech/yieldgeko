@@ -1,0 +1,26 @@
+{
+  "name": "@yieldgeko/swap-aggregator",
+  "version": "1.0.0",
+  "description": "Multi-DEX swap aggregator for YieldGeko V2",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "ethers": "^6.x",
+    "viem": "^2.x"
+  },
+  "devDependencies": {
+    "dotenv": "^17.4.2",
+    "typescript": "^5.x",
+    "vitest": "^1.x"
+  }
+}

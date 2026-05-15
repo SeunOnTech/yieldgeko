@@ -2,6 +2,8 @@
 
 **DeFi yield optimization, fully autonomous — every allocation decision made inside a TEE, every proof anchored on 0G.**
 
+**Live at [yieldgeko.com](https://yieldgeko.com)**
+
 ---
 
 ## Traction
@@ -14,11 +16,17 @@ YieldGeko is pre-launch and already has real demand signal — not projected, no
 | Active beta testers | **10 users** | Invited cohort running live strategies with real capital |
 | Proofs anchored on 0G Chain | **14** | `YieldGekoRegistry.totalAnchored()` — live, verify now |
 
+### Community
+
+![YieldGeko community on X — builders, DeFi users, and early adopters following the build in public](docs/assets/community-x.png)
+
+YieldGeko has been building in public since day one. The community formed organically around one question people kept asking: *"when can I deposit?"*
+
 ### What beta testers are doing
 
 ![YieldGeko live beta — user 0x0921…F349, $9,882 portfolio, 705.9% APY, 0G proof verified](docs/assets/beta-dashboard.png)
 
-> Real beta tester dashboard. Wallet `0x092106703adE19BF7a638AD371f8f6c25831F349`, running on Arbitrum One. P&L: +$90.39 (+0.90%). Agent Intelligence sidebar shows live TEE decisions — 42 opportunities ranked, 16 on-chain verified.
+> Real beta tester dashboard. Wallet `0x092106703adE19BF7a638AD371f8f6c25831F349`, running on Yieldgeko. Agent Intelligence sidebar shows live TEE decisions, 16 on-chain verified.
 
 The 10 beta users are running live strategies on Arbitrum through the full stack — onboarding via ERC-4337 smart accounts, delegating to the agent via ERC-7710, and receiving real-time SSE-streamed proof updates as the agent rebalances. Each execution produces a verifiable proof bundle anchored on 0G Chain, which users can inspect at `/verify/:receiptHash`. The registry currently holds **14 anchored proofs**, each independently verifiable:
 

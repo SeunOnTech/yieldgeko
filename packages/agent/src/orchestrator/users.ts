@@ -1,7 +1,80 @@
 import type { UserPolicy, UserState, Phase } from './types';
 import type { StoredDelegation } from './delegation-client';
 
-// ── Demo user policies (replace with real EIP-712 signed intents in prod) ─────
+const REDIS_KEY = 'ys:users';
+
+let _redisClient: any        = undefined;   
+let _redisAvailable: boolean = false;
+
+async function getRedis(): Promise<any> {
+  if (_redisClient !== undefined) return _redisAvailable ? _redisClient : null;
+
+  const url = process.env.REDIS_URL;
+  if (!url) { _redisClient = null; return null; }
+
+  try {
+    
+    
+    const mod = require('ioredis');
+    const Redis = mod.default ?? mod;
+    _redisClient = new Redis(url, {
+      lazyConnect:        true,
+      enableOfflineQueue: false,
+      maxRetriesPerRequest: 1,
+      connectTimeout:     2_000,
+    });
+    _redisClient.on('error', (err: any) =>
+      console.warn('[Redis] Connection error (writes will be skipped):', err.message));
+    await _redisClient.connect();
+    _redisAvailable = true;
+    console.log('[Redis] Connected — write-through cache active');
+    return _redisClient;
+  } catch (e: any) {
+    _redisClient = null;
+    console.warn('[Redis] Unavailable — in-memory only:', e.message,
+      '\n         Install ioredis (pnpm add ioredis) and set REDIS_URL to enable.');
+    return null;
+  }
+}
+
+function redisSet(userId: string, state: UserState): void {
+  getRedis().then(client => {
+    if (!client) return;
+    const json = JSON.stringify(state, (_k, v) =>
+      typeof v === 'bigint' ? { __bigint__: v.toString() } : v);
+    client.hset(REDIS_KEY, userId, json).catch(() => {  });
+  }).catch(() => {  });
+}
+
+function redisDel(userId: string): void {
+  getRedis().then(client => {
+    if (!client) return;
+    client.hdel(REDIS_KEY, userId).catch(() => {  });
+  }).catch(() => {  });
+}
+
+export async function loadAllFromRedis(): Promise<Map<string, UserState>> {
+  const result = new Map<string, UserState>();
+  const client = await getRedis();
+  if (!client) return result;
+  try {
+    const data: Record<string, string> = await client.hgetall(REDIS_KEY);
+    if (!data) return result;
+    for (const [userId, json] of Object.entries(data)) {
+      try {
+        const parsed = JSON.parse(json, (_k, v) => {
+          if (v && typeof v === 'object' && '__bigint__' in v) return BigInt(v.__bigint__);
+          return v;
+        }) as UserState;
+        result.set(userId, parsed);
+      } catch {  }
+    }
+    if (result.size > 0) console.log(`[Redis] Loaded ${result.size} user states from cache`);
+  } catch (e: any) {
+    console.warn('[Redis] loadAllFromRedis failed:', e.message);
+  }
+  return result;
+}
 
 export const DEMO_POLICIES: UserPolicy[] = [
   {
@@ -45,8 +118,6 @@ export const DEMO_POLICIES: UserPolicy[] = [
   },
 ];
 
-// ── Fresh user state factory ───────────────────────────────────────────────────
-
 export function createUserState(policy: UserPolicy, userAddress: string): UserState {
   const now = Date.now();
   return {
@@ -60,35 +131,24 @@ export function createUserState(policy: UserPolicy, userAddress: string): UserSt
     activeSessionStartedAt: now,
     updatedAt:  now,
     tickErrors: 0,
+    isDirty:    true,
+    lastPersistedAt: now,
   };
 }
-
-
-// ── UserRegistry ──────────────────────────────────────────────────────────────
-//
-//  Manages all active user states in memory.
-//  In production, users are added dynamically when they sign an intent.
-//  In dev, DEMO_POLICIES are loaded on boot.
-//
-//  Provides a merge helper to preserve in-memory ephemeral fields
-//  (like recent logs) when restoring from persisted state.
-// ─────────────────────────────────────────────────────────────────────────────
 
 export class UserRegistry {
   private users = new Map<string, UserState>();
 
-  // Register a demo or pre-configured user
+  
   register(policy: UserPolicy, userAddress?: string): UserState {
     const addr = userAddress || policy.userAddress || '0x0000000000000000000000000000000000000000';
     const state = createUserState(policy, addr);
     this.users.set(policy.id, state);
+    redisSet(policy.id, state);
     return state;
   }
 
-
-  // Register a real user who has signed an EIP-712 policy on the frontend.
-  // Marks isReal=true so the orchestrator uses on-chain execution, not simulation.
-  // Demo users (Alice/Bob/Carol) keep running — this only adds new real users.
+  
   registerReal(policy: UserPolicy, userAddress: string): UserState {
     if (this.users.has(policy.id)) {
       return this.users.get(policy.id)!;
@@ -96,27 +156,26 @@ export class UserRegistry {
     const realPolicy: UserPolicy = { ...policy, isReal: true, userAddress };
     const state = createUserState(realPolicy, userAddress);
     this.users.set(realPolicy.id, state);
+    redisSet(realPolicy.id, state);
     return state;
   }
 
-
-  // Register a V2 user who has created a MetaMask smart account and signed a delegation.
-  // Stores the delegation alongside the policy so the executor can redeem it.
+  
   registerV2(
     policy:           UserPolicy,
     smartAccountAddr: string,
     delegation:       StoredDelegation,
   ): UserState {
     if (this.users.has(policy.id)) {
-      // Re-registration: use the incoming policy (new riskTier, managedUSD, minAPY, etc.)
-      // and layer in the V2-specific fields. This allows policy updates on re-register.
       const updatedPolicy: UserPolicy = {
         ...policy,
         smartAccountAddress: smartAccountAddr,
         signedDelegation:    delegation,
         isReal:              true,
       };
-      return this.update(policy.id, { policy: updatedPolicy }) ?? this.users.get(policy.id)!;
+      const updated = this.update(policy.id, { policy: updatedPolicy }) ?? this.users.get(policy.id)!;
+      redisSet(policy.id, updated);
+      return updated;
     }
     const v2Policy: UserPolicy = {
       ...policy,
@@ -126,24 +185,22 @@ export class UserRegistry {
     };
     const state = createUserState(v2Policy, smartAccountAddr);
     this.users.set(v2Policy.id, state);
+    redisSet(v2Policy.id, state);
     return state;
-
   }
 
-  // Restore from persisted state (called on boot)
+  
   restore(persisted: UserState): void {
-    // Merge: keep restored fields but reset ephemeral runtime state
     const merged: UserState = {
       ...persisted,
-      // Fresh runtime fields — these are rebuilt each session
       activeSessionId:        persisted.activeSessionId ?? `session-${Date.now()}`,
       activeSessionStartedAt: persisted.activeSessionStartedAt ?? Date.now(),
       tickErrors: 0,
       updatedAt:  Date.now(),
     };
     this.users.set(persisted.userId, merged);
+    redisSet(persisted.userId, merged);
   }
-
 
   get(userId: string): UserState | undefined {
     return this.users.get(userId);
@@ -153,11 +210,32 @@ export class UserRegistry {
     return this.users.get(policy.id) ?? this.register(policy);
   }
 
-  update(userId: string, patch: Partial<UserState>): UserState | null {
+  update(userId: string, patch: Partial<UserState>, forceDirty: boolean = false): UserState | null {
     const existing = this.users.get(userId);
     if (!existing) return null;
-    const next = { ...existing, ...patch, updatedAt: Date.now() };
+
+    
+    
+    let isDirty = existing.isDirty || forceDirty;
+    
+    if (!isDirty && patch.portfolio && existing.portfolio) {
+      const oldVal = existing.portfolio.metrics.totalValueUSD;
+      const newVal = patch.portfolio.metrics.totalValueUSD;
+      const pctChange = oldVal > 0 ? Math.abs(newVal - oldVal) / oldVal : 1;
+      if (pctChange >= 0.005) isDirty = true; 
+    }
+
+    if (!isDirty && patch.phase && patch.phase !== existing.phase) isDirty = true;
+    if (!isDirty && patch.policy) isDirty = true;
+
+    
+    const hourMs = 60 * 60 * 1000;
+    const lastSaved = existing.lastPersistedAt ?? 0;
+    if (!isDirty && (Date.now() - lastSaved) > hourMs) isDirty = true;
+
+    const next = { ...existing, ...patch, updatedAt: Date.now(), isDirty };
     this.users.set(userId, next);
+    if (isDirty) redisSet(userId, next);   
     return next;
   }
 
@@ -191,9 +269,10 @@ export class UserRegistry {
     return record;
   }
 
-  // Remove user from registry entirely — they stop ticking immediately.
-  // Called on reset-user so a fresh re-registration doesn't race the old entry.
+  
+  
   deregister(userId: string): boolean {
+    redisDel(userId);
     return this.users.delete(userId);
   }
 

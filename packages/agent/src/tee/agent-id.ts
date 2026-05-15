@@ -1,10 +1,6 @@
 import { privateKeyToAccount, PrivateKeyAccount } from 'viem/accounts';
 import { getAgentRuntimeConfig, getConfiguredPrivateKey } from '../config/env';
 
-/**
- * 0G Agent ID Management
- * Manages the hardware-bound identity of the YieldGeko agent.
- */
 export interface AgentAttestationReport {
   mrenclave: `0x${string}`;
   publicKey: string;
@@ -19,11 +15,7 @@ export class AgentIDManager {
     return getConfiguredPrivateKey();
   }
 
-  /**
-   * Initializes the Enclave-Bound Keypair
-   * In production this key should be provisioned to the TEE launcher and
-   * never hardcoded in application code.
-   */
+  
   public static async initializeAgentID(): Promise<string> {
     console.log('[TEE] Loading configured Agent ID key...');
 
@@ -33,14 +25,7 @@ export class AgentIDManager {
     return this.agentAccount.address;
   }
 
-  /**
-   * Generates a Remote Attestation (RA) Report
-   * Proves the code running in the TEE is untampered.
-   *
-   * We intentionally fail closed unless explicit local development mode is
-   * enabled, because fabricating attestation data is worse than surfacing a
-   * hard configuration error.
-   */
+  
   public static async generateAttestationReport(): Promise<AgentAttestationReport> {
     const account = this.getAccount();
 

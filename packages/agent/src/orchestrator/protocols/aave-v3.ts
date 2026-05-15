@@ -2,13 +2,6 @@ import { Contract, Interface, JsonRpcProvider } from 'ethers';
 import type { PriceMap } from './chainlink';
 import { getPrice } from './chainlink';
 
-// ── Aave V3 on Arbitrum ───────────────────────────────────────────────────────
-//
-//  All reads are batched into a single Multicall3 call per method.
-//  APY formula: (1 + liquidityRate/RAY/365/86400)^(365*86400) - 1
-//  This is the exact compound APY, not a simplified linear approximation.
-// ─────────────────────────────────────────────────────────────────────────────
-
 const MULTICALL3 = '0xcA11bde05977b3631167028862bE2a173976CA11';
 const POOL       = '0x794a61358D6845594F94dc1DB02A252b5b4814aD';
 const DATA_PROV  = '0x69FA688f1Dc47d4B5d8029D5a35FB7a548310654';
@@ -23,15 +16,13 @@ export const AAVE_ASSETS: Record<string, { address: string; decimals: number; sy
   DAI:  { address: '0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1', decimals: 18, symbol: 'DAI'  },
 };
 
-// ── Types ─────────────────────────────────────────────────────────────────────
-
 export interface AaveMarket {
   symbol:         string;
-  asset:          string;        // token address
-  supplyAPY:      number;        // % annualized compound
+  asset:          string;        
+  supplyAPY:      number;        
   borrowAPY:      number;
   utilizationPct: number;
-  liquidityUSD:   number;        // total aToken supply in USD
+  liquidityUSD:   number;        
   totalDebtUSD:   number;
   aTokenAddress:  string;
   updatedAt:      number;
@@ -41,14 +32,12 @@ export interface AaveUserPosition {
   symbol:          string;
   asset:           string;
   aTokenAddress:   string;
-  balanceRaw:      bigint;       // aToken balance (18 dec for most, 6 for USDC/USDT)
+  balanceRaw:      bigint;       
   balanceUSD:      number;
   currentSupplyAPY: number;
-  healthFactor:    number;       // 18-dec fixed point from getUserAccountData
+  healthFactor:    number;       
   isDeposited:     boolean;
 }
-
-// ── ABIs ──────────────────────────────────────────────────────────────────────
 
 const MC3_ABI  = ['function aggregate3(tuple(address target, bool allowFailure, bytes callData)[] calls) view returns (tuple(bool success, bytes returnData)[] returnData)'];
 const POOL_ABI = [
@@ -57,10 +46,8 @@ const POOL_ABI = [
 ];
 const ERC20_ABI = ['function balanceOf(address account) view returns (uint256)'];
 
-// ── APY math ──────────────────────────────────────────────────────────────────
-
 function rayToAPY(rayRate: bigint): number {
-  // liquidityRate is per-second, in RAY (1e27)
+  
   const ratePerSecond = Number(rayRate) / Number(RAY);
   return ((1 + ratePerSecond) ** (365 * 24 * 3600) - 1) * 100;
 }
@@ -69,8 +56,6 @@ function rayToBorrowAPY(rayRate: bigint): number {
   const ratePerSecond = Number(rayRate) / Number(RAY);
   return ((1 + ratePerSecond) ** (365 * 24 * 3600) - 1) * 100;
 }
-
-// ── Fetch all Aave markets ────────────────────────────────────────────────────
 
 export async function fetchAaveMarkets(
   provider: JsonRpcProvider,
@@ -126,93 +111,97 @@ export async function fetchAaveMarkets(
           aTokenAddress,
           updatedAt:      Date.now(),
         });
-      } catch { /* skip this asset */ }
+      } catch {  }
     }
-  } catch { /* multicall failed, return empty */ }
+  } catch {  }
 
   return markets;
 }
 
-// ── Fetch user's Aave positions ───────────────────────────────────────────────
-
-export async function fetchAaveUserPositions(
-  userAddress: string,
-  markets:     AaveMarket[],
-  provider:    JsonRpcProvider,
-  prices:      PriceMap,
-): Promise<AaveUserPosition[]> {
-  if (markets.length === 0) return [];
+export async function fetchAaveBatchPositions(
+  userAddresses: string[],
+  markets:       AaveMarket[],
+  provider:      JsonRpcProvider,
+  prices:        PriceMap,
+): Promise<Map<string, AaveUserPosition[]>> {
+  if (markets.length === 0 || userAddresses.length === 0) return new Map();
 
   const mc    = new Contract(MULTICALL3, MC3_ABI, provider);
-  const iface = new Interface(ERC20_ABI);
+  const erc20 = new Interface(ERC20_ABI);
+  const pool  = new Interface(POOL_ABI);
 
-  // Batch: aToken.balanceOf(user) for each market
-  const balCalls = markets.map(m => ({
-    target:       m.aTokenAddress,
-    allowFailure: true,
-    callData:     iface.encodeFunctionData('balanceOf', [userAddress]),
-  }));
+  const calls: { target: string; allowFailure: boolean; callData: string }[] = [];
 
-  // Plus: getUserAccountData for health factor
-  const poolIface = new Interface(POOL_ABI);
-  const hfCall = {
-    target:       POOL,
-    allowFailure: true,
-    callData:     poolIface.encodeFunctionData('getUserAccountData', [userAddress]),
-  };
+  for (const user of userAddresses) {
+    
+    for (const m of markets) {
+      calls.push({
+        target:       m.aTokenAddress,
+        allowFailure: true,
+        callData:     erc20.encodeFunctionData('balanceOf', [user]),
+      });
+    }
+    
+    calls.push({
+      target:       POOL,
+      allowFailure: true,
+      callData:     pool.encodeFunctionData('getUserAccountData', [user]),
+    });
+  }
 
-  const positions: AaveUserPosition[] = [];
+  const results = new Map<string, AaveUserPosition[]>();
+  const stride  = markets.length + 1;
 
   try {
-    const raw: { success: boolean; returnData: string }[] =
-      await mc.aggregate3([...balCalls, hfCall]);
+    const raw: { success: boolean; returnData: string }[] = await mc.aggregate3(calls);
 
-    // Parse health factor
-    let healthFactor = Infinity;
-    const hfResult = raw[raw.length - 1];
-    if (hfResult.success && hfResult.returnData && hfResult.returnData !== '0x') {
-      try {
-        const hfDecoded = poolIface.decodeFunctionResult('getUserAccountData', hfResult.returnData);
-        const hfRaw = BigInt(hfDecoded[5].toString());
-        healthFactor = Number(hfRaw) / 1e18;
-      } catch { /* keep Infinity */ }
+    for (let u = 0; u < userAddresses.length; u++) {
+      const user = userAddresses[u];
+      const base = u * stride;
+      
+      
+      let healthFactor = Infinity;
+      const hfResult = raw[base + markets.length];
+      if (hfResult?.success && hfResult.returnData && hfResult.returnData !== '0x') {
+        try {
+          const hfDecoded = pool.decodeFunctionResult('getUserAccountData', hfResult.returnData);
+          healthFactor = Number(BigInt(hfDecoded[5].toString())) / 1e18;
+        } catch {  }
+      }
+
+      const userPos: AaveUserPosition[] = [];
+      for (let m = 0; m < markets.length; m++) {
+        const market = markets[m];
+        const res = raw[base + m];
+        if (!res?.success || !res.returnData || res.returnData === '0x') continue;
+
+        try {
+          const bal = erc20.decodeFunctionResult('balanceOf', res.returnData)[0] as bigint;
+          if (bal === 0n) continue;
+
+          const price = getPrice(prices, market.symbol);
+          const balUSD = Number(bal) / 10 ** (AAVE_ASSETS[market.symbol]?.decimals ?? 18) * price;
+
+          userPos.push({
+            symbol:           market.symbol,
+            asset:            market.asset,
+            aTokenAddress:    market.aTokenAddress,
+            balanceRaw:       bal,
+            balanceUSD:       balUSD,
+            currentSupplyAPY: market.supplyAPY,
+            healthFactor,
+            isDeposited:      balUSD > 0.01,
+          });
+        } catch {  }
+      }
+      results.set(user, userPos);
     }
+  } catch (err: any) {
+    console.warn('[Aave] Batch fetch failed:', err.message);
+  }
 
-    for (let i = 0; i < markets.length; i++) {
-      const market = markets[i];
-      const { success, returnData } = raw[i];
-      if (!success || !returnData || returnData === '0x') continue;
-
-      try {
-        const bal = iface.decodeFunctionResult('balanceOf', returnData)[0] as bigint;
-        if (bal === 0n) continue;
-
-        const sym   = market.symbol;
-        const dec   = AAVE_ASSETS[sym]?.decimals ?? 18;
-        const price = getPrice(prices, sym);
-        const balUSD = Number(bal) / 10 ** dec * price;
-
-        positions.push({
-          symbol:           sym,
-          asset:            market.asset,
-          aTokenAddress:    market.aTokenAddress,
-          balanceRaw:       bal,
-          balanceUSD:       balUSD,
-          currentSupplyAPY: market.supplyAPY,
-          healthFactor,
-          isDeposited:      balUSD > 0.01,
-        });
-      } catch { /* skip */ }
-    }
-  } catch { /* multicall failed */ }
-
-  return positions;
+  return results;
 }
-
-// ── Pre-execution rate verification ──────────────────────────────────────────
-//
-//  Call immediately before executing a deposit into Aave.
-//  Returns null if rate is acceptable, string error if not.
 
 export async function verifyAaveRate(
   assetSymbol:  string,

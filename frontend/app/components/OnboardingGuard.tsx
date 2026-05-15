@@ -18,9 +18,9 @@ export default function OnboardingGuard({ children }: OnboardingGuardProps) {
   useEffect(() => {
     if (!isLoaded) return
 
-    // Logic for redirection
+    
     if (status === 'ready') {
-      // If user is already onboarded but tries to access onboarding pages, send to app
+      
       if (pathname === '/app/onboard' || pathname === '/app/connect') {
         setIsRedirecting(true)
         router.replace('/app')
@@ -29,7 +29,6 @@ export default function OnboardingGuard({ children }: OnboardingGuardProps) {
     }
 
     if (status === 'need_onboarding') {
-      // If user needs onboarding but is trying to access the dashboard, send to onboard
       if (pathname === '/app' || pathname === '/app/create') {
         setIsRedirecting(true)
         router.replace('/app/onboard')
@@ -38,19 +37,18 @@ export default function OnboardingGuard({ children }: OnboardingGuardProps) {
     }
 
     if (status === 'disconnected') {
-      // If disconnected and trying to access protected areas
-      if (pathname === '/app' || pathname === '/app/onboard' || pathname === '/app/create') {
+      if (pathname === '/app' || pathname === '/app/create') {
         setIsRedirecting(true)
         router.replace('/app/connect')
         return
       }
     }
 
-    // If we reached here, no redirect is needed
+    
     setIsRedirecting(false)
   }, [status, isLoaded, pathname, router])
 
-  // Show global loader during initial load or while redirecting
+  
   const showLoader = !isLoaded || isRedirecting
 
   return (

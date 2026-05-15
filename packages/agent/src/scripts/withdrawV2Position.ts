@@ -1,18 +1,4 @@
-/**
- * V2 Position Withdrawal Script
- *
- * Closes UniV3 LP position and converts all tokens back to USDC
- * in the smart account via Pimlico-sponsored UserOps.
- *
- * Steps:
- *   1. decreaseLiquidity (burn all LP, collect WBTC + USDT to smart account)
- *   2. collect (sweep any remaining tokensOwed)
- *   3. Swap WBTC → USDC
- *   4. Swap USDT → USDC
- *
- * Run:
- *   npx ts-node src/scripts/withdrawV2Position.ts
- */
+
 
 import 'dotenv/config';
 import {
@@ -26,10 +12,6 @@ import { arbitrum } from 'viem/chains';
 import { Implementation, toMetaMaskSmartAccount } from '@metamask/smart-accounts-kit';
 import { toSimpleSmartAccount } from 'permissionless/accounts';
 import { createPimlicoClient }  from 'permissionless/clients/pimlico';
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Addresses
-// ─────────────────────────────────────────────────────────────────────────────
 
 const NFPM       = '0xC36442b4a4522E871399CD717aBDD847Ab11FE88' as Address;
 const ROUTER     = '0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45' as Address;
@@ -88,7 +70,7 @@ async function main() {
   console.log(`  Smart account: ${smartAcct}`);
   console.log(`  NFT tokenId:   ${TOKEN_ID}`);
 
-  // ── Read current position ─────────────────────────────────────────────────
+  
 
   const pos = await publicClient.readContract({
     address: NFPM, abi: NFPM_ABI, functionName: 'positions', args: [TOKEN_ID],
@@ -105,7 +87,7 @@ async function main() {
     return;
   }
 
-  // ── Step 1: Close position (decreaseLiquidity + collect) ──────────────────
+  
 
   console.log('\n  Step 1: Closing position (decreaseLiquidity + collect)...');
 
@@ -131,7 +113,7 @@ async function main() {
   const op1Receipt = await bundlerClient.waitForUserOperationReceipt({ hash: op1Hash });
   console.log(`  ✅ Position closed — tx: ${op1Receipt.receipt.transactionHash}`);
 
-  // ── Read balances after close ─────────────────────────────────────────────
+  
 
   const [wbtcBal, usdtBal, usdcBefore] = await Promise.all([
     publicClient.readContract({ address: WBTC, abi: ERC20_ABI, functionName: 'balanceOf', args: [smartAcct] }),
@@ -144,13 +126,13 @@ async function main() {
   console.log(`    USDT: ${usdtBal} (${formatUnits(usdtBal, 6)} USDT)`);
   console.log(`    USDC before swaps: ${formatUnits(usdcBefore, 6)} USDC`);
 
-  // ── Step 2: Swap WBTC + USDT → USDC ──────────────────────────────────────
+  
 
   console.log('\n  Step 2: Swapping WBTC + USDT → USDC...');
 
   const swapCalls: { to: Address; value: bigint; data: Hex }[] = [];
 
-  // Swaps send USDC to smart account (ready for next E2E test)
+  
   const eoa = smartAcct;
 
   if (wbtcBal > 0n) {
@@ -189,7 +171,7 @@ async function main() {
     });
   }
 
-  // Also sweep any USDC already sitting in smart account back to EOA
+  
   const usdcInSA = await publicClient.readContract({ address: USDC, abi: ERC20_ABI, functionName: 'balanceOf', args: [smartAcct] });
   if (usdcInSA > 0n) {
     const ERC20_TRANSFER = parseAbi(['function transfer(address,uint256) external returns (bool)']);
@@ -209,7 +191,7 @@ async function main() {
     console.log(`  ✅ Swaps complete — tx: ${op2Receipt.receipt.transactionHash}`);
   }
 
-  // ── Final balances ────────────────────────────────────────────────────────
+  
 
   const [usdcEOA, usdcSA] = await Promise.all([
     publicClient.readContract({ address: USDC, abi: ERC20_ABI, functionName: 'balanceOf', args: [userAccount.address] }),

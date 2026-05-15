@@ -31,7 +31,7 @@ export class OpportunityScout {
   private client: any;
   private managedAmount: bigint;
 
-  constructor(rpcUrl: string, managedAmount: bigint = 5000000000n) { // Default 5k USDC
+  constructor(rpcUrl: string, managedAmount: bigint = 5000000000n) { 
     this.client = createPublicClient({
       chain: arbitrum,
       transport: http(rpcUrl),
@@ -55,7 +55,7 @@ export class OpportunityScout {
             ]);
             return Number(assets) / Number(supply);
         } catch (e) {
-            return 1.024; // Fallback to last known safe
+            return 1.024; 
         }
     }
     if (asset.includes('weETH')) return 1.051; 
@@ -73,7 +73,7 @@ export class OpportunityScout {
     const leaderboard: ScannedVenue[] = [];
     const susdeFairValue = await this.getFairValue('sUSDe');
     
-    // 1. DEX Probes (Dynamic)
+    
     const factoryAddr = getAddress('0x1F98431c8aD98523631AE4a59f267346ea31F984');
     try {
         const fees = [100, 500];
@@ -111,7 +111,7 @@ export class OpportunityScout {
         console.warn(`! DEX scanning partially failed: ${e.message}`);
     }
 
-    // 2. Morpho Blue Discovery
+    
     try {
         const morphoMarketId = this.getMorphoId(
             SUSDE_ADDR,
@@ -138,11 +138,11 @@ export class OpportunityScout {
         console.warn(`! Morpho scanning failed: ${e.message}`);
     }
 
-    // 3. Silo Finance (Real-Time)
+    
     const SILO_SUSDE = getAddress('0x890786f376dcde0d92b5f899d59a4f038fff620b');
     try {
         const [totalDeposits, totalBorrows, depositRate, borrowRate] = await this.client.readContract({ address: SILO_SUSDE, abi: ABI, functionName: 'getLiquidityAndRates' });
-        const siloApy = Number(depositRate) / 1e16; // Convert to %
+        const siloApy = Number(depositRate) / 1e16; 
         leaderboard.push({
             venue: 'Silo Finance',
             asset: 'sUSDe Market',
@@ -156,11 +156,11 @@ export class OpportunityScout {
         console.warn(`! Silo scanning failed: ${e.message}`);
     }
 
-    // 4. Ecosystem Safety Layer (Mixed Probes)
+    
     const AAVE_POOL = getAddress('0x794a61358D6845594F94dc1DB02A252b5b4814aD');
     try {
         const rData = await this.client.readContract({ address: AAVE_POOL, abi: ABI, functionName: 'getReserveData', args: [USDC_ADDR] });
-        const aaveApy = Number(rData[3]) / 1e25; // Convert Ray to %
+        const aaveApy = Number(rData[3]) / 1e25; 
         leaderboard.push({
             venue: 'Aave V3',
             asset: 'USDC (Safe)',

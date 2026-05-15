@@ -13,7 +13,7 @@ import { encodeAbiParameters, parseAbiParameters } from 'viem';
 const AGENT_BASE = process.env.AGENT_BASE_URL ?? 'http://localhost:3001';
 const ARB_RPC    = process.env.ARB_RPC_URL ?? 'https://arb1.arbitrum.io/rpc';
 
-const TREASURY = '0x092106703adE19BF7a638AD371f8f6c25831F349'; // Default treasury
+const TREASURY = '0x092106703adE19BF7a638AD371f8f6c25831F349'; 
 const ENFORCER = '0x21b25E099CA7AF1BEa3a4558E437C56680B4b925';
 const USDC     = '0xaf88d065e77c8cC2239327C5EDb3A432268e5831';
 
@@ -33,15 +33,15 @@ async function main() {
   console.log(`Smart Account: ${smartAccount.address}`);
 
   const expiresAt   = BigInt(Math.floor(Date.now() / 1000) + 365 * 24 * 3600);
-  const managedUSD6 = 1000000n; // $1
+  const managedUSD6 = 1000000n; 
 
   const policyTerms = encodeAbiParameters(
     parseAbiParameters('uint256, uint256, uint256, uint256, address, uint256, address'),
     [
-      200n,         // minAPYBps
-      2000n,        // maxDrawdownBps
-      managedUSD6,  // managedUSD6
-      1000n,        // maxFeeBps
+      200n,         
+      2000n,        
+      managedUSD6,  
+      1000n,        
       TREASURY as Address,
       expiresAt,
       USDC as Address,

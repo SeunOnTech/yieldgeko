@@ -4,8 +4,6 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { AppNav } from '../../components/ui'
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
 type NodeState = 'pending' | 'verifying' | 'verified' | 'failed'
 
 const NODES = [
@@ -23,8 +21,6 @@ function statusLabel(state: NodeState): string {
     case 'failed':    return 'Invalid'
   }
 }
-
-// ─── Verification node ────────────────────────────────────────────────────────
 
 function VNode({
   node, state, lineFilled, last,
@@ -79,8 +75,6 @@ function VNode({
   )
 }
 
-// ─── Share row ────────────────────────────────────────────────────────────────
-
 function ShareRow({ url }: { url: string }) {
   const [copied, setCopied] = useState(false)
   const onCopy = () => {
@@ -109,8 +103,6 @@ function ShareRow({ url }: { url: string }) {
     </div>
   )
 }
-
-// ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function ProofPage({ params }: { params: { hash: string } }) {
   const router = useRouter()
@@ -152,14 +144,14 @@ export default function ProofPage({ params }: { params: { hash: string } }) {
             </div>
           </div>
 
-          {/* Main card */}
+          
           <div style={{
             marginTop: 32,
             background: '#FFFFFF', border: '1px solid #E7E5E4',
             borderRadius: 24, padding: 40,
             boxShadow: '0 8px 24px rgba(28,25,23,0.10)',
           }}>
-            {/* Card header */}
+            
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16 }}>
               <div>
                 <div style={{ fontSize: 20, fontWeight: 600, color: '#1C1917', letterSpacing: '-0.01em' }}>
@@ -172,7 +164,7 @@ export default function ProofPage({ params }: { params: { hash: string } }) {
               <div style={{ fontSize: 13, color: '#A8A29E', whiteSpace: 'nowrap' }}>2 hours ago</div>
             </div>
 
-            {/* Verification chain */}
+            
             <div className="vchain">
               {NODES.map((n, i) => (
                 <VNode
@@ -228,7 +220,7 @@ export default function ProofPage({ params }: { params: { hash: string } }) {
             </div>
           </div>
 
-          {/* Share */}
+          
           <div style={{ marginTop: 32 }}>
             <div style={{ fontSize: 13, fontWeight: 500, color: '#78716C', marginBottom: 10 }}>Share this proof</div>
             <ShareRow url={`https://yieldgeko.xyz/proof/${params.hash}`} />

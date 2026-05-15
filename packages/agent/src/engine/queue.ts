@@ -6,14 +6,10 @@ import {
   restoreEncryptedJsonArtifact,
 } from '../storage/persist';
 
-/**
- * YieldGeko Priority Execution Queue
- * Manages multi-user intents with strict ordering and persistence.
- */
 export enum QueueTier {
-  SAFETY_EXIT = 0, // Highest Priority (Emergency Exits)
-  RISK_OFF = 1,    // High Priority (Manual De-risking)
-  YIELD_SEEK = 2   // Normal Priority (FIFO)
+  SAFETY_EXIT = 0, 
+  RISK_OFF = 1,    
+  YIELD_SEEK = 2   
 }
 
 export interface QueueItem {
@@ -67,12 +63,10 @@ export function deserializeQueueItems(items: QueueItemWire[]): QueueItem[] {
 export class ExecutionQueue {
   private queue: QueueItem[] = [];
 
-  /**
-   * Adds an intent to the queue with priority sorting
-   */
+  
   public enqueue(item: QueueItem) {
     this.queue.push(item);
-    // Sort by Tier (Risk-Off first), then by Timestamp (FIFO)
+    
     this.queue.sort((a, b) => {
       if (a.tier !== b.tier) return a.tier - b.tier;
       return a.timestamp - b.timestamp;
@@ -80,9 +74,7 @@ export class ExecutionQueue {
     console.log(`[Queue] Item added for User ${item.userId} (Tier: ${QueueTier[item.tier]}). Total Depth: ${this.queue.length}`);
   }
 
-  /**
-   * Persists the queue state to 0G Storage (Encrypted)
-   */
+  
   public async persistToStorage(
     encryptionKeyBase64: string,
     config: StoragePersistenceConfig
@@ -98,9 +90,7 @@ export class ExecutionQueue {
     return persistEncryptedJsonArtifact(QUEUE_SCHEMA, snapshot, encryptionKeyBase64, config);
   }
 
-  /**
-   * Restores the queue from 0G Storage on boot
-   */
+  
   public async restoreFromStorage(
     cid: string,
     encryptionKeyBase64: string,

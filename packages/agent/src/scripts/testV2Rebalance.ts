@@ -1,25 +1,8 @@
-/**
- * testV2Rebalance.ts
- *
- * Triggers a live MIGRATE from the current running strategy to the second-best
- * pool. Use this to verify the full rebalance flow works end-to-end.
- *
- * What it does:
- *   1. Reads the running V2 user from the agent state
- *   2. Gets the ranked opportunity list
- *   3. Picks the second-best pool that differs from the current position
- *   4. Calls the agent's executor.migrate() directly (same path as auto-rebalance)
- *   5. Polls agent state until the new position appears or an error is logged
- *
- * Run:
- *   npx ts-node src/scripts/testV2Rebalance.ts
- */
+
 
 import 'dotenv/config';
 
 const AGENT_BASE = process.env.AGENT_BASE_URL ?? 'http://localhost:3001';
-
-// ── helpers ───────────────────────────────────────────────────────────────────
 
 async function get(path: string): Promise<any> {
   const headers: any = {};
@@ -52,12 +35,10 @@ function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
 
 function short(s: string, n = 10) { return `${s.slice(0, n)}…`; }
 
-// ── main ──────────────────────────────────────────────────────────────────────
-
 async function main() {
   console.log('=== YieldGeko V2 Rebalance Test ===\n');
 
-  // 1. Get agent state
+  
   console.log('1. Fetching agent state…');
   const state = await get('/state');
   const users  = Object.values(state.users ?? {}) as any[];
@@ -90,7 +71,7 @@ async function main() {
     process.exit(1);
   }
 
-  // 2. Get ranked opportunities
+  
   console.log('2. Getting ranked opportunities…');
   const oppsRes = await get('/state');
   const opps    = (oppsRes.opportunities ?? []) as any[];
@@ -100,7 +81,7 @@ async function main() {
     process.exit(1);
   }
 
-  // Find second-best DELTA_NEUTRAL that differs from current position
+  
   const currentVenueId = currentPos?.venueId ?? currentPos?.venueAddress;
   const candidates = opps.filter((o: any) =>
     o.strategyType === 'DELTA_NEUTRAL' &&
@@ -118,16 +99,16 @@ async function main() {
   console.log(`   → Target: ${target.pool} @ ${target.netAPY?.toFixed(1) ?? '?'}% APY`);
   console.log(`   Address:  ${target.address}\n`);
 
-  // 3. Force reset to IDLE then re-trigger via a synthetic high-APY signal
-  //    The cleanest way: call /api/reset-user to clear the portfolio, then the
-  //    agent will run GENESIS to the current best pool. But that loses the existing
-  //    position. Instead, we force the migrate by temporarily injecting the decision.
-  //
-  //    Simpler approach: call the internal /api/force-migrate endpoint if it exists,
-  //    or trigger the rebalance by adjusting the migration threshold in the policy.
-  //
-  //    ACTUAL approach: directly call the agent's execute endpoint which mirrors
-  //    what the tick does for a MIGRATE decision.
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
 
   console.log('3. Triggering MIGRATE via agent execute API…');
 
@@ -140,13 +121,13 @@ async function main() {
     });
     console.log('   ✓ Force-migrate accepted:', JSON.stringify(migrateRes));
   } catch (e: any) {
-    // /api/force-migrate may not exist — fall back to lowering migration threshold
+    
     console.log('   /api/force-migrate not available, using threshold override…');
     migrateRes = null;
   }
 
   if (!migrateRes) {
-    // Fallback: patch the migration threshold to 0% so the agent migrates on next tick
+    
     console.log('   Patching migration threshold to 0% to force migrate on next tick…');
     try {
       await post('/api/patch-policy', {
@@ -164,7 +145,7 @@ async function main() {
     }
   }
 
-  // 4. Poll for state change
+  
   console.log('4. Polling agent state for migrate result (up to 3 minutes)…\n');
   const startTs    = Date.now();
   const timeoutMs  = 3 * 60 * 1000;
@@ -192,7 +173,7 @@ async function main() {
       console.log(`   [${elapsed}s] ${lastLog.level}: ${lastLog.message}`);
     }
 
-    // Check for migrate execution
+    
     if (lastExec?.action === 'GENESIS' && lastExec.txHash &&
         newPos?.venueAddress?.toLowerCase() !== currentPos.venueAddress?.toLowerCase()) {
       console.log('\n=== MIGRATE SUCCESSFUL ===');
@@ -205,7 +186,7 @@ async function main() {
       break;
     }
 
-    // Check for error
+    
     const recentLogs = (u.log ?? []).slice(-5);
     const errorLog   = recentLogs.find((l: any) =>
       l.level === 'ERROR' && l.timestamp > startTs
@@ -229,7 +210,7 @@ async function main() {
     console.log('Check agent logs: the migration may still be running or may have failed.');
   }
 
-  // 5. Final state
+  
   console.log('\n5. Final state:');
   const finalState = await get('/state');
   const finalUser  = (Object.values(finalState.users ?? {}) as any[]).find((x: any) => x.userId === userId);

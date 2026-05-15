@@ -6,19 +6,6 @@ import { planAllocation } from './portfolio';
 import { shouldExitForIL } from './il-engine';
 import { evaluatePortfolioHarvests } from './compounder';
 
-// ── Allocation Engine ─────────────────────────────────────────────────────────
-//
-//  Decisions per tick:
-//
-//    GENESIS:      no portfolio → open initial multi-position portfolio
-//    REBALANCE:    portfolio drifted from targets, or better opportunity found
-//    SAFETY_EXIT:  RED circuit breaker → close risky position to safe haven
-//    HARVEST:      pending rewards above gas threshold → compound
-//    HOLD:         portfolio is healthy, no action
-//
-//  Priority order: SAFETY_EXIT > HARVEST > GENESIS > REBALANCE > HOLD
-// ─────────────────────────────────────────────────────────────────────────────
-
 export function decideAllocation(
   opportunities: Opportunity[],
   policy: UserPolicy,
@@ -27,9 +14,9 @@ export function decideAllocation(
 ): AllocationDecision {
   const topOpp = opportunities[0] ?? null;
 
-  // ── SAFETY EXIT ─────────────────────────────────────────────────────────
+  
   if (circuitBreakerRed && portfolio) {
-    // Find the safest venue (Aave or Morpho preferred)
+    
     const idealSafeHaven = opportunities.find(o =>
       o.strategyType === 'AAVE_LENDING' || o.strategyType === 'MORPHO_LENDING'
     ) ?? null;
@@ -38,8 +25,8 @@ export function decideAllocation(
     let safeHavenReason = 'Circuit breaker RED — moving to safe haven to protect capital';
 
     if (!safeHaven) {
-      // No Aave/Morpho opportunity in the ranked list — fall back to the
-      // single highest-ranked opportunity to avoid being stuck in HOLD.
+      
+      
       safeHaven = opportunities[0] ?? null;
       if (safeHaven) {
         console.warn(
@@ -47,11 +34,11 @@ export function decideAllocation(
         );
         safeHavenReason = `Circuit breaker RED — ideal safe haven unavailable, falling back to highest-ranked opportunity (${safeHaven.protocol} ${safeHaven.pool})`;
       }
-      // If safeHaven is still null (completely empty list), we HOLD below
+      
     }
 
     if (!safeHaven) {
-      // Opportunity list is completely empty — no safe haven at all, must HOLD
+      
       return {
         action: 'HOLD', targetOpportunity: null, currentOpportunity: topCurrentOpp(portfolio, opportunities),
         reason: 'Circuit breaker RED but no opportunities available — holding until market recovers',
@@ -68,7 +55,7 @@ export function decideAllocation(
     };
   }
 
-  // ── HARVEST ─────────────────────────────────────────────────────────────
+  
   if (portfolio) {
     const harvests = evaluatePortfolioHarvests(portfolio.positions);
     if (harvests.length > 0) {
@@ -83,18 +70,18 @@ export function decideAllocation(
     }
   }
 
-  // ── GENESIS ──────────────────────────────────────────────────────────────
+  
   if (!portfolio) {
-    // Build the initial multi-position portfolio plan.
-    // Filter out PENDLE_PT/YT where the market matures before the user's policy expires —
-    // agent would be unable to exit cleanly within the user's time horizon.
+    
+    
+    
     const nowMs = Date.now();
     const validOpps = opportunities.filter(o => {
       if (o.netAPY < policy.minAPY * 0.8) return false;
       if ((o.strategyType === 'PENDLE_PT' || o.strategyType === 'PENDLE_YT') && o.maturityDate) {
         const maturityMs = o.maturityDate * 1_000;
-        // Skip if policy expires AFTER maturity (user time horizon outlasts the PT)
-        // OR if maturity is too close (< 7 days away — not worth entering near expiry)
+        
+        
         const sevenDaysMs = 7 * 24 * 60 * 60 * 1_000;
         if (maturityMs - nowMs < sevenDaysMs) return false;
       }
@@ -102,7 +89,7 @@ export function decideAllocation(
     });
 
     if (validOpps.length === 0) {
-      // Nothing passes minimum — fallback to best Aave position
+      
       const aave = opportunities.find(o => o.strategyType === 'AAVE_LENDING');
       if (aave) {
         return {
@@ -136,14 +123,14 @@ export function decideAllocation(
     };
   }
 
-  // ── IL EXIT CHECK (per position) ─────────────────────────────────────────
+  
   for (const pos of portfolio.positions) {
     const ilCheck = shouldExitForIL(pos);
     if (ilCheck.shouldExit) {
-      // Replace this position with a better alternative
+      
       const replacement = opportunities.find(o =>
         o.id !== pos.venueId &&
-        o.geckoScore > pos.geckoScore * 0.8 &&  // at least 80% of original score
+        o.geckoScore > pos.geckoScore * 0.8 &&  
         o.netAPY >= policy.minAPY * 0.8
       );
       if (replacement) {
@@ -158,9 +145,9 @@ export function decideAllocation(
     }
   }
 
-  // ── REBALANCE / MIGRATE ──────────────────────────────────────────────────
+  
   if (portfolio) {
-    // 0. Forced migration override (testing / manual)
+    
     if (policy.forceMigrateTargetId) {
       const target = opportunities.find(o => o.id === policy.forceMigrateTargetId);
       if (target) {
@@ -176,10 +163,10 @@ export function decideAllocation(
 
     const currentWeightedAPY = portfolio.metrics.weightedNetAPY;
 
-    // Check if any position has a significantly better replacement.
-    // Two triggers — either one is sufficient:
-    //   A. GeckoScore 15% better AND APY uplift above migration threshold (normal upgrades)
-    //   B. APY uplift is 2× or more the current APY (large opportunity gap — e.g. stablecoin→volatile)
+    
+    
+    
+    
     for (const pos of portfolio.positions) {
       const better = opportunities.find(o =>
         o.strategyType === pos.strategyType &&
@@ -203,7 +190,7 @@ export function decideAllocation(
       }
     }
 
-    // HOLD — portfolio is healthy
+    
     const topName = portfolio.positions
       .sort((a, b) => b.allocationPct - a.allocationPct)[0]?.venueName ?? 'portfolio';
     return {
@@ -222,8 +209,6 @@ function topCurrentOpp(portfolio: Portfolio, opportunities: Opportunity[]): Oppo
   const largest = portfolio.positions.sort((a, b) => b.allocationUSD - a.allocationUSD)[0];
   return largest ? (opportunities.find(o => o.id === largest.venueId) ?? null) : null;
 }
-
-// ── Safety gate ───────────────────────────────────────────────────────────────
 
 export interface SafetyCheck {
   name: string;

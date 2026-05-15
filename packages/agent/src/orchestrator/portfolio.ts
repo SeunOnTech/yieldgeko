@@ -5,37 +5,6 @@ import type {
 } from './types';
 import { applyTierMultiplier } from './gecko-scorer';
 
-// ── Portfolio Manager ─────────────────────────────────────────────────────────
-//
-//  Manages multi-position portfolios. Each user holds 2-4 positions
-//  simultaneously across uncorrelated strategies.
-//
-//  Allocation targets per tier (research-backed):
-//
-//    Conservative  — zero IL, stable real yield
-//      50% Morpho/Aave (best lending rate)
-//      30% Aave (safe haven)
-//      20% Pendle PT (fixed yield bond)
-//
-//    Balanced      — stable + active real yield
-//      40% GMX ETH/USDC (trader fees)
-//      25% Delta-neutral Uni V3 (LP fees, hedged)
-//      20% Morpho/Aave (floor)
-//      15% Pendle LP (yield market fees)
-//
-//    Aggressive    — active strategies, higher APY, managed IL
-//      40% Delta-neutral concentrated LP
-//      35% GMX ETH/USDC
-//      15% Pendle LP
-//      10% Aave (emergency floor, minimal)
-//
-//    Advanced      — full sophistication, leverage, speculation
-//      40% Leveraged Aave loop
-//      30% Delta-neutral
-//      20% Pendle YT
-//      10% GMX
-// ─────────────────────────────────────────────────────────────────────────────
-
 const TIER_TARGETS: Record<RiskTier, AllocationTarget[]> = {
   conservative: [
     { strategyType: 'MORPHO_LENDING', minPct: 30, maxPct: 60, targetPct: 50, priority: 1 },
@@ -62,8 +31,6 @@ const TIER_TARGETS: Record<RiskTier, AllocationTarget[]> = {
   ],
 };
 
-// ── Allocation planning ───────────────────────────────────────────────────────
-
 export interface AllocationPlan {
   allocations: { opportunity: Opportunity; allocationPct: number; allocationUSD: number }[];
   totalPct:    number;
@@ -80,14 +47,14 @@ export function planAllocation(
   let remainingPct = 100;
 
   for (const target of targets.sort((a, b) => a.priority - b.priority)) {
-    // Find best opportunity matching this strategy type
+    
     const match = opportunities.find(o =>
       o.strategyType === target.strategyType &&
-      o.netAPY >= policy.minAPY * 0.8  // allow 20% below minAPY for portfolio slots
+      o.netAPY >= policy.minAPY * 0.8  
     );
 
     if (!match) {
-      // Try fallback: if Morpho not available, use Aave
+      
       const fallbackType = getFallback(target.strategyType);
       const fallback = fallbackType
         ? opportunities.find(o => o.strategyType === fallbackType && o.netAPY >= policy.minAPY * 0.6)
@@ -118,7 +85,7 @@ export function planAllocation(
     if (remainingPct <= 0) break;
   }
 
-  // If remaining capital exists, add it to the highest-scoring existing slot
+  
   if (remainingPct > 1 && allocations.length > 0) {
     const best = allocations.reduce((a, b) =>
       b.opportunity.geckoScore > a.opportunity.geckoScore ? b : a
@@ -145,8 +112,6 @@ function getFallback(strategyType: StrategyType): StrategyType | null {
   return fallbacks[strategyType] ?? null;
 }
 
-// ── Portfolio construction ────────────────────────────────────────────────────
-
 export function openPortfolio(
   plan:   AllocationPlan,
   policy: UserPolicy,
@@ -160,6 +125,7 @@ export function openPortfolio(
     venueName:       `${a.opportunity.protocol} ${a.opportunity.pool}`,
     protocol:        a.opportunity.protocol,
     strategyType:    a.opportunity.strategyType,
+    asset:           a.opportunity.asset,
     allocationPct:   a.allocationPct,
     allocationUSD:   a.allocationUSD,
     geckoScore:      a.opportunity.geckoScore,
@@ -167,7 +133,7 @@ export function openPortfolio(
     entryAPY:        a.opportunity.grossAPY,
     entryUSD:        a.allocationUSD,
     entryTime:       now,
-    entryPriceUSD:   0,   // set by orchestrator from Chainlink at genesis
+    entryPriceUSD:   0,   
 
     currentAPY:      a.opportunity.grossAPY,
     currentNetAPY:   a.opportunity.netAPY,
@@ -203,8 +169,6 @@ export function openPortfolio(
   };
 }
 
-// ── Portfolio metrics ─────────────────────────────────────────────────────────
-
 export function computePortfolioMetrics(positions: PortfolioPosition[]): PortfolioMetrics {
   if (positions.length === 0) {
     return {
@@ -226,7 +190,7 @@ export function computePortfolioMetrics(positions: PortfolioPosition[]): Portfol
   const drawdownPct     = peakValueUSD > 0 ? ((peakValueUSD - totalValueUSD) / peakValueUSD) * 100 : 0;
   const totalFeesEarned = positions.reduce((s, p) => s + p.feesEarnedUSD, 0);
 
-  // Capital-weighted APY
+  
   const weightedNetAPY = totalEntryUSD > 0
     ? positions.reduce((s, p) => s + p.currentNetAPY * (p.allocationUSD / totalEntryUSD), 0)
     : 0;
@@ -235,7 +199,7 @@ export function computePortfolioMetrics(positions: PortfolioPosition[]): Portfol
     ? positions.reduce((s, p) => s + (p.currentNetAPY * 0.85) * (p.allocationUSD / totalEntryUSD), 0)
     : 0;
 
-  // Diversification score: average pairwise correlation (lower = more diversified)
+  
   const divScore = positions.length <= 1 ? 0 : computeDiversificationScore(positions);
 
   return {
@@ -253,8 +217,6 @@ export function computePortfolioMetrics(positions: PortfolioPosition[]): Portfol
     ilCoveredByFees: Math.abs(totalILUSD) < totalFeesEarned,
   };
 }
-
-// ── Diversification score ─────────────────────────────────────────────────────
 
 const CORR: Partial<Record<StrategyType, Partial<Record<StrategyType, number>>>> = {
   GMX_REAL_YIELD:  { DELTA_NEUTRAL: 0.40, AAVE_LENDING: 0.20, MORPHO_LENDING: 0.20, PENDLE_LP: 0.25, PENDLE_PT: 0.10, PENDLE_YT: 0.30, LEVERAGED_LOOP: 0.15 },
@@ -279,15 +241,8 @@ function computeDiversificationScore(positions: PortfolioPosition[]): number {
   }
   if (pairs === 0) return 0;
   const avgCorr = totalCorr / pairs;
-  return Math.max(0, Math.min(1, 1 - avgCorr)); // 1 = fully uncorrelated, 0 = fully correlated
+  return Math.max(0, Math.min(1, 1 - avgCorr)); 
 }
-
-// ── Rebalance detection ───────────────────────────────────────────────────────
-//
-//  A rebalance is needed when:
-//    1. A position has drifted >10% from its target allocation
-//    2. A new significantly better opportunity exists (GeckoScore +15% better)
-//    3. A position has triggered an IL exit signal
 
 export interface RebalanceCheck {
   needsRebalance:  boolean;
@@ -314,11 +269,11 @@ export function checkRebalanceNeeded(
     }
   }
 
-  // Check if a significantly better opportunity exists for any slot
+  
   for (const pos of portfolio.positions) {
     const better = opportunities.find(o =>
       o.strategyType === pos.strategyType &&
-      o.geckoScore > pos.geckoScore * 1.15 &&  // 15% better GeckoScore
+      o.geckoScore > pos.geckoScore * 1.15 &&  
       o.id !== pos.venueId
     );
     if (better) {
@@ -333,8 +288,6 @@ export function checkRebalanceNeeded(
   };
 }
 
-// ── Update portfolio after tick ───────────────────────────────────────────────
-
 export function updatePortfolio(
   portfolio:     Portfolio,
   updatedPositions: PortfolioPosition[],
@@ -346,8 +299,6 @@ export function updatePortfolio(
     updatedAt: Date.now(),
   };
 }
-
-// ── P&L point for chart ───────────────────────────────────────────────────────
 
 export function buildPnLPoint(portfolio: Portfolio): PnLPoint {
   const { metrics: m } = portfolio;

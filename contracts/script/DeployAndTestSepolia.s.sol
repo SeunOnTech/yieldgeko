@@ -1,31 +1,10 @@
-// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
-
-/**
- * @title DeployAndTestSepolia
- * @notice Deploys V2 contracts to Ethereum Sepolia, creates a real HybridDeleGator
- *         smart account, signs an ERC-7710 delegation, and exercises the full
- *         redeemDelegations flow end-to-end.
- *
- * @dev Dry-run (no broadcast):
- *      forge script script/DeployAndTestSepolia.s.sol \
- *        --rpc-url https://ethereum-sepolia-rpc.publicnode.com -vvv
- *
- * @dev Deploy + test:
- *      forge script script/DeployAndTestSepolia.s.sol \
- *        --rpc-url https://ethereum-sepolia-rpc.publicnode.com \
- *        --broadcast --private-key $PRIVATE_KEY -vvv
- */
 
 import {Script} from "forge-std/Script.sol";
 import {Test} from "forge-std/Test.sol";
 import {console2 as console} from "forge-std/console2.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Inline types - mirrors delegation-framework Types.sol but at ^0.8.24
-// ─────────────────────────────────────────────────────────────────────────────
 
 struct Caveat {
     address enforcer;
@@ -41,10 +20,6 @@ struct Delegation {
     uint256 salt;
     bytes signature;
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Inline EIP-712 delegation hashing - mirrors EncoderLib + Constants
-// ─────────────────────────────────────────────────────────────────────────────
 
 library DelegationHashLib {
     bytes32 constant CAVEAT_TYPEHASH = keccak256("Caveat(address enforcer,bytes terms)");
@@ -71,10 +46,6 @@ library DelegationHashLib {
         );
     }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Minimal interfaces - no version-locked imports
-// ─────────────────────────────────────────────────────────────────────────────
 
 interface IDelegationManager {
     function getDomainHash() external view returns (bytes32);
@@ -129,10 +100,6 @@ interface IMockUSDC {
 interface IMockYieldProtocol {
     function getDeposit(address user) external view returns (uint256);
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Mock contracts (deployed from this file - no version conflict)
-// ─────────────────────────────────────────────────────────────────────────────
 
 contract MockUSDC {
     string public name = "Mock USDC";
@@ -189,10 +156,6 @@ contract MockYieldProtocol {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Sepolia constants
-// ─────────────────────────────────────────────────────────────────────────────
-
 address constant DELEGATION_MANAGER = 0xdb9B1e94B5b69Df7e401DDbedE43491141047dB3;
 address constant HYBRID_DELEGATOR_IMPL = 0x48dBe696A4D990079e039489bA2053B36E8FFEC4;
 address constant SIMPLE_FACTORY = 0x69Aa2f9fe1572F1B640E1bbc512f5c3a734fc77c;
@@ -200,18 +163,12 @@ address constant ALLOWED_TARGETS_ENFORCER = 0xcdF6aB796408598Cea671d79506d7D48E9
 
 bytes32 constant ROOT_AUTHORITY = 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff;
 
-// ModeLib.encodeSimpleSingle() = calltype 0x00 | exectype 0x00 | rest 0
 bytes32 constant MODE_SINGLE = bytes32(0);
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Script
-// ─────────────────────────────────────────────────────────────────────────────
 
 contract DeployAndTestSepolia is Script, Test {
     using MessageHashUtils for bytes32;
     using DelegationHashLib for Delegation;
 
-    // deployed contracts (stored as addresses to avoid version conflict)
     address public enforcer;
     address public executor;
     address public swapper;
@@ -237,7 +194,6 @@ contract DeployAndTestSepolia is Script, Test {
         console.log("Deployer:  %s", deployerEOA);
         console.log("Agent:     %s", agentEOA);
 
-        // Ensure deployer has gas for the broadcast (deal in simulation, real ETH needed for broadcast)
         if (deployerEOA.balance < 0.05 ether) {
             vm.deal(deployerEOA, 0.1 ether);
         }
@@ -259,8 +215,6 @@ contract DeployAndTestSepolia is Script, Test {
         console.log("==============================================");
     }
 
-    // ── 1. Verify MetaMask framework on Sepolia ───────────────────────────────
-
     function _verifyInfrastructure() internal view {
         console.log("\n[1/6] Verifying Sepolia infrastructure...");
         _requireCode("DelegationManager", DELEGATION_MANAGER);
@@ -270,17 +224,12 @@ contract DeployAndTestSepolia is Script, Test {
         console.log("  [OK] All MetaMask framework contracts live on Sepolia");
     }
 
-    // ── 2. Deploy V2 contracts + mocks ────────────────────────────────────────
-
     function _deployContracts() internal {
         console.log("\n[2/6] Deploying V2 contracts + mocks...");
 
         usdc = address(new MockUSDC());
         yieldProtocol = address(new MockYieldProtocol(usdc));
 
-        // Deploy V2 contracts via raw bytecode to avoid pragma conflicts
-        // We broadcast them as the deployer so they appear on-chain
-        // The actual contract objects are imported at 0.8.23 - here we just hold addresses
         bytes memory enforcerCode = abi.encodePacked(
             vm.getCode("YieldGekoPolicyCaveatEnforcer.sol:YieldGekoPolicyCaveatEnforcer"),
             abi.encode(deployerEOA, DELEGATION_MANAGER)
@@ -313,8 +262,6 @@ contract DeployAndTestSepolia is Script, Test {
         console.log("  Swapper:           %s", swapper);
     }
 
-    // ── 3. Configure contracts ────────────────────────────────────────────────
-
     function _configureContracts() internal {
         console.log("\n[3/6] Configuring contracts...");
         IYieldGekoEnforcer(enforcer).setAuthorizedAgent(agentEOA, true);
@@ -324,15 +271,13 @@ contract DeployAndTestSepolia is Script, Test {
         console.log("  [OK] Agent authorized, protocol added");
     }
 
-    // ── 4. Create user HybridDeleGator via SimpleFactory ─────────────────────
-
     function _createSmartAccount() internal {
         console.log("\n[4/6] Creating user HybridDeleGator smart account...");
 
         bytes memory initData = abi.encodeWithSignature(
             "initialize(address,string[],uint256[],uint256[])",
-            deployerEOA, // owner = our EOA (signs delegations)
-            new string[](0), // no passkeys
+            deployerEOA,
+            new string[](0),
             new uint256[](0),
             new uint256[](0)
         );
@@ -354,17 +299,14 @@ contract DeployAndTestSepolia is Script, Test {
 
         require(userSmartAccount.code.length > 0, "Smart account deploy failed");
 
-        // Authorize smart account as executor caller (it's the msg.sender in delegation flow)
         IYieldGekoExecutor(executor).setAuthorizedCaller(userSmartAccount, true);
         console.log("  [OK] Smart account authorized in executor");
     }
 
-    // ── 5. Fund smart account ─────────────────────────────────────────────────
-
     function _fundSmartAccount() internal {
         console.log("\n[5/6] Funding smart account...");
 
-        IMockUSDC(usdc).mint(userSmartAccount, 2000e6); // $2,000 mock USDC
+        IMockUSDC(usdc).mint(userSmartAccount, 2000e6);
 
         payable(userSmartAccount).transfer(0.01 ether);
 
@@ -372,14 +314,11 @@ contract DeployAndTestSepolia is Script, Test {
         console.log("  [OK] Sent 0.01 ETH to smart account");
     }
 
-    // ── 6. Sign delegation + execute full ERC-7710 flow ──────────────────────
-
     function _runDelegationFlow() internal {
         console.log("\n[6/6] Running full ERC-7710 delegation flow...");
 
-        uint256 depositAmount = 1000e6; // $1,000
+        uint256 depositAmount = 1000e6;
 
-        // Build policy terms
         IYieldGekoEnforcer.PolicyTerms memory pt = IYieldGekoEnforcer.PolicyTerms({
             minAPYBps: 500,
             maxDrawdownBps: 1500,
@@ -391,15 +330,12 @@ contract DeployAndTestSepolia is Script, Test {
         });
         bytes memory policyTerms = abi.encode(pt);
 
-        // AllowedTargets terms: only our executor + swapper can be called
         bytes memory allowedTargets = abi.encodePacked(executor, swapper);
 
-        // Build caveats
         Caveat[] memory caveats = new Caveat[](2);
         caveats[0] = Caveat({enforcer: ALLOWED_TARGETS_ENFORCER, terms: allowedTargets, args: ""});
         caveats[1] = Caveat({enforcer: enforcer, terms: policyTerms, args: ""});
 
-        // Build delegation
         Delegation memory delegation = Delegation({
             delegate: agentEOA,
             delegator: userSmartAccount,
@@ -409,7 +345,6 @@ contract DeployAndTestSepolia is Script, Test {
             signature: ""
         });
 
-        // EIP-712 sign
         bytes32 delegationHash = DelegationHashLib.getDelegationHash(delegation);
         bytes32 domainHash = IDelegationManager(DELEGATION_MANAGER).getDomainHash();
         bytes32 typedDataHash = domainHash.toTypedDataHash(delegationHash);
@@ -420,53 +355,40 @@ contract DeployAndTestSepolia is Script, Test {
         console.log("  [OK] Delegation signed (EIP-712)");
         console.log("       hash: %s", vm.toString(delegationHash));
 
-        // Build execution args for policy enforcer (injected as caveat.args at redemption)
         IYieldGekoEnforcer.ExecutionArgs memory ea = IYieldGekoEnforcer.ExecutionArgs({
             preValueUSD6: depositAmount, postValueUSD6: depositAmount, feeAmountToken: 0
         });
         delegation.caveats[1].args = abi.encode(ea);
 
-        // Build permissionContext = abi.encode(Delegation[])
         Delegation[] memory delegationChain = new Delegation[](1);
         delegationChain[0] = delegation;
         bytes[] memory permissionContexts = new bytes[](1);
         permissionContexts[0] = abi.encode(delegationChain);
 
-        // Build executionCalldata = encodeSingle(target, value, calldata)
-        // What the smart account will execute: executor.execute(yieldProtocol, supply(...))
         bytes memory supplyCalldata = abi.encodeWithSignature(
             "supply(address,uint256,address,uint16)", usdc, depositAmount, userSmartAccount, uint16(0)
         );
         bytes memory executorCalldata =
             abi.encodeWithSelector(IYieldGekoExecutor.execute.selector, yieldProtocol, supplyCalldata, uint256(0));
-        // ERC-7579 single execution encoding: abi.encodePacked(target, value, calldata)
-        bytes memory executionCalldata = abi.encodePacked(
-            executor, // target
-            uint256(0), // value
-            executorCalldata // calldata
-        );
+
+        bytes memory executionCalldata = abi.encodePacked(executor, uint256(0), executorCalldata);
 
         bytes32[] memory modes = new bytes32[](1);
         modes[0] = MODE_SINGLE;
         bytes[] memory executionCalldatas = new bytes[](1);
         executionCalldatas[0] = executionCalldata;
 
-        // Smart account must approve executor for USDC before the delegation call
-        // This mirrors what happens during strategy setup in the real app
         _approveUSDCFromSmartAccount(depositAmount);
 
-        // Record state before
         uint256 depositBefore = IMockYieldProtocol(yieldProtocol).getDeposit(userSmartAccount);
         uint256 usdcBefore = IMockUSDC(usdc).balanceOf(userSmartAccount);
         console.log("  USDC balance before: %d", usdcBefore / 1e6);
         console.log("  Protocol deposit before: %d", depositBefore / 1e6);
 
-        // Agent redeems delegation → triggers beforeHook → executes → afterHook
-        vm.startBroadcast(deployerKey); // deployer IS the agent in this test
+        vm.startBroadcast(deployerKey);
         IDelegationManager(DELEGATION_MANAGER).redeemDelegations(permissionContexts, modes, executionCalldatas);
         vm.stopBroadcast();
 
-        // Verify
         uint256 depositAfter = IMockYieldProtocol(yieldProtocol).getDeposit(userSmartAccount);
         uint256 usdcAfter = IMockUSDC(usdc).balanceOf(userSmartAccount);
 
@@ -482,12 +404,9 @@ contract DeployAndTestSepolia is Script, Test {
         console.log("  [OK] AllowedTargets enforcer validated executor call");
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
-
     function _approveUSDCFromSmartAccount(uint256 amount) internal {
         bytes memory approveCall = abi.encodeWithSignature("approve(address,uint256)", executor, amount);
-        // Execute directly on the smart account as its EOA owner
-        // execute(Execution) - ERC-7579 single execution
+
         bytes memory executeCall = abi.encodeWithSignature(
             "execute(bytes32,bytes)", MODE_SINGLE, abi.encodePacked(usdc, uint256(0), approveCall)
         );
@@ -498,7 +417,7 @@ contract DeployAndTestSepolia is Script, Test {
             console.log("  [OK] USDC approved from smart account to executor");
         } else {
             console.log("  [WARN] Direct approve failed - trying alternative");
-            // Fallback: approve via the USDC contract with smart account impersonation
+
             vm.prank(userSmartAccount);
             MockUSDC(usdc).approve(executor, amount);
             console.log("  [OK] USDC approved via prank fallback");

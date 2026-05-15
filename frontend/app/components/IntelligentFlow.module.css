@@ -1,0 +1,139 @@
+.auraContainer {
+    position: relative;
+    width: 100%;
+    max-width: 1000px;
+    height: 500px;
+    margin: 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+
+/* ── Central Aura ────────────────────────────────────────────── */
+.auraCore {
+    position: relative;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+
+.gekoGlow {
+    width: 100px;
+    height: 100px;
+    background: radial-gradient(circle, rgba(234, 88, 12, 0.2) 0%, transparent 70%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    animation: slowPulse 4s ease-in-out infinite;
+}
+
+@keyframes slowPulse {
+    0%, 100% { transform: scale(1); opacity: 0.8; }
+    50% { transform: scale(1.1); opacity: 1; }
+}
+
+.coreLabel {
+    margin-top: 24px;
+    font-size: 14px;
+    font-weight: 600;
+    color: #FFFFFF;
+    letter-spacing: 0.05em;
+    text-align: center;
+}
+
+/* ── Floating Wisdom (Wisps of light) ───────────────────────── */
+.wisp {
+    position: absolute;
+    width: 2px;
+    height: 20px;
+    background: linear-gradient(to top, transparent, #EA580C, transparent);
+    border-radius: 50%;
+    filter: blur(1px);
+    opacity: 0;
+}
+
+.wisp-1 { animation: travel 6s infinite; top: 20%; left: 30%; }
+.wisp-2 { animation: travel 8s infinite -2s; top: 60%; right: 25%; }
+.wisp-3 { animation: travel 7s infinite -4s; bottom: 15%; left: 40%; }
+
+@keyframes travel {
+    0% { transform: translate(0, 50px); opacity: 0; }
+    50% { opacity: 0.6; }
+    100% { transform: translate(0, -150px); opacity: 0; }
+}
+
+/* ── Protocol Venues ─────────────────────────────────────────── */
+.venue {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    transition: all 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.venueIcon {
+    width: 56px;
+    height: 56px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 18px;
+    padding: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    backdrop-filter: blur(4px);
+}
+
+.venueIcon img { width: 100%; height: auto; opacity: 0.7; transition: opacity 0.5s; }
+.venueActive .venueIcon img { opacity: 1; }
+.venueActive .venueIcon { border-color: #EA580C; background: rgba(234, 88, 12, 0.05); }
+
+.venueData {
+    text-align: center;
+    opacity: 0;
+    transform: translateY(10px);
+    transition: all 0.5s ease;
+}
+
+.venueActive .venueData { opacity: 1; transform: translateY(0); }
+
+.apyText {
+    font-size: 18px;
+    font-weight: 700;
+    color: #FFFFFF;
+}
+
+.apyGreen { color: #4ADE80; margin-left: 4px; }
+
+/* ── Footer Provenance ───────────────────────────────────────── */
+.provenance {
+    position: absolute;
+    bottom: 40px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 12px;
+    font-weight: 500;
+    color: #636669;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+}
+
+.provItem {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.dot { width: 4px; height: 4px; background: #EA580C; border-radius: 50%; }
+
+/* ── Position Overrides ──────────────────────────────────────── */
+.p1 { top: 15%; left: 15%; }
+.p2 { top: 10%; right: 20%; }
+.p3 { bottom: 20%; left: 10%; }
+.p4 { bottom: 15%; right: 15%; }

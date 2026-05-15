@@ -1,0 +1,23 @@
+{
+  "name": "@yieldgeko/sim-engine",
+  "version": "1.0.0",
+  "description": "YieldGeko Sovereign Intelligence Mesh - Isolated Strategy Engine",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "ts-node src/index.ts",
+    "scout": "ts-node src/discovery/AlphaScout.ts"
+  },
+  "dependencies": {
+    "viem": "^2.10.1",
+    "ethers": "^6.11.1",
+    "dotenv": "^16.4.5",
+    "p-queue": "^6.6.2",
+    "mathjs": "^12.4.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5",
+    "ts-node": "^10.9.2",
+    "@types/node": "^20.12.7"
+  }
+}

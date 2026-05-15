@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT
 pragma solidity 0.8.23;
 
 import {Test, console2} from "forge-std/Test.sol";
@@ -9,10 +8,6 @@ import {YieldGekoExecutor} from "../contracts/YieldGekoExecutor.sol";
 import {YieldGekoSwapper} from "../contracts/YieldGekoSwapper.sol";
 
 import {ModeCode} from "delegation-framework/utils/Types.sol";
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Mock contracts
-// ─────────────────────────────────────────────────────────────────────────────
 
 contract MockERC20 {
     string public name;
@@ -60,7 +55,6 @@ contract MockERC20 {
     }
 }
 
-/// @dev Simulates a DeFi protocol (e.g. Aave deposit)
 contract MockProtocol {
     event Called(bytes4 selector, uint256 value);
 
@@ -83,7 +77,6 @@ contract MockProtocol {
     receive() external payable {}
 }
 
-/// @dev Simulates a DEX router (e.g. Uniswap)
 contract MockDEX {
     MockERC20 public tokenOut;
     uint256 public outputAmount;
@@ -104,16 +97,12 @@ contract MockDEX {
 
     fallback() external payable {
         if (shouldFail) revert("MockDEX: forced failure");
-        // Simulate outputting tokens to msg.sender (the swapper contract)
+
         tokenOut.mint(msg.sender, outputAmount);
     }
 
     receive() external payable {}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Base test setup
-// ─────────────────────────────────────────────────────────────────────────────
 
 abstract contract YieldGekoV2TestBase is Test {
     YieldGekoPolicyCaveatEnforcer internal enforcer;
@@ -126,7 +115,7 @@ abstract contract YieldGekoV2TestBase is Test {
 
     address internal owner = makeAddr("owner");
     address internal agent = makeAddr("agent");
-    address internal user = makeAddr("user"); // delegator (smart account)
+    address internal user = makeAddr("user");
     address internal treasury = makeAddr("treasury");
     address internal attacker = makeAddr("attacker");
     address internal delegationManager = makeAddr("delegationManager");
@@ -137,7 +126,7 @@ abstract contract YieldGekoV2TestBase is Test {
         usdc = new MockERC20("USD Coin", "USDC", 6);
         weth = new MockERC20("Wrapped Ether", "WETH", 18);
         mockProtocol = new MockProtocol();
-        mockDex = new MockDEX(address(usdc), 99e6); // outputs 99 USDC for a swap
+        mockDex = new MockDEX(address(usdc), 99e6);
 
         vm.startPrank(owner);
         enforcer = new YieldGekoPolicyCaveatEnforcer(owner, delegationManager);
@@ -184,13 +173,11 @@ abstract contract YieldGekoV2TestBase is Test {
         enforcer.setAuthorizedAgent(agent, true);
     }
 
-    /// @dev Calls beforeHook as the DelegationManager (the only valid caller)
     function _beforeHook(bytes memory terms, bytes memory args, bytes32 delegationHash) internal {
         vm.prank(delegationManager);
         enforcer.beforeHook(terms, args, defaultMode, "", delegationHash, user, agent);
     }
 
-    /// @dev Calls afterHook as the DelegationManager (the only valid caller)
     function _afterHook(bytes memory terms, bytes memory args, bytes32 delegationHash) internal {
         vm.prank(delegationManager);
         enforcer.afterHook(terms, args, defaultMode, "", delegationHash, user, agent);
@@ -210,10 +197,6 @@ abstract contract YieldGekoV2TestBase is Test {
         vm.stopPrank();
     }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// YieldGekoPolicyCaveatEnforcer Tests
-// ─────────────────────────────────────────────────────────────────────────────
 
 contract PolicyCaveatEnforcer_AdminTests is YieldGekoV2TestBase {
     function test_ownerCanAuthorizeAgent() public {
@@ -296,7 +279,6 @@ contract PolicyCaveatEnforcer_BeforeHookTests is YieldGekoV2TestBase {
         bytes memory terms = _makeTerms(800, 1000, 10_000e6, 1500, address(usdc), block.timestamp + 365 days);
         bytes32 delegationHash = keccak256("delegation1");
 
-        // DelegationManager calls correctly but passes an unauthorized redeemer
         vm.expectRevert(abi.encodeWithSelector(YieldGekoPolicyCaveatEnforcer.UnauthorizedAgent.selector, attacker));
         vm.prank(delegationManager);
         enforcer.beforeHook(terms, _makeArgs(1000e6, 0, 0), defaultMode, "", delegationHash, user, attacker);
@@ -364,7 +346,6 @@ contract PolicyCaveatEnforcer_AfterHookTests is YieldGekoV2TestBase {
         super.setUp();
         _setupAuthorizedAgent();
 
-        // Pre-initialize peak for most tests
         bytes memory terms = _makeTerms(800, 1000, 10_000e6, 1500, address(usdc), block.timestamp + 365 days);
         _beforeHook(terms, _makeArgs(1000e6, 0, 0), keccak256("delegation1"));
     }
@@ -428,7 +409,7 @@ contract PolicyCaveatEnforcer_AfterHookTests is YieldGekoV2TestBase {
         usdc.approve(address(enforcer), 100e6);
 
         vm.expectRevert();
-        _afterHook(terms, _makeArgs(1000e6, 1100e6, 20e6), delegationHash); // 20% fee > 15% max
+        _afterHook(terms, _makeArgs(1000e6, 1100e6, 20e6), delegationHash);
     }
 
     function test_afterHook_zeroFeeWhenNoYield() public {
@@ -466,10 +447,6 @@ contract PolicyCaveatEnforcer_AfterHookTests is YieldGekoV2TestBase {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// YieldGekoExecutor Tests
-// ─────────────────────────────────────────────────────────────────────────────
-
 contract ExecutorTests is YieldGekoV2TestBase {
     function setUp() public override {
         super.setUp();
@@ -483,7 +460,7 @@ contract ExecutorTests is YieldGekoV2TestBase {
 
         assertTrue(executor.approvedProtocols(newProtocol));
         assertEq(executor.protocolNames(newProtocol), "NewProtocol");
-        assertEq(executor.getProtocolCount(), 2); // mockProtocol + newProtocol
+        assertEq(executor.getProtocolCount(), 2);
     }
 
     function test_addProtocol_noDuplicates() public {
@@ -491,7 +468,7 @@ contract ExecutorTests is YieldGekoV2TestBase {
         vm.prank(owner);
         executor.addProtocol(address(mockProtocol), "DuplicateName");
 
-        assertEq(executor.getProtocolCount(), countBefore); // no new entry added
+        assertEq(executor.getProtocolCount(), countBefore);
     }
 
     function test_removeProtocol() public {
@@ -520,7 +497,6 @@ contract ExecutorTests is YieldGekoV2TestBase {
 
         vm.prank(agent);
         executor.execute(address(mockProtocol), callData, 0);
-        // Should not revert
     }
 
     function test_execute_revertsForUnauthorizedCaller() public {
@@ -645,7 +621,7 @@ contract ExecutorTests is YieldGekoV2TestBase {
     function test_rescueToken_noopWhenEmpty() public {
         vm.prank(owner);
         executor.setTreasury(treasury);
-        // Should not revert even with 0 balance
+
         vm.prank(owner);
         executor.rescueToken(address(usdc));
     }
@@ -656,7 +632,6 @@ contract ExecutorTests is YieldGekoV2TestBase {
         assertEq(active[0], address(mockProtocol));
         assertEq(names[0], "MockProtocol");
 
-        // Remove and check
         vm.prank(owner);
         executor.removeProtocol(address(mockProtocol));
 
@@ -676,10 +651,6 @@ contract ExecutorTests is YieldGekoV2TestBase {
         assertEq(address(executor).balance, 1 ether);
     }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// YieldGekoSwapper Tests
-// ─────────────────────────────────────────────────────────────────────────────
 
 contract SwapperTests is YieldGekoV2TestBase {
     function setUp() public override {
@@ -705,8 +676,6 @@ contract SwapperTests is YieldGekoV2TestBase {
     }
 
     function test_swap_erc20ToErc20_success() public {
-        // Agent has WETH, wants to swap for USDC
-        // mockDex outputs 99e6 USDC for any swap
         weth.mint(agent, 1 ether);
         vm.prank(agent);
         weth.approve(address(swapper), 1 ether);
@@ -714,19 +683,12 @@ contract SwapperTests is YieldGekoV2TestBase {
         bytes memory swapCalldata = abi.encodeWithSignature("exactInput(address,uint256)", address(weth), 1 ether);
 
         vm.prank(agent);
-        uint256 amountOut = swapper.swap(
-            address(mockDex),
-            swapCalldata,
-            address(weth),
-            address(usdc),
-            1 ether,
-            90e6, // min 90 USDC
-            agent
-        );
+        uint256 amountOut =
+            swapper.swap(address(mockDex), swapCalldata, address(weth), address(usdc), 1 ether, 90e6, agent);
 
         assertEq(amountOut, 99e6);
         assertEq(usdc.balanceOf(agent), 99e6);
-        assertEq(weth.balanceOf(agent), 0); // WETH spent
+        assertEq(weth.balanceOf(agent), 0);
     }
 
     function test_swap_revertsOnSlippage() public {
@@ -734,24 +696,14 @@ contract SwapperTests is YieldGekoV2TestBase {
         vm.prank(agent);
         weth.approve(address(swapper), 1 ether);
 
-        // DEX only outputs 99 USDC but we demand 110
         bytes memory swapCalldata = abi.encodeWithSignature("swap(address,uint256)", address(weth), 1 ether);
 
         vm.expectRevert(abi.encodeWithSelector(YieldGekoSwapper.SlippageExceeded.selector, 99e6, 110e6));
         vm.prank(agent);
-        swapper.swap(
-            address(mockDex),
-            swapCalldata,
-            address(weth),
-            address(usdc),
-            1 ether,
-            110e6, // min 110 USDC — not achievable
-            agent
-        );
+        swapper.swap(address(mockDex), swapCalldata, address(weth), address(usdc), 1 ether, 110e6, agent);
     }
 
     function test_swap_permissionless_anyCallerCanSwap() public {
-        // swap() is permissionless — any caller with approved tokens can swap
         weth.mint(attacker, 1 ether);
         vm.prank(attacker);
         weth.approve(address(swapper), 1 ether);
@@ -802,7 +754,6 @@ contract SwapperTests is YieldGekoV2TestBase {
         vm.prank(agent);
         swapper.swap(address(mockDex), swapCalldata, address(weth), address(usdc), 1 ether, 0, agent);
 
-        // Approval to DEX should be 0 after swap
         assertEq(weth.allowance(address(swapper), address(mockDex)), 0);
     }
 
@@ -816,7 +767,7 @@ contract SwapperTests is YieldGekoV2TestBase {
         vm.prank(agent);
         swapper.swap(address(mockDex), swapCalldata, address(weth), address(usdc), 1 ether, 0, recipient);
 
-        assertEq(usdc.balanceOf(recipient), 99e6); // output sent to recipient
+        assertEq(usdc.balanceOf(recipient), 99e6);
         assertEq(usdc.balanceOf(agent), 0);
     }
 
@@ -837,13 +788,9 @@ contract SwapperTests is YieldGekoV2TestBase {
         uint256 before = swapper.getDEXCount();
         vm.prank(owner);
         swapper.addDEX(address(mockDex), "Duplicate");
-        assertEq(swapper.getDEXCount(), before); // no new entry
+        assertEq(swapper.getDEXCount(), before);
     }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// YieldGekoExecutor V2 Pull / Balance Tests
-// ─────────────────────────────────────────────────────────────────────────────
 
 contract ExecutorV2PullTests is YieldGekoV2TestBase {
     function setUp() public override {
@@ -854,8 +801,6 @@ contract ExecutorV2PullTests is YieldGekoV2TestBase {
         vm.stopPrank();
     }
 
-    // ── executeWithPull ───────────────────────────────────────────────────────
-
     function test_executeWithPull_pullsAndExecutes() public {
         usdc.mint(user, 1000e6);
         vm.prank(user);
@@ -865,11 +810,10 @@ contract ExecutorV2PullTests is YieldGekoV2TestBase {
         vm.prank(user);
         executor.executeWithPull(address(usdc), 1000e6, address(mockProtocol), callData, 0);
 
-        assertEq(usdc.balanceOf(address(executor)), 1000e6); // executor received USDC from user
+        assertEq(usdc.balanceOf(address(executor)), 1000e6);
     }
 
     function test_executeWithPull_permissionless_anyCallerWithApproval() public {
-        // Not gated — attacker can call if they have the tokens and allowance
         usdc.mint(attacker, 500e6);
         vm.prank(attacker);
         usdc.approve(address(executor), 500e6);
@@ -900,10 +844,7 @@ contract ExecutorV2PullTests is YieldGekoV2TestBase {
         executor.executeWithPull(address(usdc), 100e6, address(mockProtocol), callData, 0);
     }
 
-    // ── executeFromBalance ────────────────────────────────────────────────────
-
     function test_executeFromBalance_usesExistingTokens() public {
-        // Simulate Swapper sending tokens directly to executor
         usdc.mint(address(executor), 500e6);
         weth.mint(address(executor), 1 ether);
 
@@ -913,14 +854,11 @@ contract ExecutorV2PullTests is YieldGekoV2TestBase {
         vm.prank(user);
         executor.executeFromBalance(address(usdc), address(weth), address(mockProtocol), callData, 0);
 
-        // Protocol received the call
-        // Dust swept to treasury (mockProtocol doesn't consume, so all dust swept)
         assertEq(usdc.balanceOf(address(executor)), 0);
         assertEq(weth.balanceOf(address(executor)), 0);
     }
 
     function test_executeFromBalance_sweepsDustToTreasury() public {
-        // Executor has tokens; protocol uses none (mock doesn't consume)
         usdc.mint(address(executor), 100e6);
         weth.mint(address(executor), 0.5 ether);
 
@@ -928,7 +866,6 @@ contract ExecutorV2PullTests is YieldGekoV2TestBase {
         vm.prank(user);
         executor.executeFromBalance(address(usdc), address(weth), address(mockProtocol), callData, 0);
 
-        // All tokens swept to treasury as dust
         assertEq(usdc.balanceOf(treasury), 100e6);
         assertEq(weth.balanceOf(treasury), 0.5 ether);
         assertEq(usdc.balanceOf(address(executor)), 0);
@@ -966,10 +903,7 @@ contract ExecutorV2PullTests is YieldGekoV2TestBase {
         executor.executeFromBalance(address(usdc), address(weth), address(mockProtocol), callData, 0);
     }
 
-    // ── executePullAndFromBalance ─────────────────────────────────────────────
-
     function test_executePullAndFromBalance_pullsOneUsesOther() public {
-        // Executor already has WETH (from swap), user has USDC to pull
         weth.mint(address(executor), 1 ether);
         usdc.mint(user, 500e6);
         vm.prank(user);
@@ -981,7 +915,6 @@ contract ExecutorV2PullTests is YieldGekoV2TestBase {
         vm.prank(user);
         executor.executePullAndFromBalance(address(usdc), 500e6, address(weth), address(mockProtocol), callData, 0);
 
-        // Executor ends at zero — dust swept to treasury
         assertEq(usdc.balanceOf(address(executor)), 0);
         assertEq(weth.balanceOf(address(executor)), 0);
     }
@@ -996,7 +929,6 @@ contract ExecutorV2PullTests is YieldGekoV2TestBase {
         vm.prank(user);
         executor.executePullAndFromBalance(address(usdc), 500e6, address(weth), address(mockProtocol), callData, 0);
 
-        // All goes to treasury
         assertEq(usdc.balanceOf(treasury), 500e6);
         assertEq(weth.balanceOf(treasury), 1 ether);
     }
@@ -1027,10 +959,6 @@ contract ExecutorV2PullTests is YieldGekoV2TestBase {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Integration: Enforcer + Executor working together
-// ─────────────────────────────────────────────────────────────────────────────
-
 contract IntegrationTests is YieldGekoV2TestBase {
     function setUp() public override {
         super.setUp();
@@ -1043,32 +971,27 @@ contract IntegrationTests is YieldGekoV2TestBase {
         bytes32 delegationHash = keccak256("strategyDelegation");
         bytes memory terms = _makeTerms(800, 1000, 50_000e6, 1500, address(usdc), block.timestamp + 365 days);
 
-        // Step 1: beforeHook (policy check, pre-execution)
         _beforeHook(terms, _makeArgs(10_000e6, 0, 0), delegationHash);
 
-        // Step 2: Execute DeFi protocol call (e.g. Aave deposit)
         bytes memory depositCalldata =
             abi.encodeWithSignature("supply(address,uint256,address,uint16)", address(usdc), 10_000e6, user, 0);
         vm.prank(agent);
         executor.execute(address(mockProtocol), depositCalldata, 0);
 
-        // Step 3: afterHook (drawdown check, fee collection)
         usdc.mint(user, 150e6);
         vm.prank(user);
         usdc.approve(address(enforcer), 150e6);
 
         _afterHook(terms, _makeArgs(10_000e6, 11_000e6, 150e6), delegationHash);
 
-        // Fee collected
         assertEq(usdc.balanceOf(treasury), 150e6);
-        // Peak updated
+
         assertEq(enforcer.peakValueUSD6(delegationHash), 11_000e6);
     }
 
     function test_fullStrategyExecution_drawdownStopsExecution() public {
         bytes32 delegationHash = keccak256("drawdownStrategy");
         bytes memory terms = _makeTerms(800, 500, 50_000e6, 1500, address(usdc), block.timestamp + 365 days);
-        // maxDrawdown = 5%
 
         _beforeHook(terms, _makeArgs(10_000e6, 0, 0), delegationHash);
 
@@ -1087,26 +1010,22 @@ contract IntegrationTests is YieldGekoV2TestBase {
         assertEq(enforcer.peakValueUSD6(delegation1), 10_000e6);
         assertEq(enforcer.peakValueUSD6(delegation2), 5_000e6);
 
-        _afterHook(terms, _makeArgs(10_000e6, 9_200e6, 0), delegation1); // 8% drop — within limit
+        _afterHook(terms, _makeArgs(10_000e6, 9_200e6, 0), delegation1);
 
         vm.expectRevert();
-        _afterHook(terms, _makeArgs(5_000e6, 4_400e6, 0), delegation2); // 12% drop — exceeds limit
+        _afterHook(terms, _makeArgs(5_000e6, 4_400e6, 0), delegation2);
     }
 
     function test_newProtocolAddedWithoutReSigning() public {
         address aavePool = makeAddr("aavePool");
 
-        // Initially not approved
         assertFalse(executor.approvedProtocols(aavePool));
 
-        // Owner adds new protocol (no user action required)
         vm.prank(owner);
         executor.addProtocol(aavePool, "Aave V3");
 
-        // Agent can now execute against Aave
         assertTrue(executor.approvedProtocols(aavePool));
 
-        // Create a mock at the aavePool address
         MockProtocol aaveMock = new MockProtocol();
         vm.etch(aavePool, address(aaveMock).code);
 
@@ -1117,21 +1036,17 @@ contract IntegrationTests is YieldGekoV2TestBase {
     }
 
     function test_newDEXAddedWithoutReSigning() public {
-        // Deploy a new DEX (e.g. 1inch) not initially known
         MockDEX newMockDex = new MockDEX(address(usdc), 95e6);
         address newDex = address(newMockDex);
 
-        // Initially not approved
         assertFalse(swapper.approvedDEXes(newDex));
 
-        // Owner adds new DEX — no user re-signing required
         vm.prank(owner);
         swapper.addDEX(newDex, "1inch v6");
 
         assertTrue(swapper.approvedDEXes(newDex));
         assertEq(swapper.dexNames(newDex), "1inch v6");
 
-        // Agent immediately swaps via the new DEX with existing delegation
         weth.mint(agent, 1 ether);
         vm.prank(agent);
         weth.approve(address(swapper), 1 ether);
@@ -1140,7 +1055,7 @@ contract IntegrationTests is YieldGekoV2TestBase {
         vm.prank(agent);
         uint256 amountOut = swapper.swap(newDex, swapCalldata, address(weth), address(usdc), 1 ether, 0, agent);
 
-        assertEq(amountOut, 95e6); // new DEX outputs 95 USDC
+        assertEq(amountOut, 95e6);
         assertEq(usdc.balanceOf(agent), 95e6);
     }
 }

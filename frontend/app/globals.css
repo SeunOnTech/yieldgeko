@@ -20,6 +20,7 @@
   /* Borders */
   --border:       #E7E5E4;
   --border-strong: #D6D3D1;
+  --dial-track:   #D6D3D1;
 
   /* Status */
   --success:        #16A34A;
@@ -71,6 +72,7 @@
   /* Borders */
   --border:       rgba(255, 255, 255, 0.08);
   --border-strong: rgba(255, 255, 255, 0.15);
+  --dial-track:   rgba(255, 255, 255, 0.14);
 
   /* Status overrides for dark mode */
   --success-bg:     rgba(22, 163, 74, 0.1);

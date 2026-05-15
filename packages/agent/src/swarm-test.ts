@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 import { ethers } from 'ethers';
 import PQueue from 'p-queue';
 import { LedgerLogger } from './storage/ledger-logger';
@@ -9,7 +9,7 @@ import * as path from 'path';
 
 dotenv.config({ path: path.join(__dirname, '../.env') });
 
-const CONCURRENCY = 3; // Limit parallel tasks to prevent nonce/rate-limit issues
+const CONCURRENCY = 3; 
 const TOTAL_USERS = 50;
 
 async function runSwarmTest() {
@@ -27,7 +27,7 @@ async function runSwarmTest() {
         zeroGSuccess: 0
     };
 
-    // 1. Pre-fetch Live Yields
+    
     console.log("[Setup] Fetching live market conditions...");
     const [pendle, aave] = await Promise.all([
         fetchPendleMarketYield(),
@@ -37,30 +37,30 @@ async function runSwarmTest() {
     const targetApy = Number(pendle.impliedApyBps) / 100;
     console.log(`[Market] Current: ${currentApy}%, Target: ${targetApy}%`);
 
-    // 2. Fetch Live Gas Price
+    
     const feeData = await provider.getFeeData();
-    const gasPrice = feeData.gasPrice || 100000000n; // fallback
+    const gasPrice = feeData.gasPrice || 100000000n; 
     console.log(`[Gas] Current Price: ${ethers.formatUnits(gasPrice, 'gwei')} gwei`);
 
-    // 3. Define the Migration Task
+    
     const processMigration = async (userId: string) => {
         try {
-            // A. Simulated Gas Estimation ($ value)
-            // Estimated gas for settleMigration: ~150k gas
+            
+            
             const estimatedGasLimit = 150000n;
             const gasCostEth = gasPrice * estimatedGasLimit;
-            const ethPrice = 2500n; // Simulated ETH price for USDC conversion
+            const ethPrice = 2500n; 
             const gasCostUSDC = (gasCostEth * ethPrice) / 10n**18n; 
             
-            // B. Prepare 0G Storage Receipt
-            const amount = BigInt(Math.floor(Math.random() * 5000) + 1000) * 10n**6n; // $1k - $6k
+            
+            const amount = BigInt(Math.floor(Math.random() * 5000) + 1000) * 10n**6n; 
             const fees = {
                 migration: (amount * 10n) / 10000n,
                 success: (amount * 25n) / 10000n,
                 gas: gasCostUSDC
             };
 
-            // C. Upload to 0G (The heavy lifting)
+            
             const { cid } = await LedgerLogger.logAction(
                 'MIGRATION',
                 { id: userId },
@@ -83,7 +83,7 @@ async function runSwarmTest() {
         }
     };
 
-    // 4. Dispatch the Swarm
+    
     console.log(`\n[Queue] Dispatching ${TOTAL_USERS} migration requests...`);
     const startTime = Date.now();
     
@@ -95,7 +95,7 @@ async function runSwarmTest() {
 
     const duration = (Date.now() - startTime) / 1000;
 
-    // 5. Final Report
+    
     console.log("\n===========================================");
     console.log("🦎 SWARM TEST COMPLETE");
     console.log("===========================================");

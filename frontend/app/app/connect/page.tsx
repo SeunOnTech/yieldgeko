@@ -96,7 +96,7 @@ export default function ConnectPage() {
 
   useHeader(<AppHeader />)
 
-  // Redirect to dashboard if connected
+  
   React.useEffect(() => {
     if (address) {
       router.push('/app')
@@ -104,13 +104,13 @@ export default function ConnectPage() {
   }, [address, router])
 
   const handleWalletClick = (walletName: string) => {
-    // For WalletConnect, always use the AppKit open() modal as it handles the QR/Mobile flow best
+    
     if (walletName === 'WalletConnect') {
       open()
       return
     }
 
-    // Find the right connector based on wallet name for direct connection (MetaMask, Backpack)
+    
     const connector = connectors.find(c => {
       const name = c.name.toLowerCase()
       const id = c.id.toLowerCase()
@@ -124,7 +124,7 @@ export default function ConnectPage() {
     if (connector) {
       connect({ connector })
     } else {
-      // Fallback to general modal for YieldGeko or if specific connector not found
+      
       open()
     }
   }
@@ -143,7 +143,7 @@ export default function ConnectPage() {
 
       <div className={styles.grid}>
         {wallets.map((wallet) => {
-          // Find the connector to see if it has a dynamic icon
+          
           const connector = connectors.find(c => {
             const name = c.name.toLowerCase()
             const id = c.id.toLowerCase()

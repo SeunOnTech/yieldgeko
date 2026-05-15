@@ -1,0 +1,143 @@
+.meshContainer {
+    position: relative;
+    width: 100%;
+    max-width: 1200px;
+    height: 500px;
+    margin: 0 auto;
+    overflow: visible;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* ── The Mesh (Connecting Lines) ──────────────────────────────── */
+.svgMesh {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 1;
+}
+
+.meshLine {
+    stroke: rgba(255, 255, 255, 0.08);
+    stroke-width: 1;
+    fill: none;
+}
+
+.pulseLine {
+    stroke: var(--primary-color, #EA580C);
+    stroke-width: 1.5;
+    stroke-dasharray: 10, 100;
+    animation: pulseTravel 4s linear infinite;
+}
+
+@keyframes pulseTravel {
+    0% { stroke-dashoffset: 110; }
+    100% { stroke-dashoffset: 0; }
+}
+
+/* ── Nodes (Protocol Points) ─────────────────────────────────── */
+.node {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    z-index: 10;
+}
+
+.nodeIcon {
+    width: 48px;
+    height: 48px;
+    background: #0B0C0E;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 10px;
+    transition: all 0.3s ease;
+}
+
+.node:hover .nodeIcon {
+    border-color: #EA580C;
+    background: rgba(234, 88, 12, 0.05);
+}
+
+.nodeIcon img {
+    width: 100%;
+    height: auto;
+    object-fit: contain;
+}
+
+/* ── Data Overlays (No Containers) ───────────────────────────── */
+.dataLabel {
+    font-size: 10px;
+    font-weight: 700;
+    color: #94969A;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+}
+
+.dataValue {
+    font-size: 16px;
+    font-weight: 700;
+    color: #FFFFFF;
+}
+
+.apyGreen { color: #4ADE80; }
+
+.proofTag {
+    font-family: monospace;
+    font-size: 9px;
+    color: #636669;
+    white-space: nowrap;
+}
+
+/* ── Center Brain ────────────────────────────────────────────── */
+.centerBrain {
+    position: relative;
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.brainCore {
+    width: 80px;
+    height: 80px;
+    background: #0B0C0E;
+    border: 1.5px solid #EA580C;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+}
+
+.brainPulse {
+    position: absolute;
+    inset: -10px;
+    border: 1px solid rgba(234, 88, 12, 0.3);
+    border-radius: 50%;
+    animation: brainWaves 3s ease-out infinite;
+}
+
+@keyframes brainWaves {
+    0% { transform: scale(0.8); opacity: 0.8; }
+    100% { transform: scale(1.5); opacity: 0; }
+}
+
+/* ── Position Overrides ──────────────────────────────────────── */
+.pos1 { top: 10%; left: 20%; }
+.pos2 { top: 15%; right: 25%; }
+.pos3 { bottom: 20%; left: 15%; }
+.pos4 { bottom: 10%; right: 20%; }
+
+@media (max-width: 768px) {
+    .meshContainer { height: 600px; }
+    .svgMesh { display: none; }
+    .node { position: relative; left: auto; top: auto; bottom: auto; right: auto; margin-bottom: 40px; }
+}

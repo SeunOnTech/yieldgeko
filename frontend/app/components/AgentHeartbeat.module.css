@@ -1,0 +1,254 @@
+.heartbeatCard {
+    background: #0B0C0E;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 24px;
+    width: 100%;
+    max-width: 960px;
+    min-height: 480px;
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 40px 100px rgba(0, 0, 0, 0.4);
+    margin: 0 auto;
+}
+
+.cardHeader {
+    padding: 16px 24px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.statusGroup {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.statusDot {
+    width: 8px;
+    height: 8px;
+    background: #4ADE80;
+    border-radius: 50%;
+    box-shadow: 0 0 12px #4ADE80;
+}
+
+.statusText {
+    font-size: 11px;
+    font-weight: 700;
+    color: #4ADE80;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.teeBadge {
+    font-size: 10px;
+    font-weight: 600;
+    color: #94969A;
+    background: rgba(255, 255, 255, 0.05);
+    padding: 4px 10px;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    font-family: monospace;
+}
+
+.cardBody {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr 320px;
+}
+
+@media (max-width: 991px) {
+    .cardBody {
+        grid-template-columns: 1fr;
+    }
+    .proofStream {
+        display: none;
+    }
+}
+
+.mainView {
+    padding: 40px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+}
+
+.apyDisplay {
+    text-align: center;
+    position: relative;
+    z-index: 10;
+}
+
+.apyLabel {
+    font-size: 13px;
+    font-weight: 600;
+    color: #94969A;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-bottom: 8px;
+}
+
+.apyValue {
+    font-size: 84px;
+    font-weight: 800;
+    color: #FFFFFF;
+    line-height: 1;
+    letter-spacing: -0.04em;
+    margin-bottom: 4px;
+}
+
+.apyUnit {
+    font-size: 18px;
+    font-weight: 700;
+    color: #EA580C;
+    letter-spacing: 0.02em;
+}
+
+/* ── Orbitals ─────────────────────────────────────────────────── */
+.orbitContainer {
+    position: absolute;
+    width: 320px;
+    height: 320px;
+    pointer-events: none;
+}
+
+.orbitPath {
+    position: absolute;
+    inset: 0;
+    border: 1px dashed rgba(255, 255, 255, 0.05);
+    border-radius: 50%;
+}
+
+.orbitalIcon {
+    position: absolute;
+    width: 44px;
+    height: 44px;
+    background: #111;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8px;
+    box-shadow: 0 10px 20px rgba(0,0,0,0.5);
+    animation: orbit 20s linear infinite;
+}
+
+.orbitalIcon img {
+    width: 100%;
+    height: auto;
+    object-fit: contain;
+}
+
+@keyframes orbit {
+    from { transform: rotate(0deg) translateX(160px) rotate(0deg); }
+    to { transform: rotate(360deg) translateX(160px) rotate(-360deg); }
+}
+
+/* ── Proof Stream ─────────────────────────────────────────────── */
+.proofStream {
+    background: rgba(0, 0, 0, 0.2);
+    border-left: 1px solid rgba(255, 255, 255, 0.05);
+    display: flex;
+    flex-direction: column;
+}
+
+.streamHeader {
+    padding: 16px 20px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    font-size: 11px;
+    font-weight: 700;
+    color: #94969A;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.streamList {
+    flex: 1;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    overflow: hidden;
+    mask-image: linear-gradient(to bottom, transparent, black 10%, black 90%, transparent);
+}
+
+.proofItem {
+    padding: 12px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 12px;
+    animation: slideUp 0.5s ease-out both;
+}
+
+@keyframes slideUp {
+    from { transform: translateY(20px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+}
+
+.proofTime {
+    font-size: 9px;
+    color: #636669;
+    font-family: monospace;
+    margin-bottom: 4px;
+}
+
+.proofAction {
+    font-size: 12px;
+    font-weight: 600;
+    color: #FFFFFF;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.proofHash {
+    font-size: 10px;
+    color: #4ADE80;
+    font-family: monospace;
+    margin-top: 4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.badge {
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 8px;
+    font-weight: 800;
+    text-transform: uppercase;
+}
+
+.badge-tee { background: #3b82f6; color: #fff; }
+.badge-0g { background: #EA580C; color: #fff; }
+
+.footerBar {
+    padding: 12px 24px;
+    background: rgba(0, 0, 0, 0.4);
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+    display: flex;
+    gap: 24px;
+    align-items: center;
+}
+
+.footerItem {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    font-weight: 500;
+    color: #94969A;
+}
+
+.footerIcon {
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+}

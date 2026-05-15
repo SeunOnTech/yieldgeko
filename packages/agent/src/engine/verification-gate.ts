@@ -8,16 +8,10 @@ export enum SafetyStatus {
   ABORT_PROTOCOL_PAUSED = 'ABORT_PROTOCOL_PAUSED'
 }
 
-/**
- * Pre-Execution Verification Gate
- * Runs after decision, immediately before signing.
- */
 export class VerificationGate {
-  private static readonly DRIFT_THRESHOLD_BPS = 50n; // 0.50%
+  private static readonly DRIFT_THRESHOLD_BPS = 50n; 
 
-  /**
-   * Verifies that the target state is still safe for execution
-   */
+  
   public static async verifySafety(
     targetVenue: string,
     scoredApyBps: bigint,
@@ -28,7 +22,7 @@ export class VerificationGate {
     let liveApyBps = 0n;
     let liveLiquidity = 0n;
 
-    // 1. Fetch Fresh State
+    
     if (targetVenue.includes('aave-v3')) {
       const data = await fetchAaveUSDCSupplyAPY();
       liveApyBps = data.apyBps;
@@ -39,7 +33,7 @@ export class VerificationGate {
       liveLiquidity = data.liquidity;
     }
 
-    // 2. APY Drift Check
+    
     const drift = liveApyBps > scoredApyBps 
       ? liveApyBps - scoredApyBps 
       : scoredApyBps - liveApyBps;
@@ -48,7 +42,7 @@ export class VerificationGate {
       return { status: SafetyStatus.ABORT_APY_DRIFT, liveApyBps };
     }
 
-    // 3. Liquidity Check (Min 10x user amount)
+    
     if (liveLiquidity < (amount * 10n)) {
       return { status: SafetyStatus.ABORT_LIQUIDITY_INSUFFICIENT, liveApyBps };
     }

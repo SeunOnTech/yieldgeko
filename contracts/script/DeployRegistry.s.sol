@@ -1,20 +1,8 @@
-// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
 import "forge-std/Script.sol";
 import "../contracts/YieldGekoRegistry.sol";
 
-/**
- * @notice  Deploy YieldGekoRegistry to 0G Chain mainnet (chainId 16661).
- *
- * Usage:
- *   cd contracts
- *   PRIVATE_KEY=0x... forge script script/DeployRegistry.s.sol \
- *     --rpc-url https://evmrpc.0g.ai \
- *     --broadcast -vvvv
- *
- * After deploy, set ZG_REGISTRY_ADDRESS in packages/agent/.env
- */
 contract DeployRegistry is Script {
     function run() external {
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
@@ -28,7 +16,6 @@ contract DeployRegistry is Script {
 
         YieldGekoRegistry registry = new YieldGekoRegistry();
 
-        // Authorise the agent wallet if provided
         address agentWallet = vm.envOr("AGENT_WALLET", address(0));
         if (agentWallet != address(0) && agentWallet != deployer) {
             registry.setAgentAuthorised(agentWallet, true);

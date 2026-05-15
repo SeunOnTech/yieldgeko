@@ -1,0 +1,155 @@
+.viewport {
+    position: relative;
+    width: 100%;
+    max-width: 1000px;
+    height: 500px;
+    margin: 0 auto;
+    background: #000;
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: inset 0 0 100px rgba(234, 88, 12, 0.05);
+}
+
+/* ── Screen Effects (Movie feel) ─────────────────────────────── */
+.viewport::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.1) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.02), rgba(0, 255, 0, 0.01), rgba(0, 0, 255, 0.02));
+    background-size: 100% 4px, 3px 100%;
+    pointer-events: none;
+    z-index: 100;
+    opacity: 0.3;
+}
+
+.scanline {
+    position: absolute;
+    width: 100%;
+    height: 2px;
+    background: rgba(234, 88, 12, 0.1);
+    top: 0;
+    animation: scan 4s linear infinite;
+    z-index: 101;
+}
+
+@keyframes scan {
+    from { top: 0; }
+    to { top: 100%; }
+}
+
+/* ── Cinematic Sequence Elements ─────────────────────────────── */
+.dataStream {
+    position: absolute;
+    font-family: monospace;
+    font-size: 10px;
+    color: rgba(234, 88, 12, 0.2);
+    white-space: nowrap;
+    animation: stream 20s linear infinite;
+    user-select: none;
+}
+
+@keyframes stream {
+    from { transform: translateX(100%); }
+    to { transform: translateX(-100%); }
+}
+
+/* ── Targeting Reticle ───────────────────────────────────────── */
+.reticle {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 200px;
+    height: 200px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.reticle::before, .reticle::after {
+    content: '';
+    position: absolute;
+    width: 40px;
+    height: 40px;
+    border: 2px solid #EA580C;
+}
+
+.reticle::before { top: -2px; left: -2px; border-right: 0; border-bottom: 0; }
+.reticle::after { bottom: -2px; right: -2px; border-left: 0; border-top: 0; }
+
+/* ── Protocol Flash ──────────────────────────────────────────── */
+.protocolNode {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    opacity: 0;
+    animation: glitchIn 8s infinite;
+}
+
+@keyframes glitchIn {
+    0%, 20% { opacity: 0; transform: scale(0.8) skew(10deg); }
+    25% { opacity: 1; transform: scale(1) skew(0deg); }
+    45% { opacity: 1; transform: scale(1) skew(0deg); }
+    50% { opacity: 0; transform: scale(1.1) skew(-10deg); }
+    100% { opacity: 0; }
+}
+
+.nodeIcon {
+    width: 64px;
+    height: 64px;
+    background: #111;
+    border: 1px solid #EA580C;
+    padding: 12px;
+    border-radius: 4px;
+    box-shadow: 0 0 20px rgba(234, 88, 12, 0.2);
+}
+
+.nodeIcon img { width: 100%; height: auto; }
+
+/* ── Text Performance ────────────────────────────────────────── */
+.glitchText {
+    font-family: monospace;
+    font-size: 14px;
+    color: #EA580C;
+    margin-top: 12px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    font-weight: 700;
+}
+
+.apyTicker {
+    font-size: 48px;
+    font-weight: 800;
+    color: #FFFFFF;
+    margin: 20px 0;
+    text-shadow: 0 0 20px rgba(255, 255, 255, 0.3);
+}
+
+.logFeed {
+    position: absolute;
+    bottom: 20px;
+    left: 20px;
+    font-family: monospace;
+    font-size: 10px;
+    color: #4ADE80;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+/* ── Floating Fragments (Cinematic HUD) ──────────────────────── */
+.hudElement {
+    position: absolute;
+    padding: 10px;
+    border-left: 2px solid #EA580C;
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.hud-top-right { top: 20px; right: 20px; }
+.hud-bottom-right { bottom: 20px; right: 20px; }
+
+.label { font-size: 9px; color: #94969A; text-transform: uppercase; margin-bottom: 4px; }
+.val { font-size: 14px; color: #FFF; font-weight: 700; }

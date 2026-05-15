@@ -7,8 +7,6 @@ import type {
   PnLPoint, ExecutionRecord, Phase, CBStatus, StrategyType, ILCategory,
 } from './useAgentStream';
 
-// ── Formatting helpers ────────────────────────────────────────────────────────
-
 function fAPY(n: number | null | undefined): string {
   if (n == null) return '—';
   return n >= 100 ? `${n.toFixed(1)}%` : `${n.toFixed(2)}%`;
@@ -35,8 +33,6 @@ function timeAgo(ts: number): string {
 function fTime(ts: number): string {
   return new Date(ts).toLocaleTimeString('en-US', { hour12: false });
 }
-
-// ── Colours ───────────────────────────────────────────────────────────────────
 
 const STRAT_COLOR: Record<StrategyType, string> = {
   GMX_REAL_YIELD:  '#f97316',
@@ -83,12 +79,10 @@ const PHASE_COLOR: Record<Phase, string> = {
   IDLE:         '#64748b',
 };
 
-// ── SVG P&L Chart ─────────────────────────────────────────────────────────────
-
 function PnLChart({ history, entryUSD }: { history: PnLPoint[]; entryUSD: number; }) {
   const W = 600; const H = 120; const PAD = 6;
 
-  // With a single point, draw a flat baseline at entry value
+  
   if (history.length < 2) {
     const flatY = H / 2;
     return (
@@ -117,7 +111,7 @@ function PnLChart({ history, entryUSD }: { history: PnLPoint[]; entryUSD: number
   const isUp     = lastVal >= entryUSD;
   const lineColor = isUp ? '#22c55e' : '#ef4444';
 
-  // Area fill path
+  
   const areaPath = [
     `M ${toX(0)},${H - PAD}`,
     ...history.map((p, i) => `L ${toX(i)},${toY(p.totalUSD)}`),
@@ -134,29 +128,27 @@ function PnLChart({ history, entryUSD }: { history: PnLPoint[]; entryUSD: number
         </linearGradient>
       </defs>
 
-      {/* Entry baseline */}
+      
       <line x1={PAD} y1={entryY} x2={W - PAD} y2={entryY}
         stroke="#334155" strokeWidth="1" strokeDasharray="4,3" />
 
-      {/* Area fill */}
+      
       <path d={areaPath} fill="url(#chartGrad)" />
 
-      {/* P&L line */}
+      
       <polyline fill="none" stroke={lineColor} strokeWidth="2"
         points={linePts} strokeLinejoin="round" strokeLinecap="round" />
 
-      {/* Current dot */}
+      
       <circle cx={toX(history.length - 1)} cy={toY(lastVal)}
         r="4" fill={lineColor} stroke="#0f172a" strokeWidth="2" />
 
-      {/* Labels */}
+      
       <text x={PAD} y={H - PAD - 2} fill="#475569" fontSize="10">{fUSD(minVal)}</text>
       <text x={PAD} y={PAD + 10}    fill="#475569" fontSize="10">{fUSD(maxVal)}</text>
     </svg>
   );
 }
-
-// ── Opportunity leaderboard row ────────────────────────────────────────────────
 
 function OppRow({ opp, rank, isActive }: { opp: Opportunity; rank: number; isActive: boolean }) {
   const trendIcon  = { rising: '↑', falling: '↓', stable: '→', unknown: '·' }[opp.history.trend];
@@ -171,10 +163,10 @@ function OppRow({ opp, rank, isActive }: { opp: Opportunity; rank: number; isAct
       borderLeft: isActive ? '3px solid #22c55e' : '3px solid transparent',
       borderRadius: 4, fontSize: 13,
     }}>
-      {/* Rank */}
+      
       <span style={{ color: '#475569', fontWeight: 600, width: 20, flexShrink: 0, textAlign: 'right' }}>{rank}</span>
 
-      {/* Strategy badge */}
+      
       <span style={{
         background: STRAT_COLOR[opp.strategyType] + '22',
         color: STRAT_COLOR[opp.strategyType],
@@ -184,7 +176,7 @@ function OppRow({ opp, rank, isActive }: { opp: Opportunity; rank: number; isAct
         {STRAT_LABEL[opp.strategyType]}
       </span>
 
-      {/* Protocol + pool — takes remaining space */}
+      
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ color: '#e2e8f0', fontSize: 12, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {opp.protocol}
@@ -199,19 +191,19 @@ function OppRow({ opp, rank, isActive }: { opp: Opportunity; rank: number; isAct
         </div>
       </div>
 
-      {/* Net APY — key number */}
+      
       <div style={{ textAlign: 'right', flexShrink: 0, width: 68 }}>
         <div style={{ color: apyColor, fontWeight: 700, fontSize: 14 }}>{fAPY(opp.netAPY)}</div>
         <div style={{ color: '#334155', fontSize: 10 }}>net</div>
       </div>
 
-      {/* 30d mean + trend */}
+      
       <div style={{ textAlign: 'right', flexShrink: 0, width: 60 }}>
         <div style={{ color: trendColor, fontSize: 12 }}>{trendIcon} {fAPY(opp.history.apy30d)}</div>
         <div style={{ color: '#334155', fontSize: 10 }}>30d</div>
       </div>
 
-      {/* GeckoScore */}
+      
       <div style={{ textAlign: 'right', flexShrink: 0, width: 40 }}>
         <div style={{ color: (opp.geckoScore ?? 0) > 40 ? '#22c55e' : (opp.geckoScore ?? 0) > 20 ? '#eab308' : '#64748b', fontSize: 11, fontWeight: 700 }}>
           {(opp.geckoScore ?? 0).toFixed(0)}
@@ -221,8 +213,6 @@ function OppRow({ opp, rank, isActive }: { opp: Opportunity; rank: number; isAct
     </div>
   );
 }
-
-// ── Circuit breaker pill ──────────────────────────────────────────────────────
 
 function BreakerPill({ breaker }: { breaker: CircuitBreaker }) {
   return (
@@ -244,8 +234,6 @@ function BreakerPill({ breaker }: { breaker: CircuitBreaker }) {
     </div>
   );
 }
-
-// ── Log entry ─────────────────────────────────────────────────────────────────
 
 function LogLine({ entry }: { entry: LogEntry }) {
   return (
@@ -270,8 +258,6 @@ function LogLine({ entry }: { entry: LogEntry }) {
   );
 }
 
-// ── Execution history row ────────────────────────────────────────────────────
-
 function ExecRow({ exec }: { exec: ExecutionRecord }) {
   const COLOR: Record<string, string> = {
     GENESIS: '#22c55e', MIGRATE: '#f97316', SAFETY_EXIT: '#ef4444', HARVEST: '#a855f7', HOLD: '#64748b',
@@ -287,8 +273,6 @@ function ExecRow({ exec }: { exec: ExecutionRecord }) {
     </div>
   );
 }
-
-// ── Section card wrapper ──────────────────────────────────────────────────────
 
 function Card({ title, badge, children, style }: {
   title: string; badge?: React.ReactNode;
@@ -314,8 +298,6 @@ function Card({ title, badge, children, style }: {
   );
 }
 
-// ── Phase badge ───────────────────────────────────────────────────────────────
-
 function PhaseBadge({ phase }: { phase: Phase }) {
   return (
     <span style={{
@@ -328,8 +310,6 @@ function PhaseBadge({ phase }: { phase: Phase }) {
     </span>
   );
 }
-
-// ── User selector tab ─────────────────────────────────────────────────────────
 
 function UserTab({
   user, isActive, onClick,
@@ -361,19 +341,17 @@ function UserTab({
   );
 }
 
-// ── Main dashboard ────────────────────────────────────────────────────────────
-
 export default function AgentDashboard() {
   const { agent, connected, allocation, safetyCheck } = useAgentStream();
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
 
-  // Resolve selected user — default to first user if none selected
+  
   const userIds   = Object.keys(agent?.users ?? {});
   const activeId  = selectedUserId ?? userIds[0] ?? null;
   const activeUser: UserState | null = activeId && agent?.users[activeId] ? agent.users[activeId] : null;
 
   const portfolio = activeUser?.portfolio ?? null;
-  const pos       = portfolio?.positions[0] ?? null;   // primary position for legacy displays
+  const pos       = portfolio?.positions[0] ?? null;   
   const opps      = agent?.opportunities ?? [];
   const brks      = activeUser?.breakers ?? [];
   const logs      = activeUser?.log ?? [];
@@ -387,7 +365,7 @@ export default function AgentDashboard() {
   const redCount    = brks.filter(b => b.status === 'RED').length;
   const yellowCount = brks.filter(b => b.status === 'YELLOW').length;
 
-  // ── Connecting screen ────────────────────────────────────────────────────
+  
 
   if (!agent && !connected) {
     return (
@@ -417,7 +395,7 @@ export default function AgentDashboard() {
       padding: 20,
     }}>
 
-      {/* ── Header ─────────────────────────────────────────────────────────── */}
+      
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         marginBottom: 16, paddingBottom: 16, borderBottom: '1px solid #1e293b',
@@ -435,7 +413,7 @@ export default function AgentDashboard() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           {activeUser && <PhaseBadge phase={activeUser.phase} />}
 
-          {/* Connection status */}
+          
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <div style={{
               width: 8, height: 8, borderRadius: '50%',
@@ -447,14 +425,14 @@ export default function AgentDashboard() {
             </span>
           </div>
 
-          {/* Persistence mode badge */}
+          
           <span style={{ fontSize: 10, color: '#334155', border: '1px solid #1e293b', borderRadius: 4, padding: '2px 6px' }}>
             💾 {connected ? 'live' : 'offline'}
           </span>
         </div>
       </div>
 
-      {/* ── User selector tabs ────────────────────────────────────────────── */}
+      
       {userIds.length > 0 && (
         <div style={{
           display: 'flex', gap: 8, marginBottom: 16,
@@ -472,7 +450,7 @@ export default function AgentDashboard() {
         </div>
       )}
 
-      {/* ── Top metrics strip ──────────────────────────────────────────────── */}
+      
       {metrics && (
         <div style={{
           display: 'grid',
@@ -497,7 +475,7 @@ export default function AgentDashboard() {
         </div>
       )}
 
-      {/* ── Portfolio positions breakdown ──────────────────────────────────── */}
+      
       {portfolio && portfolio.positions.length > 1 && (
         <div style={{ marginBottom: 16 }}>
           <Card title="Portfolio Positions" badge={
@@ -546,13 +524,13 @@ export default function AgentDashboard() {
         </div>
       )}
 
-      {/* ── Grid layout ────────────────────────────────────────────────────── */}
+      
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 380px', gap: 16 }}>
 
-        {/* ── Left column ────────────────────────────────────────────────── */}
+        
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16, minWidth: 0 }}>
 
-          {/* P&L Chart */}
+          
           <Card
             title="P&L Timeline"
             badge={pos ? (
@@ -584,13 +562,13 @@ export default function AgentDashboard() {
             )}
           </Card>
 
-          {/* Opportunity Leaderboard */}
+          
           <Card
             title="Live Opportunity Leaderboard"
             badge={<span style={{ fontSize: 11, color: '#475569' }}>{opps.length} ranked</span>}
             style={{ flex: 1 }}
           >
-            {/* Table header */}
+            
             <div style={{
               display: 'flex', gap: 10, padding: '0 10px 8px 10px',
               borderBottom: '1px solid #1e293b', marginBottom: 4,
@@ -618,10 +596,10 @@ export default function AgentDashboard() {
           </Card>
         </div>
 
-        {/* ── Right column ───────────────────────────────────────────────── */}
+        
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16, minWidth: 0 }}>
 
-          {/* Circuit Breakers */}
+          
           <Card
             title="Circuit Breakers"
             badge={
@@ -641,7 +619,7 @@ export default function AgentDashboard() {
             )}
           </Card>
 
-          {/* Last Allocation Decision */}
+          
           {allocation && (
             <Card title="Last Decision">
               <div style={{ fontSize: 13 }}>
@@ -676,7 +654,7 @@ export default function AgentDashboard() {
             </Card>
           )}
 
-          {/* Safety Gate */}
+          
           {safetyCheck && (
             <Card title="Safety Gate" badge={
               <span style={{ color: safetyCheck.passed ? '#22c55e' : '#ef4444', fontSize: 12, fontWeight: 700 }}>
@@ -701,7 +679,7 @@ export default function AgentDashboard() {
             </Card>
           )}
 
-          {/* Execution History */}
+          
           <Card title="Executions" badge={
             <span style={{ fontSize: 11, color: '#475569' }}>simulated</span>
           }>
@@ -716,7 +694,7 @@ export default function AgentDashboard() {
         </div>
       </div>
 
-      {/* ── Activity Feed ─────────────────────────────────────────────────── */}
+      
       <div style={{ marginTop: 16 }}>
         <Card title="Activity Feed" badge={
           <span style={{ fontSize: 11, color: '#334155' }}>
@@ -727,7 +705,7 @@ export default function AgentDashboard() {
             {logs.length === 0 && glog.length === 0 ? (
               <div style={{ color: '#334155', fontSize: 12 }}>Waiting for first tick...</div>
             ) : (
-              // Merge user + global logs, sort by timestamp descending
+              
               [...logs, ...glog]
                 .sort((a, b) => b.timestamp - a.timestamp)
                 .slice(0, 60)
@@ -737,7 +715,7 @@ export default function AgentDashboard() {
         </Card>
       </div>
 
-      {/* ── Footer ───────────────────────────────────────────────────────── */}
+      
       <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid #0f172a', display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#334155' }}>
         <span>YieldGeko Agent v2.0 · {agent ? `Last tick: ${timeAgo(agent.lastTickAt)}` : '—'}</span>
         <span style={{ color: '#1e293b' }}>SIMULATED — no real funds deployed · {userIds.length} user(s)</span>

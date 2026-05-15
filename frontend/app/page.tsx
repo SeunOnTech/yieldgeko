@@ -7,8 +7,8 @@ import styles from './page.module.css'
 import { ThemeToggle } from './components/ThemeToggle'
 import { useAccount } from 'wagmi'
 import { useAppKit } from '@reown/appkit/react'
+import { IntelligentFlow } from './components/IntelligentFlow'
 
-/** NE arrow SVG — proper 45° line with arrowhead, proportional to button text */
 function ArrowNE({ size = 16 }: { size?: number }) {
   return (
     <svg
@@ -22,9 +22,9 @@ function ArrowNE({ size = 16 }: { size?: number }) {
       strokeLinejoin="round"
       style={{ display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }}
     >
-      {/* tail: bottom-left to top-right */}
+      
       <line x1="7" y1="17" x2="17" y2="7" />
-      {/* arrowhead bracket */}
+      
       <polyline points="7 7 17 7 17 17" />
     </svg>
   );
@@ -40,7 +40,7 @@ export default function Landing() {
   const { open } = useAppKit()
   const [pendingOnboard, setPendingOnboard] = useState(false)
 
-  // After wallet connects, navigate to app if user had clicked Start Earning
+  
   useEffect(() => {
     if (isConnected && pendingOnboard) {
       setPendingOnboard(false)
@@ -56,17 +56,15 @@ export default function Landing() {
       open()
     }
   }
-  const handleTryDemo = () => router.push('/agent')
-
   return (
     <div className={styles.landingWrapper}>
 
-      {/* ── Promo Banner ────────────────────────────────────── */}
+      
       {bannerVisible && (
         <div className={styles['promo-banner']}>
           <div className={`${styles.container} ${styles['banner-content']}`}>
             <a href="#" className={styles['banner-link']}>
-              YieldGeko is live on Arbitrum and 0G. Your autonomous agent earns yield 24/7 — bounded by rules only you sign.
+              YieldGeko is live on Arbitrum and 0G. Your autonomous agent earns yield 24/7 — cryptographically bound by rules only you sign.
               <span className={styles.arrow}>&rarr;</span>
             </a>
             <button
@@ -82,43 +80,35 @@ export default function Landing() {
         </div>
       )}
 
-      {/* ── Header ──────────────────────────────────────────── */}
+      
       <header className={styles.header}>
         <div className={`${styles.container} ${styles['header-container']}`}>
 
-          {/* Logo */}
+          
           <div className={styles.logo}>
             <Image src="/logo.svg" alt="YieldGeko" width={36} height={36} style={{ borderRadius: 8 }} />
             <span className={styles['logo-text']}>YieldGeko</span>
           </div>
 
-          {/* Desktop nav */}
+          
           <nav className={styles.nav}>
             <ul className={styles['nav-list']}>
               <li><a href="#features" className={styles['nav-link']}>How it works</a></li>
               <li><a href="#protocols" className={styles['nav-link']}>Protocols</a></li>
-              <li><a href="/agent" className={styles['nav-link']}>Demo</a></li>
             </ul>
           </nav>
 
-          {/* Header actions */}
+          
           <div className={styles['header-actions']}>
             <ThemeToggle />
-            <button
-              onClick={handleTryDemo}
-
-              className={`${styles.btn} ${styles['btn-outline']} ${styles['nav-cta']}`}
-            >
-              Try Demo
-            </button>
             <button
               onClick={handleStartEarning}
               className={`${styles.btn} ${styles['btn-primary']} ${styles['nav-cta']}`}
             >
-                  Start Earning <ArrowNE />
+                  Deploy Agent <ArrowNE />
             </button>
 
-            {/* Mobile menu toggle */}
+            
             <button
               className={`${styles['mobile-menu-toggle']} ${mobileMenuOpen ? styles.active : ''}`}
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
@@ -131,25 +121,24 @@ export default function Landing() {
           </div>
         </div>
 
-        {/* Mobile menu */}
+        
         <div className={`${styles['mobile-menu']} ${mobileMenuOpen ? styles.active : ''}`}>
           <ul className={styles['mobile-nav-list']}>
             <li><a href="#features" className={styles['mobile-nav-link']} onClick={() => setMobileMenuOpen(false)}>How it works</a></li>
             <li><a href="#protocols" className={styles['mobile-nav-link']} onClick={() => setMobileMenuOpen(false)}>Protocols</a></li>
-            <li><a href="/agent" className={styles['mobile-nav-link']} onClick={() => setMobileMenuOpen(false)}>Demo</a></li>
           </ul>
           <button onClick={handleStartEarning} className={`${styles.btn} ${styles['btn-primary']} ${styles['btn-full']}`}>
-            Start Earning <ArrowNE />
+            Deploy Agent <ArrowNE />
           </button>
         </div>
       </header>
 
       <main>
 
-        {/* ── Hero ────────────────────────────────────────────── */}
+        
         <section className={styles.hero}>
 
-          {/* Grid background */}
+          
           <div className={styles['grid-background']}>
             {Array.from({ length: 100 }, (_, i) => {
               const tinted      = [1, 10, 15, 23, 34, 47, 52, 68, 75, 82, 91, 99]
@@ -163,54 +152,39 @@ export default function Landing() {
 
           <div className={`${styles.container} ${styles['hero-container']}`}>
 
-            {/* Chain label */}
+            
             <div className={styles['hero-label']}>
               <span className={styles['chain-logos-stack']}>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
+                
                 <img src="https://assets.coingecko.com/coins/images/16547/standard/arb.jpg?1721358242" alt="Arbitrum" title="Arbitrum" />
-                {/* eslint-disable-next-line @next/next/no-img-element */}
+                
                 <img src="https://assets.coingecko.com/asset_platforms/images/184/standard/0g.png" alt="0G Network" title="0G Network" />
               </span>
               Arbitrum · 0G Network
             </div>
 
             <h1 className={styles['hero-title']}>
-              Autonomous yield,<br />bounded by you.
+              Autonomous wealth.<br />Cryptographically bound.
             </h1>
 
             <p className={styles['hero-subtitle']}>
-              Set your rules once. Your personal agent finds the best yield across DeFi —
-              only within the limits you sign. Every action is verifiable on-chain, forever.
+              Deploy agents that grow your assets within the strict limits of your intent. Secure, verifiable, and entirely yours.
             </p>
 
             <div className={styles['hero-actions']}>
               <button onClick={handleStartEarning} className={`${styles.btn} ${styles['btn-primary']} ${styles['btn-large']}`}>
-                    Start Earning <ArrowNE />
-              </button>
-              <button onClick={handleTryDemo} className={`${styles.btn} ${styles['btn-outline']} ${styles['btn-large']}`}>
-                Try Demo
+                    Deploy Agent <ArrowNE />
               </button>
             </div>
 
-            {/* Dashboard preview */}
-            <div className={styles['dashboard-preview-container']}>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src="https://placehold.co/860x540/0B0C0E/EA580C?text=YieldGeko+Dashboard"
-                alt="YieldGeko Dashboard"
-                className={styles['dashboard-img']}
-              />
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src="https://placehold.co/260x560/0B0C0E/EA580C?text=Mobile"
-                alt="YieldGeko Mobile"
-                className={styles['mobile-img']}
-              />
+            
+            <div className={styles['hero-visual-container']}>
+              <IntelligentFlow />
             </div>
           </div>
         </section>
 
-        {/* ── Features (dark) ─────────────────────────────────── */}
+        
         <section className={styles.features} id="features">
           <div className={styles.container}>
 
@@ -221,7 +195,7 @@ export default function Landing() {
               </p>
             </div>
 
-            {/* Main feature card */}
+            
             <div className={`${styles['feature-card']} ${styles['main-feature']}`}>
               <div className={styles['feature-glow']} />
 
@@ -233,20 +207,20 @@ export default function Landing() {
               </p>
 
               <div className={styles['multisig-visual']}>
-                {/* Protocol source nodes */}
+                
                 <div className={styles['signer-nodes']}>
                   <div className={`${styles['signer-node']} ${styles.active}`}>
                     <div className={styles.spinner} />
                     Scanning rates…
                   </div>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  
                   <div className={styles['signer-node']}>
                     <img src="https://assets.coingecko.com/coins/images/12645/standard/aave-token-round.png?1720472354" alt="Aave" className={styles.protoLogo} />
                     Aave V3
                     <img src="https://assets.coingecko.com/coins/images/16547/standard/arb.jpg?1721358242" alt="Arbitrum" className={styles.chainBadge} />
                     <span style={{ marginLeft: 'auto', color: '#4ADE80', fontWeight: 700, fontSize: '12px' }}>8.4%</span>
                   </div>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  
                   <div className={styles['signer-node']}>
                     <img src="https://assets.coingecko.com/coins/images/28500/standard/pendle-logo.png" alt="Pendle" className={styles.protoLogo} />
                     Pendle YT
@@ -255,7 +229,7 @@ export default function Landing() {
                   </div>
                 </div>
 
-                {/* Connector */}
+                
                 <div className={styles['connector-group']}>
                   <svg className={styles['connector-lines']} width="120" height="120" viewBox="0 0 120 120">
                     <path d="M 0 38 C 50 38, 70 60, 120 60" fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="1.5" />
@@ -279,10 +253,10 @@ export default function Landing() {
               </div>
             </div>
 
-            {/* 2×2 secondary grid */}
+            
             <div className={styles['features-grid']}>
 
-              {/* Card 1 — Policy-bounded */}
+              
               <div className={styles['feature-card']}>
                 <h3 className={styles['card-title']}>Policy-Bounded Execution</h3>
                 <p className={styles['card-desc']}>
@@ -316,7 +290,7 @@ export default function Landing() {
                 </div>
               </div>
 
-              {/* Card 2 — On-chain proof */}
+              
               <div className={styles['feature-card']}>
                 <h3 className={styles['card-title']}>On-Chain Proof Every Action</h3>
                 <p className={styles['card-desc']}>
@@ -343,7 +317,7 @@ export default function Landing() {
                 </div>
               </div>
 
-              {/* Card 3 — Multiple strategies */}
+              
               <div className={styles['feature-card']}>
                 <h3 className={styles['card-title']}>Multiple Strategies, One App</h3>
                 <p className={styles['card-desc']}>
@@ -365,7 +339,7 @@ export default function Landing() {
                 </div>
               </div>
 
-              {/* Card 4 — Always-on monitoring */}
+              
               <div className={styles['feature-card']}>
                 <h3 className={styles['card-title']}>Always-On Monitoring</h3>
                 <p className={styles['card-desc']}>
@@ -394,42 +368,42 @@ export default function Landing() {
           </div>
         </section>
 
-        {/* ── Ecosystem ───────────────────────────────────────── */}
+        
         <section className={styles.ecosystem} id="protocols">
           <div className={styles['ecosystem-container']}>
 
-            {/* Floating protocol icons */}
+            
             <div className={styles['floating-icons']}>
               <div className={`${styles['icon-floating']} ${styles['icon-1']}`}>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
+                
                 <img src="https://assets.coingecko.com/coins/images/12645/standard/aave-token-round.png?1720472354" alt="Aave" />
               </div>
               <div className={`${styles['icon-floating']} ${styles['icon-2']}`}>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
+                
                 <img src="https://assets.coingecko.com/coins/images/29837/standard/morpho.png" alt="Morpho" />
               </div>
               <div className={`${styles['icon-floating']} ${styles['icon-3']}`}>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
+                
                 <img src="https://assets.coingecko.com/coins/images/28500/standard/pendle-logo.png" alt="Pendle" />
               </div>
               <div className={`${styles['icon-floating']} ${styles['icon-4']}`}>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
+                
                 <img src="https://assets.coingecko.com/coins/images/18323/standard/arbit.png" alt="GMX" />
               </div>
               <div className={`${styles['icon-floating']} ${styles['icon-5']}`}>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
+                
                 <img src="https://assets.coingecko.com/coins/images/12504/standard/uniswap-logo.png" alt="Uniswap" />
               </div>
               <div className={`${styles['icon-floating']} ${styles['icon-6']}`}>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
+                
                 <img src="https://assets.coingecko.com/coins/images/16547/standard/arb.jpg?1721358242" alt="Arbitrum" />
               </div>
               <div className={`${styles['icon-floating']} ${styles['icon-7']}`}>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
+                
                 <img src="https://assets.coingecko.com/coins/images/6319/standard/USDC.png?1769615602" alt="USDC" />
               </div>
               <div className={`${styles['icon-floating']} ${styles['icon-8']}`} style={{ background: '#E0E0E0' }}>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
+                
                 <img src="https://assets.coingecko.com/asset_platforms/images/184/standard/0g.png" alt="0G Network" />
               </div>
             </div>
@@ -443,11 +417,8 @@ export default function Landing() {
                 all executed within your signed policy on Arbitrum and 0G.
               </p>
               <div className={styles['ecosystem-actions']}>
-                <button className={`${styles.btn} ${styles['btn-outline']}`} onClick={handleTryDemo}>
-                  Try Demo
-                </button>
                 <button className={`${styles.btn} ${styles['btn-primary']}`} onClick={handleStartEarning}>
-                      Start Earning <ArrowNE />
+                      Deploy Agent <ArrowNE />
                 </button>
               </div>
             </div>
@@ -457,12 +428,12 @@ export default function Landing() {
 
       </main>
 
-      {/* ── Footer ──────────────────────────────────────────── */}
+      
       <footer className={styles['main-footer']}>
         <div className={`${styles.container} ${styles['footer-container']}`}>
           <div className={styles['footer-grid']}>
 
-            {/* Brand */}
+            
             <div className={styles['footer-brand']}>
               <div className={styles.logo}>
                 <Image src="/logo.svg" alt="YieldGeko" width={32} height={32} style={{ borderRadius: 7 }} />
@@ -473,14 +444,13 @@ export default function Landing() {
               </p>
             </div>
 
-            {/* Links */}
+            
             <div className={styles['footer-links']}>
               <div className={styles['footer-col']}>
                 <h4>Product</h4>
                 <ul>
                   <li><a href="#features">How it works</a></li>
                   <li><a href="#protocols">Protocols</a></li>
-                  <li><a href="/agent">Live Demo</a></li>
                   <li><a href="/app/onboard">Launch App</a></li>
                 </ul>
               </div>
@@ -513,7 +483,7 @@ export default function Landing() {
 
           </div>
 
-          {/* Bottom bar */}
+          
           <div className={styles['footer-bottom']}>
             <div className={styles['social-icons']}>
               <a href="https://x.com/yieldgeko" target="_blank" rel="noopener noreferrer" className={styles['social-icon']} aria-label="X">

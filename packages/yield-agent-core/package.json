@@ -1,0 +1,22 @@
+{
+  "name": "@yieldgeko/yield-intelligence",
+  "version": "2.0.0",
+  "description": "YieldGeko Intelligence Engine — singleton universe + LVR screener + GeckoScorer",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build":       "tsc",
+    "typecheck":   "tsc --noEmit",
+    "warm":        "ts-node --transpile-only scripts/warm-intelligence.ts",
+    "backfill-js": "ts-node --transpile-only scripts/backfill-history.ts"
+  },
+  "dependencies": {
+    "dotenv":  "^16.4.0",
+    "ethers":  "^6.13.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "ts-node":     "^10.9.2",
+    "typescript":  "^5.4.0"
+  }
+}

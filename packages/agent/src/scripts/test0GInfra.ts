@@ -1,14 +1,4 @@
-/**
- * YieldGeko — 0G Infrastructure Debug Script
- *
- * Tests all three 0G components independently:
- *   [1] 0G Storage  — upload a test trace JSON → get CID
- *   [2] 0G Chain    — anchor a test hash in YieldGekoRegistry
- *   [3] 0G Compute  — TEE attestation via DeepSeek V3
- *
- * Run:
- *   npx ts-node src/scripts/test0GInfra.ts
- */
+
 
 import 'dotenv/config';
 import { uploadExecutionTrace }  from '../orchestrator/persistence';
@@ -36,7 +26,7 @@ async function main() {
   console.log(`    ZG_COMPUTE_PROVIDER_ADDRESS: ${process.env.ZG_COMPUTE_PROVIDER_ADDRESS ?? '(missing)'}`);
   console.log(`    ZG_COMPUTE_MODEL:         ${process.env.ZG_COMPUTE_MODEL ?? '(missing)'}`);
 
-  // ── [1] 0G Storage ──────────────────────────────────────────────────────────
+  
 
   section('[1] 0G Storage — upload execution trace');
 
@@ -65,7 +55,7 @@ async function main() {
     console.log(`  ❌ Upload failed: ${err.message?.slice(0, 120)}`);
   }
 
-  // ── [2] 0G Chain ──────────────────────────────────────────────────────────
+  
 
   section('[2] 0G Chain — anchor in YieldGekoRegistry');
 
@@ -89,7 +79,7 @@ async function main() {
     console.log(`  ❌ Anchor failed: ${err.message?.slice(0, 120)}`);
   }
 
-  // ── [3] 0G Compute TEE ────────────────────────────────────────────────────
+  
 
   section('[3] 0G Compute TEE — DeepSeek V3 attestation');
 

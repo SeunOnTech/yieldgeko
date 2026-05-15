@@ -44,3 +44,4 @@ deploy_*.log
 
 # Provider metadata
 .provider-metadata.json
+.env

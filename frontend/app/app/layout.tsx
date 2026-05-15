@@ -23,7 +23,7 @@ const LayoutHeaderSlot = () => {
       position: 'sticky',
       top: 0,
       zIndex: 140,
-      padding: '0 24px', // Minimal horizontal gaps
+      padding: '0 24px', 
       pointerEvents: 'none'
     }}>
       <div style={{ 
@@ -44,8 +44,6 @@ const LayoutHeaderSlot = () => {
     </div>
   )
 }
-
-// ── Icons ─────────────────────────────────────────────────────────────────────
 
 const IcoPortfolio = () => (
   <svg width="17" height="17" viewBox="0 0 16 16" fill="currentColor">
@@ -124,10 +122,6 @@ const IcoWallet = () => (
   </svg>
 )
 
-// ── Wallet avatar ─────────────────────────────────────────────────────────────
-
-// ── Nav item ──────────────────────────────────────────────────────────────────
-
 function NavItem({
   icon, label, active, onClick, mobile = false,
 }: { icon: React.ReactNode; label: string; active?: boolean; onClick?: () => void; mobile?: boolean }) {
@@ -178,15 +172,15 @@ function NavItem({
   )
 }
 
-// ── Sidebar content (shared between desktop + mobile drawer) ──────────────────
-
 const SidebarContent = React.memo(({
   address, pathname, router, onNav, agentUserId,
 }: { address?: string; pathname: string; router: any; onNav?: () => void; agentUserId?: string | null }) => {
-  const shortAddr = address ? `${address.slice(0, 6)}...${address.slice(-4)}` : ''
+  const shortAddr   = address ? `${address.slice(0, 6)}...${address.slice(-4)}` : ''
   const isPortfolio = pathname === '/app'
-  const isStrategy = pathname.startsWith('/app/strategy')
-  const isSettings = pathname === '/app/settings'
+  const isStrategy  = pathname.startsWith('/app/strategy')
+  const isExplore   = pathname === '/app/explore'
+  const isRewards   = pathname === '/app/rewards'
+  const isSettings  = pathname === '/app/settings'
 
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const { disconnect } = useDisconnect()
@@ -196,7 +190,7 @@ const SidebarContent = React.memo(({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: '0 8px' }}>
 
-      {/* Logo Area */}
+      
       <div style={{ padding: '24px 16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <Link href="/app" onClick={onNav} style={{ display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none' }}>
           <Image src="/logo.svg" alt="YieldGeko" width={28} height={28} />
@@ -207,7 +201,7 @@ const SidebarContent = React.memo(({
         <ThemeToggle />
       </div>
 
-      {/* Account / Connect State */}
+      
       <div style={{ padding: '0 16px 24px', position: 'relative' }}>
         {address ? (
           <>
@@ -319,7 +313,7 @@ const SidebarContent = React.memo(({
         )}
       </div>
 
-      {/* Navigation - Scrollable Area */}
+      
       <nav style={{
         flex: 1, display: 'flex', flexDirection: 'column', gap: 4,
         padding: '0 4px', overflowY: 'auto', overflowX: 'hidden',
@@ -327,8 +321,8 @@ const SidebarContent = React.memo(({
       }}>
         <style>{`nav::-webkit-scrollbar { display: none; }`}</style>
         <NavItem icon={<IcoPortfolio />} label="Overview" active={isPortfolio} onClick={() => go('/app')} />
-        <NavItem icon={<IcoStrategy />} label="Explore" active={isStrategy} onClick={() => address ? go(agentUserId ? `/app/strategy/${agentUserId}` : '/app') : go('/app/onboard')} />
-        <NavItem icon={<IcoActivity />} label="Rewards" active={false} onClick={() => go('/app')} />
+        <NavItem icon={<IcoStrategy />}  label="Explore"  active={isExplore}   onClick={() => go('/app/explore')} />
+        <NavItem icon={<IcoActivity />}  label="Rewards"  active={isRewards}   onClick={() => go('/app/rewards')} />
         <NavItem icon={<IcoSettings />} label="Favorites" onClick={() => go('/app/onboard')} />
         <div style={{ height: 1, background: 'var(--border)', margin: '12px 16px', opacity: 0.5 }} />
         <NavItem icon={<IcoSend />} label="Send" onClick={() => go('/app/onboard')} />
@@ -339,9 +333,9 @@ const SidebarContent = React.memo(({
         <NavItem icon={<IcoSettings />} label="Settings" active={isSettings} onClick={() => go('/app/settings')} />
       </nav>
 
-      {/* Bottom Widgets */}
+      
       <div style={{ padding: '16px 12px 16px', marginTop: 'auto' }}>
-        {/* Premium Banner */}
+        
         <div style={{
           height: 48, borderRadius: 12, marginBottom: 12, cursor: 'pointer',
           background: 'linear-gradient(135deg, #EA580C, #EC4899)',
@@ -351,7 +345,7 @@ const SidebarContent = React.memo(({
           <span style={{ fontSize: 16 }}>💎</span> premium
         </div>
 
-        {/* Download Widget */}
+        
         <div style={{
           background: 'var(--surface)', border: '1px solid var(--border)',
           borderRadius: 12, padding: '10px 16px', display: 'flex', alignItems: 'center',
@@ -365,18 +359,11 @@ const SidebarContent = React.memo(({
           </div>
         </div>
 
-        <div style={{ textAlign: 'center' }}>
-          <Link href="#" style={{ fontSize: 11, color: '#3B82F6', textDecoration: 'none', fontWeight: 600 }}>
-            Build with YieldGeko API
-          </Link>
-        </div>
       </div>
     </div>
   )
 })
 SidebarContent.displayName = 'SidebarContent'
-
-// ── Layout ────────────────────────────────────────────────────────────────────
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
@@ -393,10 +380,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     }
   }, [])
 
-  // Close drawer on route change
+  
   useEffect(() => { setDrawerOpen(false) }, [pathname])
 
-  // Lock body scroll when drawer open on mobile
+  
   useEffect(() => {
     if (drawerOpen) { document.body.style.overflow = 'hidden' }
     else { document.body.style.overflow = '' }
@@ -423,7 +410,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <>
       <GlobalLoading show={isProcessing} />
-      {/* ── Responsive styles ─────────────────────────────────────────── */}
+      
       <style>{`
         .app-layout-sidebar {
           width: 260px;
@@ -502,16 +489,16 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
       <div style={{ display: 'flex', minHeight: '100vh', background: 'var(--background)' }}>
 
-        {/* ── Desktop sidebar ──────────────────────────────────────────── */}
+        
         <aside className="app-layout-sidebar">
           <SidebarContent address={address} pathname={pathname} router={router} agentUserId={agentUserId} />
         </aside>
 
-        {/* ── Mobile drawer (overlay) ──────────────────────────────────── */}
+        
         <div className={`app-drawer-overlay${drawerOpen ? ' open' : ''}`}>
           <div className="app-drawer-backdrop" onClick={() => setDrawerOpen(false)} />
           <div className="app-drawer-panel">
-            {/* Close button inside drawer */}
+            
             <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '14px 14px 0' }}>
               <button
                 onClick={() => setDrawerOpen(false)}
@@ -524,13 +511,13 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           </div>
         </div>
 
-        {/* ── Main area ────────────────────────────────────────────────── */}
+        
         <HeaderProvider>
           <OnboardingGuard>
             <div className="app-layout-main">
               <LayoutHeaderSlot />
 
-              {/* Mobile top bar */}
+              
               <div className="app-mobile-topbar">
               <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
                 <button
@@ -553,12 +540,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               </div>
             </div>
 
-            {/* Page content */}
+            
             <main className="app-content-wrapper">
               {children}
             </main>
 
-            {/* Mobile bottom nav */}
+            
             <nav className="app-mobile-bottomnav">
               {[
                 { icon: <IcoPortfolio />, label: 'Portfolio', active: isPortfolio, onClick: () => router.push('/app') },

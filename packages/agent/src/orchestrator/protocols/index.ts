@@ -1,7 +1,7 @@
 import { JsonRpcProvider } from 'ethers';
 import { fetchPrices, pricesAreHealthy, type PriceMap, type TokenPrice } from './chainlink';
-import { fetchAaveMarkets, fetchAaveUserPositions, verifyAaveRate, type AaveMarket, type AaveUserPosition } from './aave-v3';
-import { fetchGMXMarkets, fetchGMXUserPositions, verifyGMXMarket, type GMXMarket, type GMXUserPosition } from './gmx-v2';
+import { fetchAaveMarkets, fetchAaveBatchPositions, verifyAaveRate, type AaveMarket, type AaveUserPosition } from './aave-v3';
+import { fetchGMXMarkets, fetchGMXBatchPositions, verifyGMXMarket, type GMXMarket, type GMXUserPosition } from './gmx-v2';
 import { fetchUniV3Position, createPositionSnapshot, verifyUniV3Pool, type UniV3Position, type PositionSnapshot } from './uniswap-v3';
 
 export * from './chainlink';
@@ -9,18 +9,13 @@ export * from './aave-v3';
 export * from './gmx-v2';
 export * from './uniswap-v3';
 
-// ── OnChainSnapshot ───────────────────────────────────────────────────────────
-//
-//  Single object holding the complete on-chain state fetched in one round.
-//  The universe engine and monitor both read from this snapshot — one
-//  snapshot per tick means every module shares the same consistent state.
-// ─────────────────────────────────────────────────────────────────────────────
-
 export interface OnChainSnapshot {
   prices:           PriceMap;
   pricesHealthy:    boolean;
   aaveMarkets:      AaveMarket[];
   gmxMarkets:       GMXMarket[];
+  morphoVaults:     import('./morpho').MorphoVault[];
+  pendleMarkets:    import('./pendle').PendleMarket[];
   fetchedAt:        number;
   fetchDurationMs:  number;
 }
@@ -28,10 +23,10 @@ export interface OnChainSnapshot {
 export interface UserOnChainPositions {
   aave:             AaveUserPosition[];
   gmx:              GMXUserPosition[];
-  uniV3:            UniV3Position | null;
+  morpho:           import('./morpho').MorphoUserPosition[];
+  pendle:           import('./pendle').PendleUserPosition[];
+  uniV3:            import('../driftMonitor').DriftResult | null;
 }
-
-// ── Main provider class ───────────────────────────────────────────────────────
 
 export class OnChainProvider {
   private provider:     JsonRpcProvider;
@@ -42,19 +37,21 @@ export class OnChainProvider {
     this.provider = provider;
   }
 
-  // ── Fetch full market snapshot (called once per tick) ──────────────────────
+  
 
   async fetchSnapshot(): Promise<OnChainSnapshot> {
     const t0 = Date.now();
 
-    // Prices first — everything else depends on them
+    
     const prices = await fetchPrices(this.provider);
     const healthy = pricesAreHealthy(prices);
 
-    // Aave and GMX markets in parallel
-    const [aaveMarkets, gmxMarkets] = await Promise.all([
+    
+    const [aaveMarkets, gmxMarkets, morphoVaults, pendleMarkets] = await Promise.all([
       fetchAaveMarkets(this.provider, prices).catch(() => [] as AaveMarket[]),
       fetchGMXMarkets(this.provider, prices).catch(() => [] as GMXMarket[]),
+      import('./morpho').then(m => m.fetchMorphoVaults(this.provider, prices)).catch(() => []),
+      import('./pendle').then(m => m.fetchPendleMarkets(this.provider, prices)).catch(() => []),
     ]);
 
     const snapshot: OnChainSnapshot = {
@@ -62,6 +59,8 @@ export class OnChainProvider {
       pricesHealthy:   healthy,
       aaveMarkets,
       gmxMarkets,
+      morphoVaults,
+      pendleMarkets,
       fetchedAt:       Date.now(),
       fetchDurationMs: Date.now() - t0,
     };
@@ -70,40 +69,62 @@ export class OnChainProvider {
     return snapshot;
   }
 
-  // ── Fetch user positions (called when user address is known) ───────────────
+  
 
   async fetchUserPositions(
-    userAddress: string,
-    uniV3TokenId: bigint | null,
-    snapshot:    OnChainSnapshot,
+    _userAddress: string,
+    _uniV3TokenId: bigint | null,
+    _snapshot:    OnChainSnapshot,
   ): Promise<UserOnChainPositions> {
-    const [aave, gmx] = await Promise.all([
-      fetchAaveUserPositions(userAddress, snapshot.aaveMarkets, this.provider, snapshot.prices)
-        .catch(() => [] as AaveUserPosition[]),
-      fetchGMXUserPositions(userAddress, snapshot.gmxMarkets, this.provider)
-        .catch(() => [] as GMXUserPosition[]),
-    ]);
-
-    let uniV3: UniV3Position | null = null;
-    if (uniV3TokenId) {
-      const entry = this.snapshots.get(uniV3TokenId.toString()) ?? null;
-      uniV3 = await fetchUniV3Position(uniV3TokenId, this.provider, snapshot.prices, entry)
-        .catch(() => null);
-    }
-
-    return { aave, gmx, uniV3 };
+    
+    
+    return { aave: [], gmx: [], morpho: [], pendle: [], uniV3: null };
   }
 
-  // ── Pre-execution verification gateway ─────────────────────────────────────
-  //
-  //  Call this immediately before executing any fund movement.
-  //  Returns all checks in one call so the safety gate has everything it needs.
+  
+
+  async fetchBatchPositions(
+    userStates: import('../types').UserState[],
+    snapshot:   OnChainSnapshot,
+    driftMap:   Map<string, import('../driftMonitor').DriftResult>,
+  ): Promise<Map<string, UserOnChainPositions>> {
+    const userAddresses = [...new Set(userStates.map(u => u.userAddress))];
+    
+    
+    const [aaveBatch, gmxBatch, morphoBatch, pendleBatch] = await Promise.all([
+      fetchAaveBatchPositions(userAddresses, snapshot.aaveMarkets, this.provider, snapshot.prices),
+      fetchGMXBatchPositions(userAddresses, snapshot.gmxMarkets, this.provider),
+      import('./morpho').then(m => m.fetchMorphoBatchPositions(userAddresses, snapshot.morphoVaults, this.provider, snapshot.prices)),
+      import('./pendle').then(m => m.fetchPendleBatchPositions(userAddresses, snapshot.pendleMarkets, this.provider, snapshot.prices)),
+    ]);
+
+    const results = new Map<string, UserOnChainPositions>();
+
+    for (const user of userStates) {
+      const aave   = aaveBatch.get(user.userAddress) ?? [];
+      const gmx    = gmxBatch.get(user.userAddress) ?? [];
+      const morpho = morphoBatch.get(user.userAddress) ?? [];
+      const pendle = pendleBatch.get(user.userAddress) ?? [];
+      
+      const uniV3Pos = user.portfolio?.positions.find(p => p.strategyType === 'DELTA_NEUTRAL');
+      const uniV3    = driftMap.get(uniV3Pos?.id ?? '') || null;
+      
+      results.set(user.userId, { aave, gmx, morpho, pendle, uniV3 });
+    }
+
+    return results;
+  }
+
+  
+  
+  
+  
 
   async verifyBeforeExecution(params: {
     strategyType:   'AAVE_LENDING' | 'GMX_REAL_YIELD' | 'DELTA_NEUTRAL';
-    assetSymbol?:   string;   // AAVE: e.g. 'USDC'
-    gmxMarket?:     string;   // GMX: e.g. 'ETH/USDC'
-    poolAddress?:   string;   // Uni V3: pool address
+    assetSymbol?:   string;   
+    gmxMarket?:     string;   
+    poolAddress?:   string;   
     expectedAPY:    number;
     managedUSD:     number;
     snapshot:       OnChainSnapshot;
@@ -119,7 +140,7 @@ export class OnChainProvider {
     let liveAPY: number | null = null;
     let error: string | null = null;
 
-    // ── Price health check (always) ──────────────────────────────────────────
+    
     checks.push({
       name:     'Chainlink prices',
       passed:   snapshot.pricesHealthy,
@@ -128,7 +149,7 @@ export class OnChainProvider {
     });
     if (!snapshot.pricesHealthy) { ok = false; error = 'Price oracle stale'; }
 
-    // ── Protocol-specific checks ─────────────────────────────────────────────
+    
     if (strategyType === 'AAVE_LENDING' && assetSymbol) {
       const result = await verifyAaveRate(assetSymbol, expectedAPY, 20, this.provider, snapshot.prices);
       liveAPY = result.liveAPY;
@@ -169,7 +190,7 @@ export class OnChainProvider {
     return { ok, liveAPY, checks, error };
   }
 
-  // ── Create entry snapshot for a new Uni V3 position ──────────────────────
+  
 
   async recordPositionEntry(tokenId: bigint, snapshot: OnChainSnapshot): Promise<void> {
     const snap = await createPositionSnapshot(tokenId, this.provider, snapshot.prices);

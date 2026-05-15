@@ -1,47 +1,20 @@
 import type { PortfolioPosition, HarvestRecommendation, StrategyType } from './types';
 
-// ── Compounder — Gas-aware harvest optimisation ───────────────────────────────
-//
-//  Determines when to harvest and compound rewards per position.
-//
-//  Decision model:
-//    Harvest when: pendingRewards > gasCost × multiplier
-//    AND:          annualised pending yield > minimum meaningful threshold
-//
-//  Research-derived optimal multipliers by position size:
-//    < $5K:   multiplier = 5   (harvest rarely — gas drag is significant)
-//    $5-50K:  multiplier = 3   (harvest weekly-ish)
-//    $50K+:   multiplier = 2   (harvest more frequently, gas is small %)
-//
-//  Protocol-specific compounding behaviour:
-//    AAVE_LENDING / MORPHO_LENDING  → auto-compounds via exchange rate. Nothing needed.
-//    GMX_REAL_YIELD                 → fee income reflected in GM token price. Auto-compounds.
-//    DELTA_NEUTRAL                  → Uni V3 fees sit idle in tokensOwed. MUST harvest to compound.
-//    PENDLE_LP                      → PENDLE rewards need harvest + reinvest.
-//    PENDLE_YT                      → no traditional harvest; value changes via time decay.
-//    PENDLE_PT                      → no harvest until maturity.
-//    LEVERAGED_LOOP                 → no harvest; yield via rate spread in position.
-//
-//  Compounding impact (research):
-//    Weekly vs no-compound on 15% APY $10K:  +7.6% effective APY → $1,614 vs $1,500/yr
-//    Daily vs weekly: +0.3% additional — diminishing returns past weekly for <$50K
-// ─────────────────────────────────────────────────────────────────────────────
-
 const GAS_ESTIMATE_USD: Record<StrategyType, number> = {
-  AAVE_LENDING:   0,      // auto-compound — no gas needed
-  MORPHO_LENDING: 0,      // auto-compound
-  GMX_REAL_YIELD: 0,      // auto-compound via GM price
-  PENDLE_PT:      0,      // no harvest until maturity
-  PENDLE_YT:      0,      // no traditional harvest
-  DELTA_NEUTRAL:  1.50,   // collect fees + add liquidity back = ~1.5 USD on Arbitrum
-  PENDLE_LP:      1.20,   // collect PENDLE rewards + reinvest
-  LEVERAGED_LOOP: 0,      // no harvest
+  AAVE_LENDING:   0,      
+  MORPHO_LENDING: 0,      
+  GMX_REAL_YIELD: 0,      
+  PENDLE_PT:      0,      
+  PENDLE_YT:      0,      
+  DELTA_NEUTRAL:  1.50,   
+  PENDLE_LP:      1.20,   
+  LEVERAGED_LOOP: 0,      
 };
 
 const HARVEST_MULTIPLIERS: Record<string, number> = {
-  small:  5,   // position < $5K
-  medium: 3,   // position $5K-$50K
-  large:  2,   // position > $50K
+  small:  3.34, 
+  medium: 2,    
+  large:  1.5,  
 };
 
 function getMultiplier(positionUSD: number): number {
@@ -50,10 +23,8 @@ function getMultiplier(positionUSD: number): number {
   return HARVEST_MULTIPLIERS.large;
 }
 
-// ── Effective APY with compounding ────────────────────────────────────────────
-
 export function effectiveAPY(
-  nominalAPY:     number,   // %
+  nominalAPY:     number,   
   compoundsPerYr: number,
 ): number {
   if (compoundsPerYr <= 0) return nominalAPY;
@@ -65,17 +36,15 @@ export function compoundBoost(nominalAPY: number, compoundsPerYr: number): numbe
   return effectiveAPY(nominalAPY, compoundsPerYr) - nominalAPY;
 }
 
-// ── Optimal harvest frequency ─────────────────────────────────────────────────
-
 export function optimalHarvestsPerYear(
   positionUSD:    number,
   nominalAPY:     number,
   gasPerHarvest:  number,
 ): number {
-  if (gasPerHarvest <= 0) return 0;  // auto-compounds, no action needed
+  if (gasPerHarvest <= 0) return 0;  
 
-  // Find n that maximises: effectiveAPY(n) - (n × gasPerHarvest / positionUSD × 100)
-  // Gas drag % = (n × gasPerHarvest / positionUSD) × 100
+  
+  
   let bestN   = 0;
   let bestNet = 0;
 
@@ -88,8 +57,6 @@ export function optimalHarvestsPerYear(
 
   return bestN;
 }
-
-// ── Main harvest recommendation ───────────────────────────────────────────────
 
 export function evaluateHarvest(
   position: PortfolioPosition,
@@ -104,7 +71,7 @@ export function evaluateHarvest(
     reason:            '',
   };
 
-  // Protocols that auto-compound — nothing to do
+  
   if (gasEstimate === 0) {
     return { ...base, reason: 'Auto-compounds — no harvest needed' };
   }
@@ -112,7 +79,7 @@ export function evaluateHarvest(
   const multiplier   = getMultiplier(position.allocationUSD);
   const minThreshold = gasEstimate * multiplier;
 
-  // Condition 1: pending rewards must cover gas × multiplier
+  
   if (position.pendingRewardsUSD < minThreshold) {
     return {
       ...base,
@@ -120,7 +87,7 @@ export function evaluateHarvest(
     };
   }
 
-  // Condition 2: annualised pending yield must be meaningful (>0.5% of position)
+  
   const daysHeld        = Math.max(position.daysHeld, 0.01);
   const annualisedYield = (position.pendingRewardsUSD / position.allocationUSD / daysHeld) * 365 * 100;
   if (annualisedYield < 0.5) {
@@ -130,9 +97,9 @@ export function evaluateHarvest(
     };
   }
 
-  // Harvest is justified
+  
   const netGain    = position.pendingRewardsUSD - gasEstimate;
-  const boostPct   = compoundBoost(position.currentNetAPY, 52); // estimate weekly compound boost
+  const boostPct   = compoundBoost(position.currentNetAPY, 52); 
 
   return {
     ...base,
@@ -142,11 +109,6 @@ export function evaluateHarvest(
   };
 }
 
-// ── Estimate pending rewards per tick ─────────────────────────────────────────
-//
-//  For protocols where rewards sit idle, estimate accumulation since last harvest.
-//  This is a simulation estimate — real values require on-chain reads.
-
 export function estimatePendingRewards(
   position:     PortfolioPosition,
   elapsedSecs:  number,
@@ -154,13 +116,11 @@ export function estimatePendingRewards(
   const HARVEST_PROTOCOLS: StrategyType[] = ['DELTA_NEUTRAL', 'PENDLE_LP'];
   if (!HARVEST_PROTOCOLS.includes(position.strategyType)) return 0;
 
-  // Estimate based on netAPY and elapsed time
+  
   const yearFrac     = elapsedSecs / 31_536_000;
   const newRewards   = position.allocationUSD * (position.currentNetAPY / 100) * yearFrac;
   return position.pendingRewardsUSD + Math.max(0, newRewards);
 }
-
-// ── Evaluate all positions in portfolio ──────────────────────────────────────
 
 export function evaluatePortfolioHarvests(
   positions: PortfolioPosition[],
@@ -168,5 +128,5 @@ export function evaluatePortfolioHarvests(
   return positions
     .map(evaluateHarvest)
     .filter(r => r.shouldHarvest)
-    .sort((a, b) => b.netGainUSD - a.netGainUSD); // highest-value harvests first
+    .sort((a, b) => b.netGainUSD - a.netGainUSD); 
 }

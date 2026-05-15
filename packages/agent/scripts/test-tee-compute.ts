@@ -114,7 +114,8 @@ async function main() {
 
   const data    = await res.json() as any;
   const content = data.choices?.[0]?.message?.content ?? '';
-  const chatID  = data.id ?? '';
+  const responseKeyHeader = res.headers.get('ZG-Res-Key') || res.headers.get('zg-res-key') || '';
+  const chatID  = responseKeyHeader || data.id || '';
   console.log(`    Response: "${content}"`);
   console.log(`    chatID:   ${chatID}`);
   console.log('    Inference call ✅');

@@ -1,0 +1,12 @@
+node_modules
+**/node_modules
+**/.state
+**/.env
+**/.env.local
+packages/agent/dist
+frontend
+contracts
+docs
+scripts
+**/*.log
+.git

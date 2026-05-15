@@ -7,7 +7,7 @@ export function WalletAvatar({ address, size = 40 }: { address: string; size?: n
   
   const seed = address.toLowerCase()
   
-  // Standard blockies PRNG (Xorshift)
+  
   const randseed = new Int32Array(4)
   function seedrand(s: string) {
     randseed.fill(0)
@@ -37,7 +37,7 @@ export function WalletAvatar({ address, size = 40 }: { address: string; size?: n
   const spotcolor = createColor()
 
   const imageData: number[] = []
-  const dataWidth = 4 // 8 / 2
+  const dataWidth = 4 
   for (let y = 0; y < 8; y++) {
     const row = []
     for (let x = 0; x < dataWidth; x++) {
@@ -72,7 +72,7 @@ export function WalletAvatar({ address, size = 40 }: { address: string; size?: n
           ))}
         </div>
       </div>
-      {/* Network indicator dot */}
+      
       <div style={{
         position: 'absolute', right: -size * 0.02, bottom: -size * 0.02, width: size * 0.25, height: size * 0.25,
         borderRadius: '50%', background: '#22C55E', border: '2px solid #1a1a1a'

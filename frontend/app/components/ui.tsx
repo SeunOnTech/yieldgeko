@@ -4,8 +4,6 @@ import Image from 'next/image'
 import Link from 'next/link'
 import type { ReactNode } from 'react'
 
-// ─── Real logo URLs ───────────────────────────────────────────────────────────
-
 export const CHAIN_LOGOS: Record<string, string> = {
   arbitrum: 'https://assets.coingecko.com/coins/images/16547/standard/arb.jpg?1721358242',
   '0g':     'https://assets.coingecko.com/asset_platforms/images/184/standard/0g.png',
@@ -22,7 +20,7 @@ export const PROTO_LOGOS: Record<string, string> = {
 function LogoCircle({ src, alt, size }: { src: string; alt: string; size: number }) {
   return (
     <div style={{ width: size, height: size, borderRadius: '50%', overflow: 'hidden', flexShrink: 0, background: '#F5F5F4' }}>
-      {/* eslint-disable-next-line @next/next/no-img-element */}
+      
       <img src={src} alt={alt} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
     </div>
   )
@@ -49,8 +47,6 @@ export function GekoMark({ size = 80, color = '#EA580C' }: { size?: number; colo
   )
 }
 
-// ─── App nav ──────────────────────────────────────────────────────────────────
-
 export function AppNav() {
   return (
     <header className="appnav">
@@ -59,14 +55,12 @@ export function AppNav() {
         <span className="appnav-wordmark">YieldGeko</span>
       </Link>
       <div className="appnav-right">
-        {/* appkit-button handles both connected and disconnected states */}
+        
         <appkit-button size="md" balance="hide" />
       </div>
     </header>
   )
 }
-
-// ─── Status pill ──────────────────────────────────────────────────────────────
 
 type Status = 'running' | 'paused' | 'error'
 
@@ -80,8 +74,6 @@ export function StatusPill({ state }: { state: Status }) {
   )
 }
 
-// ─── Chain chip ───────────────────────────────────────────────────────────────
-
 export function ChainChip({ chain }: { chain: string }) {
   const labels: Record<string, string> = { arbitrum: 'Arbitrum', '0g': '0G Network' }
   return (
@@ -91,8 +83,6 @@ export function ChainChip({ chain }: { chain: string }) {
     </span>
   )
 }
-
-// ─── Sparkline ────────────────────────────────────────────────────────────────
 
 export function Sparkline({ data, color = '#16A34A', height = 48 }: { data: number[]; color?: string; height?: number }) {
   const w = 100, h = height

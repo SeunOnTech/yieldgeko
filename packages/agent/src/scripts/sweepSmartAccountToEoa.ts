@@ -1,11 +1,4 @@
-/**
- * Sweep WBTC + USDT from smart account → USDC → user EOA
- *
- * Uses the smart account (MetaMask SA) directly via Pimlico.
- * No delegation needed — smart account owns the tokens.
- *
- * Run:  npx ts-node src/scripts/sweepSmartAccountToEoa.ts
- */
+
 
 import 'dotenv/config';
 import {
@@ -18,7 +11,6 @@ import { privateKeyToAccount }      from 'viem/accounts';
 import { createPimlicoClient }      from 'permissionless/clients/pimlico';
 import { Implementation, toMetaMaskSmartAccount } from '@metamask/smart-accounts-kit';
 
-// ── Addresses ─────────────────────────────────────────────────────────────────
 const ROUTER  = '0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45' as Address;
 const WBTC    = '0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f' as Address;
 const USDT    = '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9' as Address;

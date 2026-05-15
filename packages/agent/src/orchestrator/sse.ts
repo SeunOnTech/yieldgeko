@@ -3,19 +3,6 @@ import type { AgentEvent, AgentState } from './types';
 import { getExecutor, resolveAgentAddress } from './execution';
 import { getJournal } from './journal';
 
-
-// ── SSE Server ────────────────────────────────────────────────────────────────
-//
-//  Runs on port 3001 within the agent process.
-//  Frontend connects to http://localhost:3001/events
-//
-//  Endpoints:
-//    GET /events  — SSE stream (text/event-stream)
-//    GET /state   — Full state snapshot as JSON (for initial load)
-//    GET /state/:id-or-address — Single user snapshot as JSON
-//    GET /health  — {ok, clients, uptime}
-// ── Utilities ─────────────────────────────────────────────────────────────────
-
 function jsonStringify(obj: any): string {
   return JSON.stringify(obj, (key, value) =>
     typeof value === 'bigint' ? value.toString() : value
@@ -26,11 +13,11 @@ function slugify(text: string): string {
   return text
     .toString()
     .toLowerCase()
-    .replace(/\s+/g, '-')           // Replace spaces with -
-    .replace(/[^\w\-]+/g, '')       // Remove all non-word chars
-    .replace(/\-\-+/g, '-')         // Replace multiple - with single -
-    .replace(/^-+/, '')             // Trim - from start of text
-    .replace(/-+$/, '');            // Trim - from end of text
+    .replace(/\s+/g, '-')           
+    .replace(/[^\w\-]+/g, '')       
+    .replace(/\-\-+/g, '-')         
+    .replace(/^-+/, '')             
+    .replace(/-+$/, '');            
 }
 
 function randomChars(length: number): string {
@@ -135,15 +122,28 @@ function buildUserPolicy(payload: RegisterPayload): UserPolicy {
   };
 }
 
-let SSE_PORT = Number(process.env.SSE_PORT ?? 3001);
+let SSE_PORT = Number(process.env.SSE_PORT ?? process.env.PORT ?? 3001);
+const MAX_SSE_CLIENTS = Number(process.env.MAX_SSE_CLIENTS ?? 10_000);
 
-const clients = new Set<http.ServerResponse>();
+const globalClients = new Set<http.ServerResponse>();
+const userClients   = new Map<string, Set<http.ServerResponse>>();
+
+function totalClients(): number {
+  let n = globalClients.size;
+  for (const s of userClients.values()) n += s.size;
+  return n;
+}
+
+function removeClient(res: http.ServerResponse, userId?: string): void {
+  globalClients.delete(res);
+  if (userId) {
+    const set = userClients.get(userId);
+    if (set) { set.delete(res); if (set.size === 0) userClients.delete(userId); }
+  }
+}
+
 let   latestState: AgentState | null = null;
 const startedAt = Date.now();
-
-// ── Real user registration callback ──────────────────────────────────────────
-//  Set by the orchestrator after UserRegistry is ready.
-//  Called when POST /api/register receives a valid signed policy.
 
 type RegisterFn = (policy: UserPolicy) => Promise<UserState>;
 let registerCallback: RegisterFn | null = null;
@@ -153,7 +153,6 @@ let isIdTakenCallback: IsIdTakenFn | null = null;
 
 type ResetFn = (userId: string) => Promise<boolean>;
 let resetCallback: ResetFn | null = null;
-
 
 import type { UserState } from './types';
 
@@ -196,7 +195,6 @@ export function setResumeCallback(fn: PauseFn): void {
   resumeCallback = fn;
 }
 
-
 export function setForceMigrateCallback(fn: ForceMigrateFn): void {
   forceMigrateCallback = fn;
 }
@@ -205,15 +203,13 @@ export function setPatchPolicyCallback(fn: PatchPolicyFn): void {
   patchPolicyCallback = fn;
 }
 
-// ── API key auth helper ───────────────────────────────────────────────────────
-//
-// Fix G-5: protect sensitive endpoints with Bearer token auth.
-// If AGENT_API_KEY is set, require `Authorization: Bearer <key>` on protected routes.
-// If AGENT_API_KEY is not set, allow through (dev mode — no auth required).
+function buildSigMsg(endpoint: string, timestamp: number): string {
+  return `YieldGeko\nAction: ${endpoint}\nTimestamp: ${timestamp}`;
+}
 
 function checkApiAuth(req: http.IncomingMessage, res: http.ServerResponse): boolean {
   const apiKey = process.env.AGENT_API_KEY;
-  if (!apiKey) return true;  // dev mode — no key configured, allow all
+  if (!apiKey) return true;  
 
   const authHeader = req.headers['authorization'];
   if (!authHeader || authHeader !== `Bearer ${apiKey}`) {
@@ -225,7 +221,51 @@ function checkApiAuth(req: http.IncomingMessage, res: http.ServerResponse): bool
   return true;
 }
 
-// ── CORS headers ──────────────────────────────────────────────────────────────
+async function checkUserSig(
+  req:         http.IncomingMessage,
+  res:         http.ServerResponse,
+  endpoint:    string,
+  userAddress: string | undefined,
+): Promise<boolean> {
+  if (process.env.REQUIRE_USER_SIG !== 'true') return true;
+  if (!userAddress) return true;  
+
+  const sig       = req.headers['x-user-sig'] as string | undefined;
+  const tsHeader  = req.headers['x-user-sig-ts'] as string | undefined;
+  if (!sig || !tsHeader) {
+    const body = jsonStringify({ error: 'Missing X-User-Sig / X-User-Sig-Ts headers (REQUIRE_USER_SIG is enabled)' });
+    res.writeHead(403, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) });
+    res.end(body);
+    return false;
+  }
+
+  const ts = Number(tsHeader);
+  const ageSecs = Math.abs(Date.now() / 1000 - ts);
+  if (ageSecs > 300) {  
+    const body = jsonStringify({ error: `Signature timestamp too old (${Math.round(ageSecs)}s) — re-sign and retry` });
+    res.writeHead(403, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) });
+    res.end(body);
+    return false;
+  }
+
+  try {
+    const { ethers } = await import('ethers');
+    const message  = buildSigMsg(endpoint, ts);
+    const recovered = ethers.verifyMessage(message, sig).toLowerCase();
+    if (recovered !== userAddress.toLowerCase()) {
+      const body = jsonStringify({ error: `Signature mismatch — expected ${userAddress}, got ${recovered}` });
+      res.writeHead(403, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) });
+      res.end(body);
+      return false;
+    }
+    return true;
+  } catch (e: any) {
+    const body = jsonStringify({ error: `Invalid signature: ${e.message}` });
+    res.writeHead(403, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) });
+    res.end(body);
+    return false;
+  }
+}
 
 function setCORS(res: http.ServerResponse): void {
   const origin = process.env.FRONTEND_ORIGIN ?? '*';
@@ -235,20 +275,25 @@ function setCORS(res: http.ServerResponse): void {
   if (origin !== '*') res.setHeader('Vary', 'Origin');
 }
 
-// ── Broadcast one event to all connected clients ─────────────────────────────
-
-export function broadcast(event: AgentEvent): void {
-  const line = `data: ${jsonStringify(event)}\n\n`;
-  for (const client of clients) {
-    try {
-      client.write(line);
-    } catch {
-      clients.delete(client);
-    }
+function writeToSet(set: Set<http.ServerResponse>, line: string): void {
+  for (const client of set) {
+    try { client.write(line); }
+    catch { set.delete(client); }
   }
 }
 
-// ── Store state for late-joiners ──────────────────────────────────────────────
+export function broadcast(event: AgentEvent): void {
+  const line = `data: ${jsonStringify(event)}\n\n`;
+  writeToSet(globalClients, line);
+  for (const set of userClients.values()) writeToSet(set, line);
+}
+
+export function broadcastToUser(userId: string, event: AgentEvent): void {
+  const line = `data: ${jsonStringify(event)}\n\n`;
+  writeToSet(globalClients, line);                    
+  const set = userClients.get(userId);
+  if (set) writeToSet(set, line);
+}
 
 export function setLatestState(state: AgentState): void {
   latestState = state;
@@ -259,7 +304,7 @@ function getUserFromState(idOrAddress: string): UserState | null {
   const decoded = decodeURIComponent(idOrAddress).toLowerCase();
   const users = latestState.users as Record<string, UserState>;
 
-  // Check the direct key (which is the userId/strategyId)
+  
   if (users[idOrAddress]) return users[idOrAddress];
   if (users[decoded]) return users[decoded];
 
@@ -290,7 +335,6 @@ function currentSessionOnly(user: UserState): UserState {
     executions: ((user as any).executions || []).filter(inCurrentSession),
   } as any;
 }
-
 
 function publicUserState(user: UserState, includeHistory: boolean): UserState {
   return includeHistory ? user : currentSessionOnly(user);
@@ -343,7 +387,7 @@ function aggregatePnLHistory(strategies: UserState[]): Array<{
   if (strategies.length === 0) return [];
   if (strategies.length === 1) return (strategies[0] as any).pnlHistory ?? [];
 
-  // 1. Collect all unique timestamps
+  
   const allTs = new Set<number>();
   for (const s of strategies) {
     for (const p of (s as any).pnlHistory ?? []) {
@@ -352,7 +396,7 @@ function aggregatePnLHistory(strategies: UserState[]): Array<{
   }
   const sortedTs = [...allTs].sort((a, b) => a - b);
   
-  // 2. Map each strategy to its points for O(1) lookup
+  
   const strategyPoints = strategies.map(s => {
     const map = new Map<number, any>();
     for (const p of (s as any).pnlHistory ?? []) {
@@ -361,7 +405,7 @@ function aggregatePnLHistory(strategies: UserState[]): Array<{
     return map;
   });
 
-  // 3. Track last known state for each strategy to carry forward
+  
   const lastState = strategies.map(() => ({
     totalUSD: 0, navUSD: 0, incomeUSD: 0, ilUSD: 0, netUSD: 0
   }));
@@ -402,7 +446,6 @@ function aggregatePnLHistory(strategies: UserState[]): Array<{
   return result;
 }
 
-
 function buildWalletDashboardProjection(strategies: UserState[], includeHistory: boolean): Record<string, unknown> | null {
   if (strategies.length === 0) return null;
 
@@ -442,7 +485,7 @@ function buildWalletDashboardProjection(strategies: UserState[], includeHistory:
     .sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0))
     .slice(0, 50);
 
-  // For the dashboard, we take the last 200 points from the journal for each strategy
+  
   const pnlHistory = aggregatePnLHistory(publicStrategies.map(s => ({
     ...s,
     pnlHistory: journal.getPnLHistory(s.userId, 200).reverse()
@@ -498,21 +541,19 @@ function buildWalletDashboardProjection(strategies: UserState[], includeHistory:
   };
 }
 
-// ── Start server ──────────────────────────────────────────────────────────────
-
 export function startSSEServer(): void {
   const server = http.createServer(async (req, res) => {
     setCORS(res);
 
-    // Preflight
+    
     if (req.method === 'OPTIONS') {
       res.writeHead(204);
       res.end();
       return;
     }
 
-    // ── Historical Logs (Infinity Architecture) ──────────────────────────────
-    //  GET /api/v2/strategies/:id/logs?limit=100
+    
+    
     if (req.url?.startsWith('/api/v2/strategies/') && req.url.includes('/logs') && req.method === 'GET') {
       const parts = req.url.split('/');
       const strategyId = decodeURIComponent(parts[4].split('?')[0]);
@@ -530,42 +571,63 @@ export function startSSEServer(): void {
       return;
     }
 
+    
+    if (req.url?.startsWith('/events') && req.method === 'GET') {
+      
+      if (totalClients() >= MAX_SSE_CLIENTS) {
+        const body = jsonStringify({ error: 'SSE connection limit reached — try again later' });
+        res.writeHead(503, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) });
+        res.end(body);
+        return;
+      }
 
-    // ── SSE stream ──────────────────────────────────────────────────────────
-    if (req.url === '/events' && req.method === 'GET') {
+      
+      const urlObj  = new URL(req.url!, `http://localhost:${SSE_PORT}`);
+      const userId  = urlObj.searchParams.get('userId') ?? undefined;
+
       res.writeHead(200, {
-        'Content-Type':  'text/event-stream',
-        'Cache-Control': 'no-cache, no-transform',
-        'Connection':    'keep-alive',
-        'X-Accel-Buffering': 'no',  // disable nginx buffering
+        'Content-Type':      'text/event-stream',
+        'Cache-Control':     'no-cache, no-transform',
+        'Connection':        'keep-alive',
+        'X-Accel-Buffering': 'no',
       });
 
-      // Flush immediately (important for some proxies)
       res.write(': connected\n\n');
 
-      // Send full state immediately so the frontend renders without waiting
+      
+      
       if (latestState) {
-        const snap: AgentEvent = { type: 'STATE_SNAPSHOT', ts: Date.now(), payload: latestState };
+        let payload: unknown = latestState;
+        if (userId && latestState.users) {
+          const userState = (latestState.users as Record<string, unknown>)[userId];
+          if (userState) payload = { ...latestState, users: { [userId]: userState } };
+        }
+        const snap: AgentEvent = { type: 'STATE_SNAPSHOT', ts: Date.now(), payload };
         res.write(`data: ${jsonStringify(snap)}\n\n`);
       }
 
-      clients.add(res);
+      
+      if (userId) {
+        if (!userClients.has(userId)) userClients.set(userId, new Set());
+        userClients.get(userId)!.add(res);
+      } else {
+        globalClients.add(res);
+      }
 
-      // Heartbeat every 25 s to keep connection alive through proxies
       const heartbeat = setInterval(() => {
         try { res.write(': ping\n\n'); }
-        catch { clearInterval(heartbeat); clients.delete(res); }
+        catch { clearInterval(heartbeat); removeClient(res, userId); }
       }, 25_000);
 
       req.on('close', () => {
         clearInterval(heartbeat);
-        clients.delete(res);
+        removeClient(res, userId);
       });
 
       return;
     }
 
-    // ── Full state as JSON ──────────────────────────────────────────────────
+    
     if (req.url?.startsWith('/state') && !req.url.startsWith('/state/') && req.method === 'GET') {
       const body = jsonStringify(publicAgentState(latestState, shouldIncludeHistory(req.url)));
       res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) });
@@ -573,10 +635,10 @@ export function startSSEServer(): void {
       return;
     }
 
-    // ── All strategies for a wallet address ───────────────────────────────────
-    //  GET /api/strategies/:address
-    //  Returns an array of all UserState entries whose policy.userAddress matches.
-    //  Used by the frontend instead of fetching the full /state dump.
+    
+    
+    
+    
     if (req.url?.startsWith('/api/strategies/') && req.method === 'GET') {
       const address = decodeURIComponent(req.url.slice('/api/strategies/'.length).split('?')[0]).toLowerCase();
       if (!latestState?.users) {
@@ -595,11 +657,11 @@ export function startSSEServer(): void {
       return;
     }
 
-    // ── Wallet dashboard projection ─────────────────────────────────────────
-    //  GET /api/dashboard/:address
-    //  Returns a wallet-level aggregated dashboard view for all strategies
-    //  owned by this EOA. Server-side projection keeps aggregation logic out
-    //  of the client and gives us one stable place to evolve the view model.
+    
+    
+    
+    
+    
     if (req.url?.startsWith('/api/dashboard/') && req.method === 'GET') {
       const address = decodeURIComponent(req.url.slice('/api/dashboard/'.length).split('?')[0]).toLowerCase();
       if (!latestState?.users) {
@@ -617,7 +679,7 @@ export function startSSEServer(): void {
       return;
     }
 
-    // ── Single user state as JSON ───────────────────────────────────────────
+    
     if (req.url?.startsWith('/state/') && req.method === 'GET') {
       const idOrAddress = req.url.slice('/state/'.length).split('?')[0];
       const user = getUserFromState(idOrAddress);
@@ -635,17 +697,20 @@ export function startSSEServer(): void {
       return;
     }
 
-    // ── Health ──────────────────────────────────────────────────────────────
+    
     if (req.url === '/health' && req.method === 'GET') {
       let agentDelegateAddress: string | null = null;
       try {
         agentDelegateAddress = await resolveAgentAddress();
       } catch {}
       const body = jsonStringify({
-        ok:      true,
-        clients: clients.size,
-        uptime:  Math.floor((Date.now() - startedAt) / 1000),
-        port:    SSE_PORT,
+        ok:             true,
+        clients:        totalClients(),
+        globalClients:  globalClients.size,
+        userClients:    userClients.size,
+        maxClients:     MAX_SSE_CLIENTS,
+        uptime:         Math.floor((Date.now() - startedAt) / 1000),
+        port:           SSE_PORT,
         agentDelegateAddress,
       });
       res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) });
@@ -653,9 +718,9 @@ export function startSSEServer(): void {
       return;
     }
 
-    // ── Real user registration ──────────────────────────────────────────────
-    //  Called by the frontend after user signs EIP-712 policy and deposits.
-    //  Demo users (Alice/Bob/Carol) keep running unchanged.
+    
+    
+    
     if (req.url === '/api/register' && req.method === 'POST') {
       if (!checkApiAuth(req, res)) return;
       let body = '';
@@ -670,7 +735,7 @@ export function startSSEServer(): void {
             return;
           }
 
-          // ── Validate required fields ──────────────────────────────────────
+          
           if (!payload.userAddress || !/^0x[a-fA-F0-9]{40}$/.test(payload.userAddress)) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(jsonStringify({ error: 'Invalid or missing userAddress' }));
@@ -682,7 +747,7 @@ export function startSSEServer(): void {
             return;
           }
 
-          // ── Validate V2 delegation fields if provided ─────────────────────
+          
           if (payload.smartAccountAddress) {
             if (!/^0x[a-fA-F0-9]{40}$/.test(payload.smartAccountAddress)) {
               res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -722,11 +787,11 @@ export function startSSEServer(): void {
       return;
     }
 
-    // ── V2 smart-account preparation ───────────────────────────────────────
-    //  Backend-owned sponsorship path:
-    //   - optional permit + transferFrom into the smart account
-    //   - executor/swapper approvals from the smart account
-    //   - enforcer authorized-agent validation
+    
+    
+    
+    
+    
     if (req.url === '/api/v2/prepare-strategy' && req.method === 'POST') {
       if (!checkApiAuth(req, res)) return;
       let body = '';
@@ -776,10 +841,10 @@ export function startSSEServer(): void {
       return;
     }
 
-    // ── Sponsored onboarding ────────────────────────────────────────────────────
-    //  Agent submits registerPolicy + USDC.permit on behalf of user (Pimlico pays gas).
-    //  Frontend then waits for the user's vault.deposit() tx to confirm before
-    //  registering the strategy in the live agent.
+    
+    
+    
+    
     if (req.url === '/api/onboard' && req.method === 'POST') {
       if (!checkApiAuth(req, res)) return;
       let body = '';
@@ -874,14 +939,16 @@ export function startSSEServer(): void {
       return;
     }
 
-    // ── Force-reset user to IDLE (clears stale portfolio / burned positions) ──
+    
     if (req.url?.startsWith('/api/reset-user') && req.method === 'POST') {
       if (!checkApiAuth(req, res)) return;
       let body = '';
       req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
       req.on('end', async () => {
         try {
-          const { userId } = JSON.parse(body) as { userId: string };
+          const parsed = JSON.parse(body) as { userId: string; userAddress?: string };
+          if (!await checkUserSig(req, res, '/api/reset-user', parsed.userAddress)) return;
+          const { userId } = parsed;
           if (!resetCallback) {
             res.writeHead(503, { 'Content-Type': 'application/json' });
             res.end(jsonStringify({ error: 'Agent not ready' }));
@@ -899,14 +966,16 @@ export function startSSEServer(): void {
       return;
     }
 
-    // ── Force migrate to a specific pool (testing / manual override) ─────────
+    
     if (req.url?.startsWith('/api/force-migrate') && req.method === 'POST') {
       if (!checkApiAuth(req, res)) return;
       let body = '';
       req.on('data', (c: Buffer) => { body += c.toString(); });
       req.on('end', async () => {
         try {
-          const { userId, targetPoolAddress } = JSON.parse(body) as { userId: string; targetPoolAddress: string };
+          const parsed = JSON.parse(body) as { userId: string; targetPoolAddress: string; userAddress?: string };
+          if (!await checkUserSig(req, res, '/api/force-migrate', parsed.userAddress)) return;
+          const { userId, targetPoolAddress } = parsed;
           if (!forceMigrateCallback) {
             res.writeHead(503, { 'Content-Type': 'application/json' });
             res.end(jsonStringify({ error: 'Agent not ready' }));
@@ -923,7 +992,7 @@ export function startSSEServer(): void {
       return;
     }
 
-    // ── Patch user policy fields (testing only) ───────────────────────────────
+    
     if (req.url?.startsWith('/api/patch-policy') && req.method === 'POST') {
       if (!checkApiAuth(req, res)) return;
       let body = '';
@@ -947,26 +1016,30 @@ export function startSSEServer(): void {
       return;
     }
 
-    // ── Prepare user withdrawal ─────────────────────────────────────────────
-    //  Agent unwinds active strategy positions and normalises returned assets
-    //  back to idle vault USDC. The final wallet transfer remains user-signed:
-    //  user calls vault.withdraw(USDC, idleAmount).
+    
+    
+    
+    
     if (req.url?.startsWith('/api/withdraw') && req.method === 'POST') {
       if (!checkApiAuth(req, res)) return;
       let body = '';
       req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
       req.on('end', async () => {
         try {
+          const payload = (body.trim() ? JSON.parse(body) : {}) as StrategyTarget & { userAddress?: string };
+          if (!await checkUserSig(req, res, '/api/withdraw', payload.userAddress)) return;
+
           if (!withdrawCallback) {
             res.writeHead(503, { 'Content-Type': 'application/json' });
             res.end(jsonStringify({ error: 'Agent not ready' }));
             return;
           }
-
-          const payload = body.trim() ? JSON.parse(body) as StrategyTarget : {};
           const result = await withdrawCallback(payload);
           const respBody = jsonStringify({ ok: true, ...result });
-          res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(respBody) });
+          
+          
+          const statusCode = (result as any).status === 'WITHDRAWAL_STARTED' ? 202 : 200;
+          res.writeHead(statusCode, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(respBody) });
           res.end(respBody);
         } catch (err: any) {
           const respBody = jsonStringify({ ok: false, error: err.message });
@@ -977,14 +1050,15 @@ export function startSSEServer(): void {
       return;
     }
 
-    // ── Pause agent for a user (keeps position open, stops re-deployment) ──────
+    
     if (req.url?.startsWith('/api/pause-user') && req.method === 'POST') {
       if (!checkApiAuth(req, res)) return;
       let body = '';
       req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
-      req.on('end', () => {
+      req.on('end', async () => {
         try {
-          const target = JSON.parse(body) as StrategyTarget;
+          const target = JSON.parse(body) as StrategyTarget & { userAddress?: string };
+          if (!await checkUserSig(req, res, '/api/pause-user', target.userAddress)) return;
           const ok = pauseCallback ? pauseCallback(target) : false;
           const respBody = jsonStringify({ ok });
           res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' });
@@ -997,20 +1071,61 @@ export function startSSEServer(): void {
       return;
     }
 
-    // ── Resume agent for a user ──────────────────────────────────────────────
+    
     if (req.url?.startsWith('/api/resume-user') && req.method === 'POST') {
       if (!checkApiAuth(req, res)) return;
       let body = '';
       req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
-      req.on('end', () => {
+      req.on('end', async () => {
         try {
-          const target = JSON.parse(body) as StrategyTarget;
+          const target = JSON.parse(body) as StrategyTarget & { userAddress?: string };
+          if (!await checkUserSig(req, res, '/api/resume-user', target.userAddress)) return;
           const ok = resumeCallback ? resumeCallback(target) : false;
           const respBody = jsonStringify({ ok });
           res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' });
           res.end(respBody);
         } catch (err: any) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(jsonStringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+
+    if (req.url?.startsWith('/api/attest/') && req.method === 'GET') {
+      const cid = req.url.slice('/api/attest/'.length).split('?')[0];
+      if (!cid) { res.writeHead(400); res.end(jsonStringify({ error: 'CID required' })); return; }
+      try {
+        const { downloadJsonArtifact } = await import('../storage/persist');
+        const { detect0GConfig }       = await import('./persistence');
+        const cfg = detect0GConfig();
+        if (!cfg) { res.writeHead(503); res.end(jsonStringify({ error: '0G Storage not configured' })); return; }
+        const blob = await downloadJsonArtifact(cid, { indexerUrl: cfg.indexerUrl });
+        const body = jsonStringify(blob);
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Content-Length': Buffer.byteLength(body) });
+        res.end(body);
+      } catch (err: any) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(jsonStringify({ error: err.message }));
+      }
+      return;
+    }
+
+    if (req.url === '/api/admin/recover' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+      req.on('end', async () => {
+        try {
+          const { userId, cid } = JSON.parse(body) as { userId: string; cid: string };
+          if (!userId || !cid) { res.writeHead(400); res.end(jsonStringify({ error: 'userId and cid required' })); return; }
+          const { recoverFromCID } = await import('./persistence');
+          const state = await recoverFromCID(userId, cid);
+          if (!state) { res.writeHead(404); res.end(jsonStringify({ error: 'Recovery failed — CID not found or decryption mismatch' })); return; }
+          const respBody = jsonStringify({ ok: true, userId, phase: state.phase });
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(respBody);
+        } catch (err: any) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(jsonStringify({ error: err.message }));
         }
       });

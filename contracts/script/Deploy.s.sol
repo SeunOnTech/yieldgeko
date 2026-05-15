@@ -1,26 +1,8 @@
-// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
-
-/**
- * @title Deploy - YieldGeko V2
- * @notice Deploys the three V2 contracts to any EVM chain.
- *
- * Sepolia (test first):
- *   forge script script/Deploy.s.sol:Deploy \
- *     --rpc-url https://ethereum-sepolia-rpc.publicnode.com \
- *     --broadcast --private-key $PRIVATE_KEY -vvv
- *
- * Arbitrum Mainnet (after Sepolia validates):
- *   forge script script/Deploy.s.sol:Deploy \
- *     --rpc-url https://arb1.arbitrum.io/rpc \
- *     --broadcast --private-key $PRIVATE_KEY \
- *     --verify --etherscan-api-key $ARBISCAN_API_KEY -vvv
- */
 
 import {Script} from "forge-std/Script.sol";
 import {console2 as console} from "forge-std/console2.sol";
 
-// DelegationManager is deployed at the same address on every chain via CREATE2
 address constant DELEGATION_MANAGER = 0xdb9B1e94B5b69Df7e401DDbedE43491141047dB3;
 
 contract Deploy is Script {
@@ -43,8 +25,6 @@ contract Deploy is Script {
 
         vm.startBroadcast(deployerKey);
 
-        // ── Deploy ────────────────────────────────────────────────────────────
-
         address enforcer = _create(
             "YieldGekoPolicyCaveatEnforcer.sol:YieldGekoPolicyCaveatEnforcer",
             abi.encode(deployerEOA, DELEGATION_MANAGER)
@@ -54,8 +34,6 @@ contract Deploy is Script {
 
         address swapper = _create("YieldGekoSwapper.sol:YieldGekoSwapper", abi.encode(deployerEOA));
 
-        // ── Wire: authorize agent in all contracts ────────────────────────────
-
         _call(enforcer, abi.encodeWithSignature("setAuthorizedAgent(address,bool)", agentEOA, true));
         _call(executor, abi.encodeWithSignature("setAuthorizedCaller(address,bool)", agentEOA, true));
         _call(swapper, abi.encodeWithSignature("setAuthorizedCaller(address,bool)", agentEOA, true));
@@ -63,8 +41,6 @@ contract Deploy is Script {
         console.log("  [OK] Agent %s authorized in all contracts", agentEOA);
 
         vm.stopBroadcast();
-
-        // ── Print addresses for .env ──────────────────────────────────────────
 
         console.log("");
         console.log("======================================================");
@@ -94,7 +70,6 @@ contract Deploy is Script {
         }
     }
 
-    // "Foo.sol:FooContract" -> "FooContract"
     function _contractName(string memory artifact) internal pure returns (string memory) {
         bytes memory b = bytes(artifact);
         for (uint256 i = b.length; i > 0; i--) {

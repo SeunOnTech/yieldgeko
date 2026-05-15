@@ -2,13 +2,6 @@ import { createWalletClient, getAddress, Hex, http } from 'viem';
 import { AgentIDManager } from '../tee/agent-id';
 import { zeroGTestnet } from '../transport/rpc-config';
 
-/**
- * 0G Private Submitter
- * Submits transactions through the configured 0G RPC path.
- *
- * If a private compute endpoint is configured we use it. Otherwise we fall
- * back to the standard chain RPC and log that the submission was public.
- */
 export class PrivateSubmitter {
   public static resolveRpcEndpoint(): { url: string; mode: 'private' | 'public' } {
     const privateRpc = process.env.ZERO_G_PRIVATE_RPC;
@@ -20,9 +13,7 @@ export class PrivateSubmitter {
     return { url: publicRpc, mode: 'public' };
   }
 
-  /**
-   * Submits a transaction privately
-   */
+  
   public static async submitPrivately(params: {
     to: string;
     data: string;

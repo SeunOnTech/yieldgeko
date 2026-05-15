@@ -1,22 +1,10 @@
-/**
- * DriftMonitor — O(1) RPC drift assessment for all active UniV3 positions
- *
- * Uses Multicall3 to batch-read slot0() for every unique pool and positions()
- * for every active tokenId across ALL users in exactly 2 RPC calls regardless
- * of user or position count.
- *
- * Scale: 30,000 positions → 2 Multicall3 calls → sub-second at any RPC provider.
- */
+
 
 import { ethers, JsonRpcProvider } from 'ethers';
 import type { UserState } from './types';
 
-// ── Addresses ─────────────────────────────────────────────────────────────────
-
 const MULTICALL3    = '0xcA11bde05977b3631167028862bE2a173976CA11';
 const POS_MGR       = '0xC36442b4a4522E871399CD717aBDD847Ab11FE88';
-
-// ── ABIs ──────────────────────────────────────────────────────────────────────
 
 const MC3_ABI  = ['function aggregate3(tuple(address target, bool allowFailure, bytes callData)[] calls) view returns (tuple(bool success, bytes returnData)[] returnData)'];
 const SLOT0_ABI = ['function slot0() view returns (uint160 sqrtPriceX96, int24 tick, uint16, uint16, uint16, uint8, bool)'];
@@ -24,8 +12,6 @@ const POS_ABI   = ['function positions(uint256 tokenId) view returns (uint96 non
 
 const slot0Iface = new ethers.Interface(SLOT0_ABI);
 const posIface   = new ethers.Interface(POS_ABI);
-
-// ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface DriftResult {
   userId:       string;
@@ -36,12 +22,17 @@ export interface DriftResult {
   centerTick:   number;
   tickLower:    number;
   tickUpper:    number;
-  driftPct:     number;    // 0–1; triggers rebalance at ≥ 0.70
+  driftPct:     number;    
   inRange:      boolean;
   liquidity:    bigint;
   tokensOwed0:  bigint;
   tokensOwed1:  bigint;
-  sqrtPriceX96: bigint;    // for optimal swap sizing during rebalance
+  sqrtPriceX96: bigint;    
+  token0:       string;
+  token1:       string;
+  fee:          number;
+  feeGrowthInside0LastX128: bigint;
+  feeGrowthInside1LastX128: bigint;
 }
 
 interface ActiveRef {
@@ -51,13 +42,11 @@ interface ActiveRef {
   poolAddress: string;
 }
 
-// ── Main ──────────────────────────────────────────────────────────────────────
-
 export async function assessAllDrifts(
   provider:   JsonRpcProvider,
   userStates: UserState[],
 ): Promise<DriftResult[]> {
-  // 1. Collect all active UniV3 position references
+  
   const refs: ActiveRef[] = [];
   for (const user of userStates) {
     if (!user.portfolio) continue;
@@ -75,12 +64,12 @@ export async function assessAllDrifts(
 
   if (refs.length === 0) return [];
 
-  // 2. Unique pool addresses for slot0 reads
+  
   const uniquePools = [...new Set(refs.map(r => r.poolAddress))];
 
   const mc3 = new ethers.Contract(MULTICALL3, MC3_ABI, provider);
 
-  // 3. Parallel Multicall3: slot0 for all pools + positions for all tokenIds
+  
   const slot0Calls = uniquePools.map(pool => ({
     target: pool, allowFailure: true,
     callData: slot0Iface.encodeFunctionData('slot0'),
@@ -91,13 +80,13 @@ export async function assessAllDrifts(
     callData: posIface.encodeFunctionData('positions', [ref.tokenId]),
   }));
 
-  // Both batches fire simultaneously — 2 RPC calls total
+  
   const [slot0Results, posResults] = await Promise.all([
     mc3.aggregate3.staticCall(slot0Calls) as Promise<Array<{ success: boolean; returnData: string }>>,
     mc3.aggregate3.staticCall(posCalls)   as Promise<Array<{ success: boolean; returnData: string }>>,
   ]);
 
-  // 4. Parse slot0 → currentTick + sqrtPriceX96 per pool
+  
   const tickByPool    = new Map<string, number>();
   const sqrtByPool    = new Map<string, bigint>();
   for (let i = 0; i < uniquePools.length; i++) {
@@ -107,10 +96,10 @@ export async function assessAllDrifts(
       const decoded = slot0Iface.decodeFunctionResult('slot0', r.returnData);
       tickByPool.set(uniquePools[i], Number(decoded[1]));
       sqrtByPool.set(uniquePools[i], BigInt(decoded[0]));
-    } catch { /* skip bad pool */ }
+    } catch {  }
   }
 
-  // 5. Parse positions → compute drift for each
+  
   const results: DriftResult[] = [];
   for (let i = 0; i < refs.length; i++) {
     const ref = refs[i];
@@ -139,8 +128,13 @@ export async function assessAllDrifts(
         driftPct, inRange, liquidity,
         tokensOwed0, tokensOwed1,
         sqrtPriceX96: sqrtPrice,
+        token0:       d[2] as string,
+        token1:       d[3] as string,
+        fee:          Number(d[4]),
+        feeGrowthInside0LastX128: BigInt(d[8]),
+        feeGrowthInside1LastX128: BigInt(d[9]),
       });
-    } catch { /* skip bad position */ }
+    } catch {  }
   }
 
   return results;

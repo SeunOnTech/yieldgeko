@@ -1,7 +1,6 @@
 import { createPublicClient, fallback, http, PublicClient } from 'viem';
 import { arbitrum, localhost } from 'viem/chains';
 
-// Define 0G Galileo Testnet Chain (Missing in standard Viem)
 export const zeroGTestnet = {
   id: 16602,
   name: '0G Galileo Testnet',
@@ -16,14 +15,12 @@ export const zeroGTestnet = {
   },
 } as const;
 
-// Arbitrum RPC fallback chain (primary -> fallback1 -> fallback2)
 const arbitrumFallback = fallback([
   http('https://arb1.arbitrum.io/rpc', { timeout: 3000 }),
   http('https://arbitrum.publicnode.com', { timeout: 3000 }),
   http(`https://arb-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_KEY || ''}`, { timeout: 3000 }),
 ], { rank: true });
 
-// 0G Testnet RPC (for vault/intent state)
 const zeroGFallback = fallback([
   http(process.env.ZERO_G_RPC || 'https://evmrpc-testnet.0g.ai', { timeout: 3000 }),
   http('https://evmrpc-testnet.0g.ai', { timeout: 3000 }),

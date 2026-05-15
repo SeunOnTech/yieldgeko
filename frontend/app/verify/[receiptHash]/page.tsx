@@ -3,19 +3,17 @@
 import React, { useState, useEffect } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
-
-// ── 0G Chain config ───────────────────────────────────────────────────────────
+import { verifyMessage, recoverAddress, hashMessage } from 'viem'
 
 const ZG_RPC        = 'https://evmrpc.0g.ai'
 const REGISTRY_ADDR = '0xd7185a3Aa4b23EBE84e7bd60CF5e78B71dd21c8e'
 const CHAIN_SCAN    = 'https://chainscan.0g.ai'
 const STORAGE_SCAN  = 'https://storagescan.0g.ai/submission'
 
-// ProofAnchored event topic: keccak256("ProofAnchored(bytes32,address,bytes32,string,string,string,uint256)")
 const PROOF_ANCHORED_TOPIC = '0x3e6bdef8f774b69375e8d3824eaf732c225c3f5ee9ac4484c6a155440e6d54ce'
 
 async function fetchProof(receiptHash: string): Promise<ProofData | null> {
-  // Pad receiptHash to 32-byte topic
+  
   const raw    = receiptHash.startsWith('0x') ? receiptHash.slice(2) : receiptHash
   const topic1 = '0x' + raw.padStart(64, '0')
 
@@ -40,41 +38,52 @@ async function fetchProof(receiptHash: string): Promise<ProofData | null> {
 
 function decodeProofFromLog(log: any, originalHash: string): ProofData | null {
   try {
-    // Indexed topics: [0]=event sig, [1]=receiptHash, [2]=userAddress, [3]=strategyId
-    const userAddress = '0x' + log.topics[2].slice(26)
+    if (!log || !Array.isArray(log.topics) || log.topics.length < 3) return null
+    if (typeof log.topics[2] !== 'string' || !log.topics[2].startsWith('0x')) return null
+    if (typeof log.data !== 'string' || log.data.length < 4) return null
 
-    // Non-indexed data: abi.encode(string action, string traceCID, string attestCID, uint256 anchoredAt)
-    const data     = (log.data as string).startsWith('0x') ? (log.data as string).slice(2) : log.data
+    const userAddress = '0x' + log.topics[2].slice(26)
+    if (!/^0x[a-fA-F0-9]{40}$/.test(userAddress)) return null
+
+    const data     = log.data.startsWith('0x') ? log.data.slice(2) : log.data
+    if (data.length < 256) return null
+
     const readWord = (i: number) => data.slice(i * 64, i * 64 + 64)
-    const readUint = (i: number) => parseInt(readWord(i), 16)
-    // ABI offsets are byte-based; multiply by 2 to get hex-char position in data string
+    const readUint = (i: number) => {
+      const w = readWord(i)
+      if (!w || w.length < 64) return 0
+      return parseInt(w, 16) || 0
+    }
     const readStr  = (byteOffset: number) => {
-      const c    = byteOffset * 2
-      const len  = parseInt(data.slice(c, c + 64), 16)
-      const hex  = data.slice(c + 64, c + 64 + len * 2)
+      const c   = byteOffset * 2
+      if (c + 64 > data.length) return ''
+      const len = parseInt(data.slice(c, c + 64), 16) || 0
+      if (len === 0 || len > 4096) return ''
+      const hex = data.slice(c + 64, c + 64 + len * 2)
+      if (hex.length < len * 2) return ''
       return Buffer.from(hex, 'hex').toString('utf8')
     }
 
-    const actionOff    = readUint(0)   // byte offset to action string
-    const traceCIDOff  = readUint(1)   // byte offset to traceCID string
-    const attestCIDOff = readUint(2)   // byte offset to attestCID string
+    const actionOff    = readUint(0)
+    const traceCIDOff  = readUint(1)
+    const attestCIDOff = readUint(2)
     const anchoredAt   = readUint(3)
 
     const action    = readStr(actionOff)
     const traceCID  = readStr(traceCIDOff)
     const attestCID = readStr(attestCIDOff)
 
-    if (!anchoredAt) return null
+    if (!anchoredAt || !action) return null
 
     return {
       receiptHash: originalHash,
       userAddress,
-      anchoredBy: '0x' + (log.topics[2] ?? '').slice(26),
+      anchoredBy: userAddress,
       action,
       traceCID,
       attestCID,
       anchoredAt,
-      txHash: log.transactionHash,
+      txHash: typeof log.transactionHash === 'string' ? log.transactionHash : undefined,
     }
   } catch { return null }
 }
@@ -89,8 +98,6 @@ interface ProofData {
   anchoredAt:   number
   txHash?:      string
 }
-
-// ── UI helpers ────────────────────────────────────────────────────────────────
 
 function actionColor(a: string) {
   if (a === 'GENESIS')            return '#22C55E'
@@ -143,7 +150,155 @@ function ProofLink({ label, href, color, icon }: { label: string; href: string; 
   )
 }
 
-// ── Page ──────────────────────────────────────────────────────────────────────
+const AGENT_BASE = (process.env.NEXT_PUBLIC_AGENT_SSE_URL ?? 'http://localhost:3001/events').replace('/events', '')
+
+type VerifyState = 'idle' | 'loading' | 'done' | 'error'
+
+function TeeVerificationPanel({ attestCID }: { attestCID: string }) {
+  const [state,  setState]  = useState<VerifyState>('idle')
+  const [blob,   setBlob]   = useState<Record<string, any> | null>(null)
+  const [result, setResult] = useState<{ ok: boolean; recovered: string } | null>(null)
+  const [errMsg, setErrMsg] = useState('')
+
+  async function run() {
+    setState('loading')
+    setErrMsg('')
+    try {
+      const res = await fetch(`${AGENT_BASE}/api/attest/${encodeURIComponent(attestCID)}`)
+      if (!res.ok) throw new Error(`Agent returned ${res.status} — is the agent running?`)
+      const data: Record<string, any> = await res.json()
+      setBlob(data)
+
+      if (data.mode === 'local-signing' && data.signature && data.signedPayload && data.agentAddress) {
+        const recovered = recoverAddress({
+          hash:      hashMessage(data.signedPayload),
+          signature: data.signature as `0x${string}`,
+        })
+        const ok = (await recovered).toLowerCase() === (data.agentAddress as string).toLowerCase()
+        setResult({ ok, recovered: await recovered })
+      }
+
+      setState('done')
+    } catch (e: any) {
+      setErrMsg(e.message ?? 'Unknown error')
+      setState('error')
+    }
+  }
+
+  const isTEE   = blob?.mode === 'tee-compute'
+  const isLocal = blob?.mode === 'local-signing'
+
+  return (
+    <div style={{ background: 'var(--surface)', borderRadius: 12, border: '1px solid var(--border)', padding: '20px', marginBottom: 32 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 2 }}>TEE Attestation Verification</div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Downloads attestation blob from 0G Storage · verifies signature client-side</div>
+        </div>
+        {state === 'idle' && (
+          <button onClick={run} style={{ height: 34, padding: '0 16px', borderRadius: 8, border: '1px solid #8B5CF6', background: 'rgba(139,92,246,0.08)', color: '#8B5CF6', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+            Run verification →
+          </button>
+        )}
+        {state === 'loading' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-muted)' }}>
+            <div style={{ width: 14, height: 14, borderRadius: '50%', border: '2px solid var(--border)', borderTopColor: '#8B5CF6', animation: 'spin 0.8s linear infinite' }} />
+            Fetching from 0G Storage…
+          </div>
+        )}
+        {state === 'done' && result && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 8, background: result.ok ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)', border: `1px solid ${result.ok ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}` }}>
+            <span style={{ fontSize: 13 }}>{result.ok ? '✓' : '✗'}</span>
+            <span style={{ fontSize: 12, fontWeight: 700, color: result.ok ? '#22C55E' : '#EF4444' }}>{result.ok ? 'Signature valid' : 'Signature mismatch'}</span>
+          </div>
+        )}
+        {state === 'done' && isTEE && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 8, background: blob?.verified ? 'rgba(34,197,94,0.1)' : 'rgba(245,158,11,0.1)', border: `1px solid ${blob?.verified ? 'rgba(34,197,94,0.3)' : 'rgba(245,158,11,0.3)'}` }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: blob?.verified ? '#22C55E' : '#D97706' }}>{blob?.verified ? '✓ TEE verified' : '⚠ Verification pending'}</span>
+          </div>
+        )}
+        {state === 'error' && (
+          <button onClick={run} style={{ fontSize: 11, color: '#EF4444', background: 'none', border: 'none', cursor: 'pointer' }}>Retry</button>
+        )}
+      </div>
+
+      {state === 'error' && (
+        <div style={{ fontSize: 12, color: '#EF4444', background: 'rgba(239,68,68,0.06)', borderRadius: 8, padding: '10px 12px' }}>{errMsg}</div>
+      )}
+
+      {state === 'done' && blob && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            <div style={{ padding: '10px 12px', borderRadius: 8, background: 'var(--background)', border: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '.04em' }}>Mode</div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: isTEE ? '#8B5CF6' : '#3B82F6' }}>{isTEE ? '0G Compute TEE' : 'Local EIP-191 signing'}</div>
+            </div>
+            {isTEE && (
+              <div style={{ padding: '10px 12px', borderRadius: 8, background: 'var(--background)', border: '1px solid var(--border)' }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '.04em' }}>Model</div>
+                <div style={{ fontSize: 12, color: 'var(--text-primary)', fontFamily: 'monospace' }}>{blob.model ?? '—'}</div>
+              </div>
+            )}
+            {isLocal && result && (
+              <div style={{ padding: '10px 12px', borderRadius: 8, background: 'var(--background)', border: '1px solid var(--border)' }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '.04em' }}>Recovered address</div>
+                <div style={{ fontSize: 11, color: 'var(--text-primary)', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis' }}>{result.recovered}</div>
+              </div>
+            )}
+          </div>
+
+          {isLocal && blob.agentAddress && (
+            <div style={{ padding: '10px 12px', borderRadius: 8, background: 'var(--background)', border: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '.04em' }}>Verification method</div>
+              <code style={{ fontSize: 11, color: 'var(--text-primary)', fontFamily: 'monospace', display: 'block', lineHeight: 1.6 }}>
+                recoverAddress(hashMessage(signedPayload), signature)<br />
+                === {blob.agentAddress}
+              </code>
+            </div>
+          )}
+
+          {isTEE && (blob.signerRaUrl || blob.chatSignatureUrl) && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {blob.signerRaUrl && (
+                <a href={blob.signerRaUrl} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 8, background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.2)', textDecoration: 'none' }}>
+                  <span style={{ fontSize: 12 }}>🔐</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: '#8B5CF6' }}>Intel TDX RA Report</div>
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{blob.signerRaUrl}</div>
+                  </div>
+                  <span style={{ fontSize: 11, color: '#8B5CF6' }}>↗</span>
+                </a>
+              )}
+              {blob.chatSignatureUrl && (
+                <a href={blob.chatSignatureUrl} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 8, background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.2)', textDecoration: 'none' }}>
+                  <span style={{ fontSize: 12 }}>✍️</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: '#8B5CF6' }}>Enclave signature for this decision</div>
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{blob.chatSignatureUrl}</div>
+                  </div>
+                  <span style={{ fontSize: 11, color: '#8B5CF6' }}>↗</span>
+                </a>
+              )}
+            </div>
+          )}
+
+          {blob.decision && (
+            <div style={{ padding: '10px 12px', borderRadius: 8, background: 'var(--background)', border: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '.04em' }}>Decision inside attestation</div>
+              <div style={{ fontSize: 12, color: 'var(--text-primary)', lineHeight: 1.6 }}>
+                {isTEE ? (
+                  <><strong>{blob.decision.confirmedPool}</strong> · confidence {blob.decision.confidence}%<br />{blob.decision.rationale}</>
+                ) : (
+                  <><strong>{blob.decision.targetPool ?? blob.decision.action}</strong> · {blob.decision.reason}</>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
 
 export default function VerifyPage({ params, searchParams }: { params: Promise<{ receiptHash: string }>; searchParams: Promise<{ tx?: string }> }) {
   const { receiptHash } = React.use(params)
@@ -168,7 +323,7 @@ export default function VerifyPage({ params, searchParams }: { params: Promise<{
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--background)', color: 'var(--text-primary)', fontFamily: 'inherit' }}>
-      {/* Header */}
+      
       <div style={{ borderBottom: '1px solid var(--border)', padding: '16px 24px', display: 'flex', alignItems: 'center', gap: 12 }}>
         <Link href="/app" style={{ display: 'flex', alignItems: 'center', gap: 8, textDecoration: 'none' }}>
           <Image src="/logo.svg" alt="YieldGeko" width={22} height={22} />
@@ -180,7 +335,7 @@ export default function VerifyPage({ params, searchParams }: { params: Promise<{
 
       <div style={{ maxWidth: 680, margin: '0 auto', padding: '40px 24px 80px' }}>
 
-        {/* Title */}
+        
         <div style={{ marginBottom: 32 }}>
           <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.08em', marginBottom: 8 }}>
             Independent verification
@@ -194,7 +349,20 @@ export default function VerifyPage({ params, searchParams }: { params: Promise<{
           </p>
         </div>
 
-        {/* Receipt hash */}
+        {!loading && proof && (
+          <div style={{ marginBottom: 24, padding: '16px 18px', borderRadius: 14, background: 'linear-gradient(180deg, rgba(139,92,246,0.10), rgba(59,130,246,0.06))', border: '1px solid rgba(139,92,246,0.22)' }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#C4B5FD', textTransform: 'uppercase', letterSpacing: '.08em', marginBottom: 8 }}>
+              Why this matters
+            </div>
+            <div style={{ fontSize: 13, color: 'var(--text-primary)', lineHeight: 1.65 }}>
+              {proof.attestCID
+                ? 'This proof trail shows more than a transaction hash. It links the execution to an attested decision artifact from YieldGeko’s 0G Compute path, where DeepSeek V3 is expected to run inside an Intel TDX + NVIDIA H100 trusted environment, then anchors that evidence on 0G Chain.'
+                : 'This proof trail confirms the execution was anchored on 0G Chain and its trace was stored on 0G Storage. This record does not currently include a TEE attestation artifact.'}
+            </div>
+          </div>
+        )}
+
+        
         <div style={{ background: 'var(--surface)', borderRadius: 12, border: '1px solid var(--border)', padding: '12px 16px', marginBottom: 24, display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, flexShrink: 0 }}>RECEIPT HASH</span>
           <span style={{ fontSize: 11, fontFamily: 'monospace', color: 'var(--text-primary)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -203,7 +371,7 @@ export default function VerifyPage({ params, searchParams }: { params: Promise<{
           <CopyBtn value={receiptHash} />
         </div>
 
-        {/* Loading */}
+        
         {loading && (
           <div style={{ textAlign: 'center', padding: '60px 0' }}>
             <div style={{ width: 32, height: 32, borderRadius: '50%', border: '2px solid var(--border)', borderTopColor: '#EA580C', animation: 'spin 1s linear infinite', margin: '0 auto 16px' }} />
@@ -212,17 +380,17 @@ export default function VerifyPage({ params, searchParams }: { params: Promise<{
           </div>
         )}
 
-        {/* Error */}
+        
         {!loading && error && (
           <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 12, padding: '20px 24px', color: '#EF4444', fontSize: 14 }}>
             {error}
           </div>
         )}
 
-        {/* Proof data */}
+        
         {!loading && proof && (
           <>
-            {/* Action badge */}
+            
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 28 }}>
               <div style={{ padding: '6px 16px', borderRadius: 999, background: `${accentColor}18`, border: `1px solid ${accentColor}30`, fontSize: 13, fontWeight: 700, color: accentColor }}>
                 {proof.action}
@@ -235,7 +403,7 @@ export default function VerifyPage({ params, searchParams }: { params: Promise<{
               </span>
             </div>
 
-            {/* Proof links */}
+            
             <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 12 }}>Proof trail</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 32 }}>
               {chainTxHash && (
@@ -264,7 +432,36 @@ export default function VerifyPage({ params, searchParams }: { params: Promise<{
               )}
             </div>
 
-            {/* Metadata */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10, marginBottom: 32 }}>
+              <div style={{ padding: '14px 16px', borderRadius: 12, background: 'var(--surface)', border: '1px solid var(--border)' }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: '#22C55E', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 6 }}>
+                  0G Chain
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.55 }}>
+                  Public anchor proving this receipt hash and proof references were recorded onchain.
+                </div>
+              </div>
+              <div style={{ padding: '14px 16px', borderRadius: 12, background: 'var(--surface)', border: '1px solid var(--border)' }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: '#3B82F6', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 6 }}>
+                  Trace
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.55 }}>
+                  Execution context stored on 0G Storage so anyone can inspect what the agent saw and did.
+                </div>
+              </div>
+              <div style={{ padding: '14px 16px', borderRadius: 12, background: 'var(--surface)', border: '1px solid var(--border)' }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: proof.attestCID ? '#8B5CF6' : 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 6 }}>
+                  TEE
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.55 }}>
+                  {proof.attestCID
+                    ? 'Decision artifact tied to the 0G Compute attestation flow for DeepSeek V3 in the trusted execution environment.'
+                    : 'No TEE attestation artifact is attached to this execution record.'}
+                </div>
+              </div>
+            </div>
+
+            
             <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 12 }}>Details</div>
             <div style={{ background: 'var(--surface)', borderRadius: 12, border: '1px solid var(--border)', overflow: 'hidden', marginBottom: 32 }}>
               {[
@@ -288,7 +485,9 @@ export default function VerifyPage({ params, searchParams }: { params: Promise<{
               ))}
             </div>
 
-            {/* Independent verification instructions */}
+            {proof.attestCID && <TeeVerificationPanel attestCID={proof.attestCID} />}
+
+
             <div style={{ background: 'var(--surface)', borderRadius: 12, border: '1px solid var(--border)', padding: '20px' }}>
               <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 12 }}>
                 Verify independently
@@ -298,12 +497,12 @@ export default function VerifyPage({ params, searchParams }: { params: Promise<{
                   <strong style={{ color: 'var(--text-primary)' }}>1. Query the registry directly</strong><br />
                   Call <code style={{ background: 'rgba(255,255,255,0.06)', padding: '1px 5px', borderRadius: 4, fontFamily: 'monospace' }}>getProof(receiptHash)</code> on
                   {' '}<a href={`${CHAIN_SCAN}/address/${REGISTRY_ADDR}`} target="_blank" rel="noopener noreferrer" style={{ color: '#22C55E' }}>YieldGekoRegistry</a>{' '}
-                  using any Ethereum client connected to RPC <code style={{ background: 'rgba(255,255,255,0.06)', padding: '1px 5px', borderRadius: 4, fontFamily: 'monospace' }}>https://evmrpc.0g.ai</code>.
+                  using any Ethereum client connected to RPC <code style={{ background: 'rgba(255,255,255,0.06)', padding: '1px 5px', borderRadius: 4, fontFamily: 'monospace' }}>https://evmrpc.0g.ai</code>
                 </p>
                 <p style={{ margin: '0 0 10px' }}>
                   <strong style={{ color: 'var(--text-primary)' }}>2. Fetch the TEE attestation</strong><br />
                   Retrieve the attestation blob from 0G Storage using the <code style={{ background: 'rgba(255,255,255,0.06)', padding: '1px 5px', borderRadius: 4, fontFamily: 'monospace' }}>attestCID</code>.
-                  The blob contains <code style={{ background: 'rgba(255,255,255,0.06)', padding: '1px 5px', borderRadius: 4, fontFamily: 'monospace' }}>signerRaUrl</code> (Intel TDX hardware attestation) and <code style={{ background: 'rgba(255,255,255,0.06)', padding: '1px 5px', borderRadius: 4, fontFamily: 'monospace' }}>chatSignatureUrl</code> (enclave signature for this specific decision).
+                  The blob contains <code style={{ background: 'rgba(255,255,255,0.06)', padding: '1px 5px', borderRadius: 4, fontFamily: 'monospace' }}>signerRaUrl</code> (Intel TDX hardware attestation) and <code style={{ background: 'rgba(255,255,255,0.06)', padding: '1px 5px', borderRadius: 4, fontFamily: 'monospace' }}>chatSignatureUrl</code> (enclave signature for this specific decision), which is how YieldGeko links the execution to its DeepSeek V3 compute path.
                 </p>
                 <p style={{ margin: 0 }}>
                   <strong style={{ color: 'var(--text-primary)' }}>3. Verify the signature</strong><br />

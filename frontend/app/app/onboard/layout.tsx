@@ -1,4 +1,4 @@
-/** Avoid stale CDN / router cache for onboarding during iteration */
+
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
 

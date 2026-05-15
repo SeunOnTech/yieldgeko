@@ -10,8 +10,6 @@ import { StatusPill, ChainChip, ProtocolMark } from '../../../components/ui'
 import { useHeader } from '../../../components/HeaderContext'
 import { AppHeader } from '../../../components/AppHeader'
 
-// ── Agent state ───────────────────────────────────────────────────────────────
-
 const AGENT_BASE = (process.env.NEXT_PUBLIC_AGENT_SSE_URL ?? 'http://localhost:3001/events').replace('/events', '')
 const AGENT_KEY = process.env.NEXT_PUBLIC_AGENT_API_KEY ?? ''
 const authHdr: Record<string, string> = AGENT_KEY ? { Authorization: `Bearer ${AGENT_KEY}` } : {}
@@ -19,15 +17,15 @@ const authHdr: Record<string, string> = AGENT_KEY ? { Authorization: `Bearer ${A
 function BrainIcon({ size = 16 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round">
-      {/* Brain Cloud Outline */}
+      
       <path d="M12 4c-3.5 0-4.5 2-4.5 2s-2.5-1-4 1-1 4.5 0 5c-1 1-1 3 0 4.5 0 0 .5 3.5 4.5 3.5.5 2.5 2.5 2 2.5 2s1.5-1 2.5-1 1 1 2.5 1 2-1 2.5-2c4 0 4.5-3.5 4.5-3.5 1-1.5 1-3.5 0-4.5 1-.5 1.5-3 0-5-1.5-2-4-1-4-1s-1-2-4.5-2Z" />
-      {/* Internal Nodes (Circles) */}
+      
       <circle cx="9" cy="9" r="1" fill="currentColor" />
       <circle cx="15" cy="8" r="1" fill="currentColor" />
       <circle cx="12" cy="12" r="1" fill="currentColor" />
       <circle cx="16" cy="14" r="1" fill="currentColor" />
       <circle cx="8" cy="15" r="1" fill="currentColor" />
-      {/* Circuit lines connecting nodes */}
+      
       <path d="M4.5 11.5l2-1h2.5" />
       <path d="M11.5 4.5v2l1 2.5" />
       <path d="M19.5 10.5l-2.5 1-2 3.5" />
@@ -48,7 +46,7 @@ type StrategyLookupResult =
 
 async function fetchAgentUser(idOrAddress: string): Promise<any | null> {
   try {
-    // Address (0x + 40 hex chars) → fetch all strategies for that wallet, return first active
+    
     const isAddress = /^0x[a-fA-F0-9]{40}$/.test(idOrAddress)
     if (isAddress) {
       const res = await fetch(`${AGENT_BASE}/api/strategies/${idOrAddress}`, { signal: AbortSignal.timeout(3000) })
@@ -64,7 +62,7 @@ async function fetchAgentUser(idOrAddress: string): Promise<any | null> {
         })),
       }
     }
-    // userId (e.g. 0xgeko-apex-alpha) → fetch directly
+    
     const res = await fetch(`${AGENT_BASE}/state/${idOrAddress}`, { signal: AbortSignal.timeout(3000) })
     if (!res.ok) return null
     return await res.json()
@@ -79,8 +77,6 @@ async function agentPost(path: string, body: object): Promise<any> {
   })
   return res.json()
 }
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function relativeTime(ts: number): string {
   const d = (Date.now() - ts) / 1000
@@ -132,7 +128,7 @@ function parseTokenPair(raw: string): [string, string] | null {
 function cleanVenueName(raw: string): string {
   return raw
     .replace(/\(LVR-screened\)/gi, '')
-    .replace(/USD[₮Ꞇ]0?/g, 'USDT')   // USD₮0, USD₮ → USDT
+    .replace(/USD[₮Ꞇ]0?/g, 'USDT')   
     .replace(/\s+/g, ' ')
     .trim()
 }
@@ -149,13 +145,9 @@ function strategyTag(ex: any): string {
   return to || from
 }
 
-// ── Skeleton ──────────────────────────────────────────────────────────────────
-
 function Skel({ h = 16, w = '100%', r = 6 }: { h?: number; w?: string | number; r?: number }) {
   return <div className="skel" style={{ height: h, width: w, borderRadius: r }} />
 }
-
-// ── Animated counter ──────────────────────────────────────────────────────────
 
 function useCountUp(target: number, duration = 900): number {
   const [val, setVal] = useState(target)
@@ -174,8 +166,6 @@ function useCountUp(target: number, duration = 900): number {
   }, [target, duration])
   return val
 }
-
-// ── Mini chart ────────────────────────────────────────────────────────────────
 
 function MiniChart({ data, height = 180 }: { data: number[]; height?: number }) {
   if (data.length < 2) return null
@@ -207,8 +197,6 @@ function MiniChart({ data, height = 180 }: { data: number[]; height?: number }) 
   )
 }
 
-// ── OrbitalSpinner ────────────────────────────────────────────────────────────
-
 function OrbitalSpinner({ label }: { label: string }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16, padding: '32px 0' }}>
@@ -223,8 +211,6 @@ function OrbitalSpinner({ label }: { label: string }) {
     </div>
   )
 }
-
-// ── Agent Intelligence Feed (real data) ──────────────────────────────────────
 
 type FeedEntry =
   | { id: string; type: 'log'; level: string; message: string; detail?: string; ts: number }
@@ -245,24 +231,33 @@ function levelIcon(level: string) {
 }
 
 function phaseStatus(phase: string) {
-  if (phase === 'SCANNING') return 'Scanning for yield opportunities…'
-  if (phase === 'MIGRATING') return 'Executing position migration…'
-  if (phase === 'WITHDRAWING') return 'Unwinding position…'
-  if (phase === 'PAUSED') return 'Agent paused — position held open'
-  if (phase === 'IDLE') return 'Idle — awaiting deployment'
-  if (phase === 'SAFETY_EXIT') return 'Safety exit triggered'
-  return 'Actively monitoring position…'
+  switch (phase) {
+    case 'INITIALIZING':  return 'Setting up agent — this takes one tick (~60s)…'
+    case 'IDLE':          return 'Idle — evaluating yield opportunities…'
+    case 'SCANNING':      return 'Scanning for yield opportunities…'
+    case 'MONITORING':    return 'Monitoring active position…'
+    case 'ALLOCATED':     return 'Strategy deployed and earning…'
+    case 'REBALANCING':   return 'Rebalancing position for optimal yield…'
+    case 'MIGRATING':     return 'Executing position migration…'
+    case 'WITHDRAWING':   return 'Unwinding position — converting to USDC…'
+    case 'WITHDRAWN':     return 'Strategy closed — funds returned to wallet'
+    case 'PAUSED':        return 'Agent paused — position held open'
+    case 'SAFETY_EXIT':   return 'Safety exit triggered — position closed'
+    default:              return 'Actively monitoring position…'
+  }
 }
 
-function LiveAgentFeed({ agentUser, executions, phase }: {
+function LiveAgentFeed({ agentUser, executions, phase, proofPatches, onProofPatch }: {
   agentUser: any;
   executions: any[];
   phase: string;
+  proofPatches: Record<string, Record<string, string>>;
+  onProofPatch: (receiptHash: string, snap: Record<string, string>) => void;
 }) {
   const [feed, setFeed] = useState<FeedEntry[]>([])
   const userId = agentUser?.userId as string | undefined
 
-  // Build feed from polled agentUser state (refreshes every 30s)
+  
   useEffect(() => {
     const logs: FeedEntry[] = (agentUser?.log ?? []).slice(0, 25).map((l: any) => ({
       id: l.id,
@@ -281,11 +276,11 @@ function LiveAgentFeed({ agentUser, executions, phase }: {
     setFeed([...logs, ...execs].sort((a, b) => b.ts - a.ts).slice(0, 30))
   }, [agentUser?.log, executions])
 
-  // SSE for real-time additions — new entries appear instantly on each tick
+  
   useEffect(() => {
     if (!userId) return
     const sseUrl = process.env.NEXT_PUBLIC_AGENT_SSE_URL ?? 'http://localhost:3001/events'
-    const es = new EventSource(sseUrl)
+    const es = new EventSource(`${sseUrl}?userId=${encodeURIComponent(userId)}`)
 
     es.onmessage = (event) => {
       try {
@@ -316,7 +311,13 @@ function LiveAgentFeed({ agentUser, executions, phase }: {
           }
           setFeed(prev => [newExec, ...prev].slice(0, 30))
         }
-      } catch { /* ignore malformed events */ }
+
+        
+        if (evt.type === 'PROOF_UPDATE' && evt.payload?.userId === userId) {
+          const { receiptHash, snapshot } = evt.payload
+          if (receiptHash && snapshot) onProofPatch(receiptHash, snapshot)
+        }
+      } catch {  }
     }
 
     return () => es.close()
@@ -324,7 +325,7 @@ function LiveAgentFeed({ agentUser, executions, phase }: {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column' }}>
-      {/* Real phase status */}
+      
       <div style={{ marginBottom: 16, padding: '10px 14px', borderRadius: 10, background: 'rgba(234,88,12,0.05)', border: '1px solid rgba(234,88,12,0.1)', display: 'flex', alignItems: 'center', gap: 10 }}>
         <div style={{ position: 'relative', width: 20, height: 20, flexShrink: 0 }}>
           <div style={{ position: 'absolute', inset: 0, borderRadius: '50%', border: '2px solid rgba(234,88,12,0.2)' }} />
@@ -333,7 +334,7 @@ function LiveAgentFeed({ agentUser, executions, phase }: {
         <span style={{ fontSize: 12, color: 'var(--text-primary)', fontWeight: 500 }}>{phaseStatus(phase)}</span>
       </div>
 
-      {/* Feed */}
+      
       {feed.length === 0 ? (
         <div style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', padding: '24px 0' }}>
           Waiting for agent activity…
@@ -341,7 +342,7 @@ function LiveAgentFeed({ agentUser, executions, phase }: {
       ) : feed.map((entry, i) => (
         <div key={entry.id} style={{ animation: i === 0 ? 'fadeInSlide 0.35s ease-out both' : undefined }}>
           {entry.type === 'exec' ? (
-            <ExecRow ex={entry.data} compact />
+            <ExecRow ex={entry.data} compact proofPatch={proofPatches[entry.data?.receiptHash]} />
           ) : (
             <div style={{ display: 'flex', gap: 10, padding: '5px 0', borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
               <div style={{ width: 28, height: 28, borderRadius: 7, background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: 11, color: levelColor(entry.level), fontWeight: 700 }}>
@@ -369,8 +370,6 @@ function LiveAgentFeed({ agentUser, executions, phase }: {
   )
 }
 
-// ── ConfirmModal ──────────────────────────────────────────────────────────────
-
 function ConfirmModal({ title, body, confirmLabel, confirmStyle = 'danger', onConfirm, onCancel, icon }: {
   title: string; body: React.ReactNode; confirmLabel: string
   confirmStyle?: 'danger' | 'warn'; onConfirm: () => void; onCancel: () => void; icon?: string
@@ -397,9 +396,15 @@ function ConfirmModal({ title, body, confirmLabel, confirmStyle = 'danger', onCo
   )
 }
 
-// ── WithdrawModal ─────────────────────────────────────────────────────────────
-
 type WithdrawPhase = 'confirm' | 'agent-closing' | 'ready-to-sign' | 'signing-tx' | 'done' | 'error'
+
+const WITHDRAW_STEP_LABELS: Record<string, string> = {
+  COLLECTING_FEES:  'Collecting accrued fees…',
+  CLOSING_POSITION: 'Closing LP position on-chain…',
+  SWAPPING_TOKENS:  'Converting tokens to USDC…',
+  COMPLETE:         'Withdrawal complete',
+  FAILED:           'Withdrawal failed',
+}
 
 function WithdrawModal({
   userId,
@@ -416,26 +421,72 @@ function WithdrawModal({
   const [idleRaw, setIdleRaw] = useState<bigint>(BigInt(0))
   const [isSmartAccount, setIsSmartAccount] = useState(false)
   const [errMsg, setErrMsg] = useState('')
+  const [stepLabel, setStepLabel] = useState('Initiating withdrawal…')
   const { writeContract } = useWriteContract()
   const idleUSDC = Number(idleRaw) / 1e6
 
+  
   useEffect(() => {
     if (phase !== 'agent-closing') return
-    const setGlobal = (window as any).setGlobalLoading
-    if (setGlobal) setGlobal(true)
+    let es: EventSource | null = null
     let cancelled = false
+
+    
     agentPost('/api/withdraw', { userId, userAddress }).then((res: any) => {
       if (cancelled) return
-      if (res.ok || res.status === 'IDLE_ONLY') {
+      if (res.status === 'IDLE_ONLY') {
+        
         setIdleRaw(BigInt(res.idleUSDCRaw ?? '0'))
-        setIsSmartAccount(!!(res.isSmartAccount))
+        setIsSmartAccount(false)
         setPhase('ready-to-sign')
-      } else { setErrMsg(res.error ?? 'Agent could not unwind the position.'); setPhase('error') }
-    }).catch((e: any) => { if (!cancelled) { setErrMsg(e.message); setPhase('error') } })
-      .finally(() => { if (!cancelled && setGlobal) setGlobal(false) })
-    return () => { cancelled = true; if (setGlobal) setGlobal(false) }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, userAddress, userId])
+        return
+      }
+      if (!res.ok && res.error) {
+        setErrMsg(res.error)
+        setPhase('error')
+        return
+      }
+      
+      const sseBase = process.env.NEXT_PUBLIC_AGENT_SSE_URL ?? 'http://localhost:3001/events'
+      es = new EventSource(`${sseBase}?userId=${encodeURIComponent(userId)}`)
+      es.onmessage = (event) => {
+        try {
+          const evt = JSON.parse(event.data)
+          if (evt.type !== 'WITHDRAWAL') return
+          const p = evt.payload
+          if (p.userId !== userId) return
+          if (p.phase && WITHDRAW_STEP_LABELS[p.phase]) setStepLabel(WITHDRAW_STEP_LABELS[p.phase])
+          if (p.phase === 'COMPLETE') {
+            es?.close()
+            if (cancelled) return
+            setIdleRaw(BigInt(Math.round((p.idleUSDC ?? 0) * 1e6)))
+            setIsSmartAccount(true)  
+            setPhase('ready-to-sign')
+          }
+          if (p.phase === 'FAILED') {
+            es?.close()
+            if (cancelled) return
+            setErrMsg(p.error ?? 'Agent could not unwind the position.')
+            setPhase('error')
+          }
+        } catch {  }
+      }
+      es.onerror = () => {
+        
+        es?.close()
+        if (cancelled) return
+        setStepLabel('Closing position on-chain…')
+      }
+    }).catch((e: any) => {
+      if (!cancelled) { setErrMsg(e.message); setPhase('error') }
+    })
+
+    return () => {
+      cancelled = true
+      es?.close()
+    }
+    
+  }, [phase])
 
   function signWithdraw() {
     if (!VAULT_ADDRESS || idleRaw === BigInt(0)) return
@@ -460,10 +511,26 @@ function WithdrawModal({
 
         {phase === 'agent-closing' && (
           <div style={{ textAlign: 'center', padding: '10px 0' }}>
-            <OrbitalSpinner label="Agent closing position on-chain…" />
+            <OrbitalSpinner label={stepLabel} />
             <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 12, padding: 16, marginTop: 20, border: '1px solid var(--border)' }}>
-              <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>
-                The agent is unwinding LP positions and swapping for USDC. This typically takes 30–90 seconds.
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {(['COLLECTING_FEES', 'CLOSING_POSITION', 'SWAPPING_TOKENS'] as const).map((s) => {
+                  const steps = ['COLLECTING_FEES', 'CLOSING_POSITION', 'SWAPPING_TOKENS']
+                  const currentIdx = steps.indexOf(Object.keys(WITHDRAW_STEP_LABELS).find(k => WITHDRAW_STEP_LABELS[k] === stepLabel) ?? '')
+                  const myIdx = steps.indexOf(s)
+                  const done = myIdx < currentIdx
+                  const active = myIdx === currentIdx
+                  return (
+                    <div key={s} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <div style={{ width: 20, height: 20, borderRadius: '50%', flexShrink: 0, background: done ? '#22C55E' : active ? 'rgba(234,88,12,0.3)' : 'rgba(255,255,255,0.05)', border: `1px solid ${done ? '#22C55E' : active ? '#EA580C' : 'var(--border)'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: done ? '#fff' : active ? '#EA580C' : 'var(--text-muted)', transition: 'all 0.3s' }}>
+                        {done ? '✓' : myIdx + 1}
+                      </div>
+                      <div style={{ fontSize: 12, color: done ? '#22C55E' : active ? 'var(--text-primary)' : 'var(--text-muted)', fontWeight: active ? 600 : 400, transition: 'all 0.3s' }}>
+                        {WITHDRAW_STEP_LABELS[s]}
+                      </div>
+                    </div>
+                  )
+                })}
               </div>
             </div>
           </div>
@@ -639,22 +706,50 @@ function ProofBadges({ ex }: { ex: any }) {
   )
 }
 
+function ProofExplainer({ ex }: { ex: any }) {
+  const hasChain = Boolean(ex.zgChainExplorer)
+  const hasTrace = Boolean(ex.zgTraceCID)
+  const hasAttest = Boolean(ex.zgAttestCID)
+  if (!hasChain && !hasTrace && !hasAttest) return null
+
+  return (
+    <div style={{ marginTop: 8, padding: '8px 10px', borderRadius: 8, background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border)' }}>
+      <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '.04em', textTransform: 'uppercase', marginBottom: 4 }}>
+        Independent proof
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.55 }}>
+        {hasAttest
+          ? 'This execution includes a TEE attestation artifact from YieldGeko’s 0G Compute path, where decision evidence is produced for DeepSeek V3 running in an attested Intel TDX + NVIDIA H100 environment.'
+          : 'This execution has an onchain proof trail and stored trace, but no TEE attestation artifact is attached to this record.'}
+      </div>
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 6, fontSize: 10, color: 'var(--text-muted)' }}>
+        {hasChain && <span><span style={{ color: '#22C55E', fontWeight: 700 }}>0G Chain</span> anchors the proof publicly.</span>}
+        {hasTrace && <span><span style={{ color: '#3B82F6', fontWeight: 700 }}>Trace</span> stores the execution context.</span>}
+        {hasAttest && <span><span style={{ color: '#8B5CF6', fontWeight: 700 }}>TEE</span> stores the attested decision artifact.</span>}
+      </div>
+    </div>
+  )
+}
+
 // ── Execution row ─────────────────────────────────────────────────────────────
 
-function ExecRow({ ex, compact = false }: { ex: any; compact?: boolean }) {
-  const color = actionColor(ex.action)
-  const tag = strategyTag(ex)
+function ExecRow({ ex, compact = false, proofPatch }: { ex: any; compact?: boolean; proofPatch?: Record<string, string> }) {
+  // Merge live proof patch on top of stored fields — SSE updates arrive before journal poll
+  const merged = proofPatch ? { ...ex, ...proofPatch } : ex
+  const color = actionColor(merged.action)
+  const tag = strategyTag(merged)
+  const hasProofTrail = Boolean(merged.zgChainExplorer || merged.zgTraceCID || merged.zgAttestCID || merged.arbitrumTxHash)
   return (
     <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: compact ? '9px 0' : '14px 0', borderBottom: '1px solid var(--border)' }}>
       {/* Icon */}
       <div style={{ width: compact ? 32 : 38, height: compact ? 32 : 38, borderRadius: compact ? 8 : 10, flexShrink: 0, background: `${color}18`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: compact ? 14 : 17 }}>
-        {actionEmoji(ex.action)}
+        {actionEmoji(merged.action)}
       </div>
       {/* Content */}
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
-          <span style={{ fontSize: compact ? 13 : 14, fontWeight: 600, color: 'var(--text-primary)' }}>{actionLabel(ex.action)}</span>
-          <span style={{ fontSize: 11, color: 'var(--text-muted)', flexShrink: 0 }}>{ex.timestamp ? relativeTime(ex.timestamp) : ''}</span>
+          <span style={{ fontSize: compact ? 13 : 14, fontWeight: 600, color: 'var(--text-primary)' }}>{actionLabel(merged.action)}</span>
+          <span style={{ fontSize: 11, color: 'var(--text-muted)', flexShrink: 0 }}>{merged.timestamp ? relativeTime(merged.timestamp) : ''}</span>
         </div>
         {/* Strategy tag + amount */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3, flexWrap: 'wrap' }}>
@@ -663,17 +758,18 @@ function ExecRow({ ex, compact = false }: { ex: any; compact?: boolean }) {
               {tag}
             </span>
           )}
-          {ex.amountUSD != null && (
-            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>${Number(ex.amountUSD).toFixed(2)}</span>
+          {merged.amountUSD != null && (
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>${Number(merged.amountUSD).toFixed(2)}</span>
           )}
         </div>
-        {/* 0G proof badges */}
-        <ProofBadges ex={ex} />
-        {/* View full proof CTA — only when receiptHash exists */}
-        {ex.receiptHash && ex.receiptHash !== '0x' && (
+        {/* 0G proof badges — use merged so live SSE patches show instantly */}
+        <ProofBadges ex={merged} />
+        <ProofExplainer ex={merged} />
+        {/* View full proof CTA */}
+        {hasProofTrail && merged.receiptHash && merged.receiptHash !== '0x' && (
           <div style={{ marginTop: 5 }}>
             <a
-              href={`/verify/${ex.receiptHash}${ex.zgChainTxHash ? `?tx=${ex.zgChainTxHash}` : ''}`}
+              href={`/verify/${merged.receiptHash}${merged.zgChainTxHash ? `?tx=${merged.zgChainTxHash}` : ''}`}
               target="_blank"
               rel="noopener noreferrer"
               style={{ fontSize: 10, color: '#EA580C', fontWeight: 600, textDecoration: 'none', opacity: 0.85 }}
@@ -682,17 +778,22 @@ function ExecRow({ ex, compact = false }: { ex: any; compact?: boolean }) {
             </a>
           </div>
         )}
-        {/* Tx hash */}
-        {!compact && ex.txHash && (
-          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4, fontFamily: 'monospace' }}>
-            {ex.txHash.slice(0, 22)}…
-          </div>
+        {/* Arbitrum tx link — always show when txHash present */}
+        {!compact && merged.txHash && (
+          <a
+            href={`https://arbiscan.io/tx/${merged.txHash}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ display: 'inline-block', fontSize: 10, color: 'var(--text-muted)', marginTop: 4, fontFamily: 'monospace', textDecoration: 'none' }}
+          >
+            {merged.txHash.slice(0, 22)}… ↗
+          </a>
         )}
       </div>
       {/* Amount right */}
-      {ex.amountUSD != null && (
-        <span style={{ fontSize: compact ? 12 : 13, fontWeight: 700, flexShrink: 0, color: ex.action === 'WITHDRAW' ? '#EF4444' : '#22C55E', fontVariantNumeric: 'tabular-nums' }}>
-          {ex.action === 'WITHDRAW' ? '-' : '+'}${Number(ex.amountUSD).toFixed(2)}
+      {merged.amountUSD != null && (
+        <span style={{ fontSize: compact ? 12 : 13, fontWeight: 700, flexShrink: 0, color: merged.action === 'WITHDRAW' ? '#EF4444' : '#22C55E', fontVariantNumeric: 'tabular-nums' }}>
+          {merged.action === 'WITHDRAW' ? '-' : '+'}${Number(merged.amountUSD).toFixed(2)}
         </span>
       )}
     </div>
@@ -711,6 +812,12 @@ export default function StrategyPage({ params }: { params: Promise<{ id: string 
 
   const [agentUser, setAgentUser] = useState<any>(null)
   const [agentReady, setAgentReady] = useState(false)
+  // Proof patches keyed by receiptHash — merged on top of journal data for instant display
+  const [proofPatches, setProofPatches] = useState<Record<string, Record<string, string>>>({})
+
+  const mergeProofPatch = (receiptHash: string, snap: Record<string, string>) => {
+    setProofPatches(prev => ({ ...prev, [receiptHash]: { ...(prev[receiptHash] ?? {}), ...snap } }))
+  }
   const [tab, setTab] = useState<'overview' | 'executions' | 'position'>('overview')
   const [range, setRange] = useState('1M')
   const [execFilter, setExecFilter] = useState('All')
@@ -749,7 +856,11 @@ export default function StrategyPage({ params }: { params: Promise<{ id: string 
   const policyActive = policy ? (policy.active ?? policy[0]) : undefined
   const minAPY = policy ? Number((policy.minAPY ?? policy[2]) ?? BigInt(0)) / 100 : null
   const maxDD = policy ? Number((policy.maxDrawdownBps ?? policy[3]) ?? BigInt(0)) / 100 : null
-  const paused = policyActive === false
+  // V2 users have no V1 vault policy — policyActive returns false/undefined from the contract.
+  // For V2, use the backend phase as the source of truth instead.
+  const isV2 = !!(agentUser?.policy?.signedDelegation)
+  const agentPhase = (agentUser?.phase as string | undefined) ?? ''
+  const paused = isV2 ? agentPhase === 'PAUSED' : policyActive === false
 
   useEffect(() => {
     if (!idOrAddress) return
@@ -788,7 +899,10 @@ export default function StrategyPage({ params }: { params: Promise<{ id: string 
   const pnlHistory: any[] = agentUser?.pnlHistory ?? []
   const phase = (agentUser?.phase as string | undefined) ?? 'INITIALIZING'
   const displayName = agentUser?.policy?.displayName?.split('—')[0]?.trim() ?? 'My Strategy'
-  const isRunning = ['ALLOCATED', 'MONITORING', 'SCANNING', 'MIGRATING'].includes(phase)
+  const isRunning    = ['ALLOCATED', 'MONITORING', 'SCANNING', 'MIGRATING', 'REBALANCING'].includes(phase)
+  const isDeploying  = ['INITIALIZING', 'IDLE'].includes(phase)
+  const isWithdrawn  = phase === 'WITHDRAWN'
+  const isWithdrawing = phase === 'WITHDRAWING'
   const sessionStart = (agentUser?.activeSessionStartedAt as number | undefined) ?? 0
 
   // Agent NAV takes priority. When totalValueUSD is 0 but strategy is running,
@@ -836,6 +950,24 @@ export default function StrategyPage({ params }: { params: Promise<{ id: string 
     })
     return Object.entries(groups)
   }, [filteredExecs])
+
+  // Loading skeleton — shown only on first fetch before agentReady
+  if (!agentReady) {
+    return (
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 24, padding: '40px 0', animation: 'contentSlide 400ms ease-out' }}>
+        <style>{`@keyframes contentSlide{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}} @keyframes skelShimmer{0%{background-position:-400px 0}100%{background-position:400px 0}} .skel{background:linear-gradient(90deg,var(--surface) 25%,var(--border) 50%,var(--surface) 75%);background-size:800px 100%;animation:skelShimmer 1.4s infinite linear}`}</style>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <Skel h={14} w={120} r={6} />
+          <Skel h={44} w={200} r={8} />
+          <Skel h={16} w={160} r={6} />
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+          {[1, 2, 3].map(i => <Skel key={i} h={90} r={14} />)}
+        </div>
+        <Skel h={200} r={16} />
+      </div>
+    )
+  }
 
   if (agentReady && ambiguousStrategies && ambiguousStrategies.length > 0) {
     return (
@@ -1064,6 +1196,46 @@ export default function StrategyPage({ params }: { params: Promise<{ id: string 
           </div>
         )}
 
+        {/* ── Deploying banner (INITIALIZING / IDLE) ── */}
+        {isDeploying && !paused && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 20px', background: 'rgba(234,88,12,0.06)', border: '1px solid rgba(234,88,12,0.18)', borderRadius: 12, marginBottom: 4 }}>
+            <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#EA580C', flexShrink: 0, animation: 'pulse 1.5s ease-in-out infinite' }} />
+            <div style={{ flex: 1 }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: '#EA580C' }}>
+                {phase === 'INITIALIZING' ? 'Agent deploying…' : 'Scouting yield opportunities…'}
+              </span>
+              <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 8 }}>
+                {phaseStatus(phase)}
+              </span>
+            </div>
+            <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}`}</style>
+          </div>
+        )}
+
+        {/* ── Withdrawn banner ── */}
+        {isWithdrawn && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '12px 20px', background: 'rgba(239,68,68,0.05)', border: '1px solid rgba(239,68,68,0.15)', borderRadius: 12, marginBottom: 4 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ fontSize: 16 }}>✓</span>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>Strategy closed</div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>All funds have been returned. This is a read-only history view.</div>
+              </div>
+            </div>
+            <button onClick={() => router.push('/app/onboard')} style={{ flexShrink: 0, height: 32, padding: '0 14px', borderRadius: 8, border: 'none', background: '#EA580C', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+              New strategy
+            </button>
+          </div>
+        )}
+
+        {/* ── Withdrawing banner ── */}
+        {isWithdrawing && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 20px', background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.18)', borderRadius: 12, marginBottom: 4 }}>
+            <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#EF4444', flexShrink: 0, animation: 'pulse 1.5s ease-in-out infinite' }} />
+            <span style={{ fontSize: 13, fontWeight: 600, color: '#EF4444' }}>Unwinding position — converting to USDC. This may take a few minutes.</span>
+          </div>
+        )}
+
         {/* ── Profile header ── */}
         <div style={{ padding: '32px 0 0', borderBottom: '1px solid var(--border)', width: '100%' }}>
           <div className="strategy-header" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, marginBottom: 20 }}>
@@ -1074,7 +1246,7 @@ export default function StrategyPage({ params }: { params: Promise<{ id: string 
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <span style={{ fontSize: 14, color: 'var(--text-muted)', fontWeight: 500 }}>{displayName}</span>
-                  <StatusPill state={paused ? 'paused' : 'running'} />
+                  <StatusPill state={paused ? 'paused' : isDeploying ? 'paused' : 'running'} />
                   <ChainChip chain="arbitrum" />
                 </div>
                 <div style={{ fontSize: 34, fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-.03em', lineHeight: 1.2, fontVariantNumeric: 'tabular-nums', margin: '4px 0' }}>
@@ -1204,7 +1376,7 @@ export default function StrategyPage({ params }: { params: Promise<{ id: string 
                 <div style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 500 }}>v1.0.4-aura</div>
               </div>
 
-              <LiveAgentFeed agentUser={agentUser} executions={executions} phase={phase} />
+              <LiveAgentFeed agentUser={agentUser} executions={executions} phase={phase} proofPatches={proofPatches} onProofPatch={mergeProofPatch} />
             </div>
           </div>
         )}
@@ -1234,7 +1406,7 @@ export default function StrategyPage({ params }: { params: Promise<{ id: string 
                 {groupedExecs.map(([day, exs]) => (
                   <div key={day}>
                     <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', padding: '20px 0 8px', textTransform: 'uppercase', letterSpacing: '.06em' }}>{day}</div>
-                    {exs.map((ex: any, i: number) => <ExecRow key={i} ex={ex} />)}
+                    {exs.map((ex: any, i: number) => <ExecRow key={i} ex={ex} proofPatch={proofPatches[ex?.receiptHash]} />)}
                   </div>
                 ))}
               </div>

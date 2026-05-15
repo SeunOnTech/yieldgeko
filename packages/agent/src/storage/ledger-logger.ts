@@ -1,4 +1,4 @@
-// @ts-nocheck
+
 import { Indexer, MemData } from '@0gfoundation/0g-ts-sdk';
 import { Signer, ethers, NonceManager } from 'ethers';
 import PQueue from 'p-queue';
@@ -20,22 +20,18 @@ export interface FinancialReceipt {
 }
 
 export class LedgerLogger {
-  // Global sequential queue for all background archival tasks
+  
   private static archiverQueue = new PQueue({ concurrency: 1 });
   private static managedSigner: NonceManager | null = null;
 
-  /**
-   * Computes SHA-256 hash of the receipt JSON
-   */
+  
   public static computeReceiptHash(receipt: FinancialReceipt): string {
     const sortedKeys = Object.keys(receipt).sort();
     const canonical = JSON.stringify(receipt, sortedKeys);
     return '0x' + crypto.createHash('sha256').update(canonical).digest('hex');
   }
 
-  /**
-   * Generates a signed receipt and calculates the CID locally for instant response.
-   */
+  
   public static async prepareInstantProof(
     operation: 'GENESIS' | 'MIGRATION' | 'SAFETY_EXIT',
     user: any,
@@ -64,16 +60,15 @@ export class LedgerLogger {
     const payload = JSON.stringify(receipt);
     const memData = new MemData(Buffer.from(payload));
     
-    // Calculate CID (Root Hash) locally - INSTANT
+    
     const [tree] = await memData.merkleTree();
-    const cid = tree.rootHash();
+    if (!tree) throw new Error('merkle tree computation failed');
+    const cid = tree.rootHash() as string;
 
     return { receipt, hash, cid, data: memData };
   }
 
-  /**
-   * Logs a protocol action (Genesis, Migration, or Safety Exit) with instant local proof and background 0G archival.
-   */
+  
   public static async logAction(
     operation: 'GENESIS' | 'MIGRATION' | 'SAFETY_EXIT',
     user: any,
@@ -85,15 +80,15 @@ export class LedgerLogger {
     indexerUrl: string,
     evmRpcUrl: string
   ): Promise<{ receipt: any; hash: string; cid: string }> {
-    // 1. Initialize Nonce Manager if needed
+    
     if (!this.managedSigner) {
       this.managedSigner = new NonceManager(signer);
     }
 
-    // 2. Generate proof INSTANTLY
+    
     const { receipt, hash, cid, data } = await this.prepareInstantProof(operation, user, venue, prevVenue, amount, fees, signer);
 
-    // 3. Background Archival via Sequential Queue (The Nonce Orchestrator)
+    
     const indexer = new Indexer(indexerUrl);
     
     this.archiverQueue.add(async () => {
@@ -102,12 +97,12 @@ export class LedgerLogger {
         await indexer.upload(data, evmRpcUrl, this.managedSigner!);
         console.log(`[0G-Archiver] ✅ Successfully archived CID: ${cid}`);
       } catch (err) {
-        console.error(`[0G-Archiver] ❌ Archival failed for CID: ${cid}`, err.message || err);
-        // In a production app, we would add persistent retry logic here
+        console.error(`[0G-Archiver] ❌ Archival failed for CID: ${cid}`, err instanceof Error ? err.message : err);
+        
       }
     });
 
-    // 4. Return immediately - 100x Speedup achieved
+    
     return { receipt, hash, cid };
   }
 }

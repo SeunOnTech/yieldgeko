@@ -7,14 +7,8 @@ export interface MigrationBatch {
   totalGasEstimate: bigint;
 }
 
-/**
- * YieldGeko Proportional Batcher
- * Bundles migrations and calculates fair gas distribution.
- */
 export class MigrationBatcher {
-  /**
-   * Bundles queued items into venue-specific batches
-   */
+  
   public static createBatches(items: QueueItem[]): MigrationBatch[] {
     const venueMap: { [key: string]: QueueItem[] } = {};
 
@@ -26,8 +20,8 @@ export class MigrationBatcher {
     return Object.entries(venueMap).map(([venue, batchItems]) => {
       const totalAmount = batchItems.reduce((acc, item) => acc + item.amount, 0n);
       
-      // Amount-Based Gas Splitting Math
-      // Base cost: 200k, incremental: 150k per migration
+      
+      
       const gasEstimate = 200000n + (150000n * BigInt(batchItems.length));
 
       console.log(`[Batcher] Created batch for ${venue} with ${batchItems.length} users. Total Value: ${totalAmount.toString()}`);
@@ -41,9 +35,7 @@ export class MigrationBatcher {
     });
   }
 
-  /**
-   * Calculates a user's proportional share of the batch gas
-   */
+  
   public static calculateGasShare(userAmount: bigint, batch: MigrationBatch): bigint {
     if (batch.totalAmount === 0n) return 0n;
     return (userAmount * batch.totalGasEstimate) / batch.totalAmount;

@@ -155,6 +155,7 @@ function buildRoutePlan(plan: RoutePlanRequest) {
 
 const config = loadConfig();
 const wallet = new Wallet(config.signingPrivateKey);
+const providerSecurity = 'Response signing only (no TeeTLS attestation in local provider)';
 
 async function handle(req: IncomingMessage, res: ServerResponse) {
   const url = new URL(req.url ?? '/', config.publicBaseUrl);
@@ -167,7 +168,7 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
       displayName: config.displayName,
       publicBaseUrl: config.publicBaseUrl,
       providerSigner: wallet.address,
-      verifiability: 'TeeTLS',
+      security: providerSecurity,
     });
     return;
   }
@@ -222,7 +223,7 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     }
     json(res, 200, {
       service: 'yieldgeko-provider',
-      verifiability: 'TeeTLS',
+      security: providerSecurity,
       docs: {
         health: '/health',
         chatCompletions: '/v1/chat/completions',
@@ -247,5 +248,5 @@ server.listen(config.port, config.host, () => {
   console.log(`[Provider] Public base URL: ${config.publicBaseUrl}`);
   console.log(`[Provider] Signer: ${wallet.address}`);
   console.log(`[Provider] Model: ${config.modelId}`);
-  console.log(`[Provider] Verifiability: TeeTLS`);
+  console.log(`[Provider] Security: ${providerSecurity}`);
 });

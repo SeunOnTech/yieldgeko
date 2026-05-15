@@ -25,7 +25,7 @@ export function normalizePendleData(raw: Awaited<ReturnType<typeof fetchPendleMa
     liquidityUsd: raw.liquidity,
     utilizationBps: 0n,
     maturityTimestamp: raw.maturity,
-    riskScore: 80, // Pendle: Structured yield risk
+    riskScore: 80, 
     lastUpdated: Math.floor(Date.now() / 1000),
     source: 'pendle',
   };

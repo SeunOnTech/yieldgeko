@@ -1,0 +1,16 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - build
+      - -f
+      - packages/agent/Dockerfile
+      - -t
+      - us-central1-docker.pkg.dev/$PROJECT_ID/yieldgeko/agent:latest
+      - .
+
+images:
+  - us-central1-docker.pkg.dev/$PROJECT_ID/yieldgeko/agent:latest
+
+options:
+  machineType: E2_HIGHCPU_8
+  diskSizeGb: 100

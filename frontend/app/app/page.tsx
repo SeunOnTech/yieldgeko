@@ -12,22 +12,20 @@ import GlobalLoading from '../components/GlobalLoading'
 import { useHeader } from '../components/HeaderContext'
 import { AppHeader } from '../components/AppHeader'
 
-// ── Agent fetch ───────────────────────────────────────────────────────────────
-
 const AGENT_BASE = (process.env.NEXT_PUBLIC_AGENT_SSE_URL ?? 'http://localhost:3001/events').replace('/events', '')
 
 function BrainIcon({ size = 16 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round">
-      {/* Brain Cloud Outline */}
+      
       <path d="M12 4c-3.5 0-4.5 2-4.5 2s-2.5-1-4 1-1 4.5 0 5c-1 1-1 3 0 4.5 0 0 .5 3.5 4.5 3.5.5 2.5 2.5 2 2.5 2s1.5-1 2.5-1 1 1 2.5 1 2-1 2.5-2c4 0 4.5-3.5 4.5-3.5 1-1.5 1-3.5 0-4.5 1-.5 1.5-3 0-5-1.5-2-4-1-4-1s-1-2-4.5-2Z" />
-      {/* Internal Nodes (Circles) */}
+      
       <circle cx="9" cy="9" r="1" fill="currentColor" />
       <circle cx="15" cy="8" r="1" fill="currentColor" />
       <circle cx="12" cy="12" r="1" fill="currentColor" />
       <circle cx="16" cy="14" r="1" fill="currentColor" />
       <circle cx="8" cy="15" r="1" fill="currentColor" />
-      {/* Circuit lines connecting nodes */}
+      
       <path d="M4.5 11.5l2-1h2.5" />
       <path d="M11.5 4.5v2l1 2.5" />
       <path d="M19.5 10.5l-2.5 1-2 3.5" />
@@ -43,8 +41,6 @@ async function fetchDashboard(address: string): Promise<any | null> {
     return await res.json()
   } catch { return null }
 }
-
-// ── Animated counter ──────────────────────────────────────────────────────────
 
 function useCountUp(target: number, duration = 800): number {
   const [val, setVal] = useState(target)
@@ -62,8 +58,6 @@ function useCountUp(target: number, duration = 800): number {
   }, [target, duration])
   return val
 }
-
-// ── Mini chart ────────────────────────────────────────────────────────────────
 
 function MiniChart({ data, height = 100 }: { data: number[]; height?: number }) {
   if (data.length < 2) return null
@@ -90,8 +84,6 @@ function MiniChart({ data, height = 100 }: { data: number[]; height?: number }) 
   )
 }
 
-// ── Util ──────────────────────────────────────────────────────────────────────
-
 function actionLabel(a: string) {
   return a === 'GENESIS' ? 'Deployed' : a === 'WITHDRAW' ? 'Withdrew' : a === 'MIGRATE' ? 'Migrated' : a?.includes('REBALANCE') ? 'Rebalanced' : a === 'HARVEST' ? 'Harvested' : a
 }
@@ -110,18 +102,16 @@ function timeAgo(ts: number): string {
   return `${Math.floor(h / 24)}d ago`
 }
 
-// ── Logo helpers ──────────────────────────────────────────────────────────────
-
 const PROTOCOL_LOGOS: Record<string, string> = {
-  // UNI token logo = Uniswap protocol logo (verified 200)
+  
   uniswap: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984/logo.png',
-  // AAVE token on Ethereum (verified 200)
+  
   aave: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9/logo.png',
-  // Morpho GitHub avatar (no token logo available)
+  
   morpho: 'https://avatars.githubusercontent.com/u/97085409?s=64&v=4',
-  // PENDLE token on Arbitrum (verified 200)
+  
   pendle: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/arbitrum/assets/0x0c880f6761F1af8d9Aa9C466984b80DAb9a8c9e8/logo.png',
-  // GMX token on Arbitrum (verified 200)
+  
   gmx: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/arbitrum/assets/0xfc5A1A6EB076a2C7aD06eD22C90d7E710E35ad0a/logo.png',
 }
 
@@ -154,7 +144,7 @@ function parseTokenPair(venueName: string): [string, string] | null {
 function cleanStrategyName(venueName: string): string {
   return venueName
     .replace(/\(LVR-screened\)/gi, '')
-    .replace(/USD[₮Ꞇ]0?/g, 'USDT')   // USD₮0, USD₮ → USDT (Tether unicode symbol)
+    .replace(/USD[₮Ꞇ]0?/g, 'USDT')   
     .replace(/\s+/g, ' ')
     .trim()
 }
@@ -164,7 +154,7 @@ function strategyTag(ex: any): string {
     if (!raw) return ''
     const clean = cleanStrategyName(raw)
     const pair = parseTokenPair(clean)
-    // Extract short protocol name (first meaningful word, skip "V3/V2" suffixes)
+    
     const proto = clean.split(' ').find(w => w.length > 2 && !['V2', 'V3', 'LP', 'PT', 'YT'].includes(w)) ?? ''
     if (pair) return proto ? `${proto} · ${pair[0]}/${pair[1]}` : `${pair[0]}/${pair[1]}`
     return clean.split(' ').slice(0, 3).join(' ')
@@ -175,8 +165,6 @@ function strategyTag(ex: any): string {
   return to || from
 }
 
-// ── Bot icon ──────────────────────────────────────────────────────────────────
-
 const IcoBot = () => (
   <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
     <rect x="2" y="5" width="12" height="8" rx="2" fillOpacity=".12" stroke="currentColor" strokeWidth="1.2" fill="none" />
@@ -185,8 +173,6 @@ const IcoBot = () => (
     <circle cx="8" cy="2" r="1" />
   </svg>
 )
-
-// ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function AppPage() {
   const router = useRouter()
@@ -201,7 +187,7 @@ export default function AppPage() {
     setIsMounted(true)
   }, [])
 
-  // Redirect to connect page if not connected
+  
   useEffect(() => {
     if (isMounted && !address) {
       router.push('/app/connect')
@@ -210,7 +196,7 @@ export default function AppPage() {
 
   const smartAccountAddress = agentUser?.policy?.smartAccountAddress as `0x${string}` | undefined
 
-  // V2: Read USDC balance directly from Smart Account (if deployed) or EOA
+  
   const { data: usdcBalanceRaw } = useReadContract({
     address: USDC_ADDRESS,
     abi: parseAbi(['function balanceOf(address) external view returns (uint256)']),
@@ -219,16 +205,16 @@ export default function AppPage() {
     query: { enabled: Boolean(address), refetchInterval: 30_000 },
   })
 
-  // V2: In delegation mode, "available" is the Smart Account balance
+  
   const available = usdcBalanceRaw !== undefined ? Number(formatUnits(usdcBalanceRaw as bigint, 6)) : 0
   
-  // V2: "working" capital is provided by the agent's portfolio state
+  
   const metrics = agentUser?.portfolio?.metrics
   const working = (metrics?.totalValueUSD as number | undefined) ?? 0
   
   const totalValue = available + working
 
-  // V2: Get policy terms from the Agent's state (which contains the signed terms)
+  
   const minAPY = agentUser?.policy?.minAPY ?? 0
   const maxDD = agentUser?.policy?.maxDrawdownPct ?? (agentUser?.policy?.maxDrawdownBps ? agentUser.policy.maxDrawdownBps / 100 : 0)
 
@@ -248,33 +234,33 @@ export default function AppPage() {
 
   const isRunning = ['ALLOCATED', 'MONITORING', 'SCANNING', 'MIGRATING'].includes(phase)
 
-  // Prefer agent's portfolio NAV. When totalValueUSD is 0 but the position is
-  // running, fall back to totalEntryUSD (deployed capital) — the NAV reader may
-  // not have computed the real value yet (e.g. wrong tokenId still healing).
+  
+  
+  
   const agentTotalUSD = (metrics?.totalValueUSD as number | undefined) ?? null
   const entryFallback = (isRunning && (metrics?.totalEntryUSD ?? 0) > 0)
     ? (metrics?.totalEntryUSD as number)
     : null
-  // Only show value when the agent is actively managing a strategy.
-  // Never fall back to raw wallet USDC balance — that's not a managed portfolio.
+  
+  
   const displayTotal = agentUser
     ? ((agentTotalUSD !== null && agentTotalUSD > 0)
         ? agentTotalUSD
         : (entryFallback ?? 0))
     : 0
   const entryUSD = metrics?.totalEntryUSD ?? displayTotal
-  // True total return = unrealized capital change + all fees/yield earned
+  
   const pnlUSD = displayTotal > 0 ? (displayTotal - entryUSD) + earned : 0
   const pnlPct = entryUSD > 0 ? (pnlUSD / entryUSD) * 100 : 0
 
-  const trueTotal = displayTotal + earned   // principal + accrued fees = full portfolio value
+  const trueTotal = displayTotal + earned   
   const animTotal = useCountUp(address ? trueTotal : 0)
   const shortAddr = address ? `${address.slice(0, 6)}...${address.slice(-4)}` : ''
 
   const chartData = useMemo(() => {
     const lens: Record<string, number> = { '1W': 7, '1M': 30, 'All': 999 }
     const hist = pnlHistory.slice(-lens[chartRange])
-    // Only use historical data when it has real non-zero values
+    
     if (hist.length >= 2 && hist.some((p: any) => (p.totalUSD ?? 0) > 0))
       return hist.map((p: any) => p.totalUSD ?? 0)
     if (displayTotal > 0) return Array(8).fill(displayTotal)
@@ -284,12 +270,12 @@ export default function AppPage() {
   const header = useMemo(() => <AppHeader />, [])
   useHeader(header)
 
-  // ── JSX ────────────────────────────────────────────────────────────────────
+  
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
       <GlobalLoading show={false} />
 
-      {/* Responsive overrides for high-density dashboard */}
+      
       <style>{`
         @media (max-width: 1024px) {
           .profile-header-main { flex-direction: column !important; align-items: stretch !important; gap: 24px !important; }
@@ -356,11 +342,11 @@ export default function AppPage() {
         </div>
       ) : (
         <>
-          {/* Profile header — Balance, PnL, and Tabs */}
+          
           <div style={{ padding: '32px 0 0', borderBottom: '1px solid var(--border)', width: '100%' }}>
             <div className="profile-header-main" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, marginBottom: 20 }}>
               
-              {/* Value block */}
+              
               <div className="profile-value-block" style={{ display: 'flex', alignItems: 'flex-start', gap: 14 }}>
                 <div className="profile-avatar-wrap" style={{ width: 52, height: 52, flexShrink: 0 }}>
                   <WalletAvatar address={address} size={52} />
@@ -384,7 +370,7 @@ export default function AppPage() {
                 </div>
               </div>
 
-              {/* Desktop Action buttons */}
+              
               <div className="desktop-only-actions" style={{ display: 'flex', gap: 8, flexShrink: 0, marginTop: 4, flexWrap: 'wrap' }}>
                 <button onClick={() => router.push('/app/create')} style={{
                   height: 36, padding: '0 16px', borderRadius: 10, border: 'none',
@@ -414,7 +400,7 @@ export default function AppPage() {
               </div>
             </div>
 
-            {/* Tabs */}
+            
             <div className="profile-tabs-scroll" style={{ display: 'flex', alignItems: 'center', gap: 24, padding: '0 4px', overflowX: 'auto' }}>
               {(['portfolio', 'activity'] as const).map(t => (
                 <div key={t} onClick={() => setTab(t)} style={{
@@ -455,7 +441,7 @@ export default function AppPage() {
                 </div>
               </div>
 
-              {/* Chart card */}
+              
               <div style={{ background: 'var(--surface)', borderRadius: 14, border: '1px solid var(--border)', padding: '20px 20px 14px', marginBottom: 16 }}>
                 {chartData.length >= 2 ? (
                   <>
@@ -475,7 +461,7 @@ export default function AppPage() {
                 )}
               </div>
 
-              {/* Stat cards */}
+              
               <div className="stats-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
                 {[
                   { label: 'Total value', val: `$${(displayTotal + earned).toFixed(4)}`, sub: positions.length > 1 ? 'all agents' : 'USDC', color: 'var(--text-primary)' },
@@ -491,7 +477,7 @@ export default function AppPage() {
               </div>
             </div>
 
-            {/* Active Strategies */}
+            
             <div>
               <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 12 }}>
                 Active Agents
@@ -503,14 +489,14 @@ export default function AppPage() {
               </div>
               <div style={{ background: 'var(--surface)', borderRadius: 14, border: '1px solid var(--border)', overflow: 'hidden' }}>
 
-                {/* Table header */}
+                
                 <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', padding: '9px 16px', borderBottom: '1px solid var(--border)' }}>
                   {['Agent', 'Value', 'Status'].map(h => (
                     <div key={h} style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.05em', fontWeight: 500 }}>{h}</div>
                   ))}
                 </div>
 
-                {/* One row per position — supports multiple strategies */}
+                
                 {positions.map((pos: any, i: number) => {
                   const isLast = i === positions.length - 1
                   const venueName = pos.venueName ?? ''
@@ -533,7 +519,7 @@ export default function AppPage() {
                     >
                       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
 
-                        {/* Protocol icon + Arbitrum chain badge */}
+                        
                         <div style={{ position: 'relative', width: 32, height: 32, flexShrink: 0 }}>
                           {protocolLogo ? (
                             <img
@@ -544,7 +530,7 @@ export default function AppPage() {
                           ) : (
                             <div style={{ width: 32, height: 32, borderRadius: 8, background: 'rgba(40,160,240,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14 }}>⬡</div>
                           )}
-                          {/* Arbitrum chain badge */}
+                          
                           <img
                             src={CHAIN_LOGO_ARB} alt="Arbitrum"
                             style={{ position: 'absolute', bottom: -3, right: -3, width: 14, height: 14, borderRadius: '50%', border: '1.5px solid var(--background)', objectFit: 'cover' }}
@@ -552,7 +538,7 @@ export default function AppPage() {
                         </div>
 
                         <div>
-                          {/* Token pair logos + name */}
+                          
                           <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
                             {tokenPair && (
                               <div style={{ position: 'relative', width: 26, height: 18, flexShrink: 0 }}>
@@ -586,7 +572,7 @@ export default function AppPage() {
                   )
                 })}
 
-                {/* Fallback: vault says capital is deployed but agent state not loaded yet */}
+                
                 {positions.length === 0 && working > 0 && (
                   <div
                     onClick={() => {
@@ -612,7 +598,6 @@ export default function AppPage() {
                   </div>
                 )}
 
-
                 {positions.length === 0 && working === 0 && (
                   <div style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
                     No agents running.{' '}
@@ -623,7 +608,7 @@ export default function AppPage() {
                 )}
               </div>
 
-              {/* Policy guardrails */}
+              
               {(minAPY > 0 || maxDD > 0) && (
                 <div style={{ marginTop: 14, background: 'var(--surface)', borderRadius: 14, border: '1px solid var(--border)', padding: '14px 16px' }}>
                   <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 12 }}>Policy guardrails</div>
@@ -648,7 +633,7 @@ export default function AppPage() {
             </div>
           </div>
 
-          {/* Right column — activity feed */}
+          
           <div className="dashboard-right-col" style={{ width: 340, padding: '24px 0 24px 24px', overflowY: 'auto' }}>
             <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 14 }}>Activity</div>
             {executions.length === 0 ? (
@@ -712,7 +697,7 @@ export default function AppPage() {
           </div>
         </div>
 
-        /* ── Activity tab ─────────────────────────────────────────────────── */
+        
       ) : (
         <div style={{ padding: '24px', maxWidth: 680 }}>
           <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 14 }}>All agent actions</div>

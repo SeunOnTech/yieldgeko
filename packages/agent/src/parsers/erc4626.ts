@@ -22,9 +22,9 @@ export async function fetchERC4626Metrics(
   const shares = (results[1].result as bigint) ?? 0n;
   const sharesPerAsset = shares > 0n ? (shares * 10n**BigInt(assetDecimals)) / tvl : 0n;
 
-  // For Day 3: APY calculation from 4626 requires historical sampling or 3rd party API
-  // We will return a placeholder and note the SAMPLING requirement for Day 4.
-  const apyBps = 650n; // 6.50% placeholder
+  
+  
+  const apyBps = 650n; 
 
   return { apyBps, tvl, sharesPerAsset };
 }

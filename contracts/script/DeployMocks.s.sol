@@ -1,22 +1,8 @@
-// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
-
-/**
- * @title DeployMocks
- * @notice Deploys mock contracts needed for Sepolia E2E test + creates user smart account.
- *
- *   forge script script/DeployMocks.s.sol:DeployMocks \
- *     --rpc-url https://ethereum-sepolia-rpc.publicnode.com \
- *     --broadcast --private-key $PRIVATE_KEY -vvv
- */
 
 import {Script} from "forge-std/Script.sol";
 import {console2 as console} from "forge-std/console2.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Mock ERC-20 — mintable test USDC (6 decimals)
-// ─────────────────────────────────────────────────────────────────────────────
 
 contract MockUSDC {
     string public name = "Mock USDC";
@@ -61,10 +47,6 @@ contract MockUSDC {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Mock Yield Protocol — accepts USDC deposits, tracks balances
-// ─────────────────────────────────────────────────────────────────────────────
-
 contract MockYieldProtocol {
     address public token;
     mapping(address => uint256) public deposits;
@@ -76,7 +58,6 @@ contract MockYieldProtocol {
         token = _token;
     }
 
-    // Aave-compatible interface so YieldGekoExecutor calldata works
     function supply(address asset, uint256 amount, address onBehalfOf, uint16) external {
         require(asset == token, "wrong token");
         MockUSDC(token).transferFrom(msg.sender, address(this), amount);
@@ -96,10 +77,6 @@ contract MockYieldProtocol {
         return deposits[user];
     }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Script
-// ─────────────────────────────────────────────────────────────────────────────
 
 address constant HYBRID_DELEGATOR_IMPL = 0x48dBe696A4D990079e039489bA2053B36E8FFEC4;
 address constant SIMPLE_FACTORY = 0x69Aa2f9fe1572F1B640E1bbc512f5c3a734fc77c;
@@ -127,19 +104,15 @@ contract DeployMocks is Script {
 
         vm.startBroadcast(deployerKey);
 
-        // 1. Deploy MockUSDC
         MockUSDC mockUSDC = new MockUSDC();
         console.log("\n  [OK] MockUSDC:           %s", address(mockUSDC));
 
-        // 2. Deploy MockYieldProtocol
         MockYieldProtocol mockProtocol = new MockYieldProtocol(address(mockUSDC));
         console.log("  [OK] MockYieldProtocol:  %s", address(mockProtocol));
 
-        // 3. Register MockYieldProtocol in YieldGekoExecutor
         IExecutor(EXECUTOR_ADDRESS).addProtocol(address(mockProtocol), "MockYieldProtocol");
         console.log("  [OK] MockYieldProtocol added to YieldGekoExecutor");
 
-        // 4. Create user HybridDeleGator smart account via SimpleFactory
         bytes memory initData = abi.encodeWithSignature(
             "initialize(address,string[],uint256[],uint256[])",
             deployerEOA,
@@ -162,11 +135,9 @@ contract DeployMocks is Script {
             console.log("  [OK] Smart account (new):      %s", smartAccount);
         }
 
-        // 5. Authorize smart account in executor (it's msg.sender in delegation flow)
         IExecutor(EXECUTOR_ADDRESS).setAuthorizedCaller(smartAccount, true);
         console.log("  [OK] Smart account authorized in executor");
 
-        // 6. Mint 2,000 mock USDC to smart account
         mockUSDC.mint(smartAccount, 2000e6);
         console.log("  [OK] Minted 2,000 mUSDC to smart account");
 

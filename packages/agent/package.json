@@ -14,7 +14,8 @@
     "scout:advanced": "ts-node scripts/scout-advanced-venues.ts",
     "scout:uniswap": "ts-node scripts/scout-uniswap-yields.ts",
     "orchestrator": "ts-node src/orchestrator/index.ts",
-    "test:0g": "ts-node scripts/test-0g-persistence.ts"
+    "test:0g": "ts-node scripts/test-0g-persistence.ts",
+    "debug:tee": "ts-node scripts/test-tee-debug.ts"
   },
   "keywords": [],
   "author": "",
@@ -30,6 +31,7 @@
     "better-sqlite3": "^12.10.0",
     "dotenv": "^17.4.2",
     "ethers": "^6.16.0",
+    "ioredis": "^5.10.1",
     "p-queue": "^9.2.0",
     "permissionless": "0.3.5",
     "viem": "^2.48.8"
@@ -41,5 +43,3 @@
     "typescript": "^6.0.3"
   }
 }
-
-

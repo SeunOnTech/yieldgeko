@@ -27,9 +27,9 @@ export const useHeader = (content: ReactNode) => {
 
   useEffect(() => {
     context.setHeader(content)
-    // Clean up when page unmounts
+    
     return () => context.setHeader(null)
-  }, []) // Only run once on mount to avoid infinite re-render loops with JSX elements
+  }, []) 
 }
 
 export const useHeaderContent = () => {

@@ -4,17 +4,12 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "dev": "turbo dev",
+    "dev": "turbo dev --filter=frontend --filter=agent --filter=@yieldgeko/core",
     "build": "turbo build",
     "test": "turbo test",
     "lint": "turbo lint",
     "prepare": "husky",
     "scout": "sh -c 'OUT_DIR=\"/tmp/yieldgeko-opportunity-scout\" && rm -rf \"$OUT_DIR\" && mkdir -p \"$OUT_DIR\" && pnpm --dir packages/agent exec tsc --ignoreConfig \"$PWD/scripts/opportunity-scout.ts\" --target ES2022 --module commonjs --types node --skipLibCheck --esModuleInterop --outDir \"$OUT_DIR\" && node \"$OUT_DIR/opportunity-scout.js\"'",
-    "provider:dev": "pnpm --dir packages/provider dev",
-    "provider:start": "pnpm --dir packages/provider start",
-    "provider:typecheck": "pnpm --dir packages/provider typecheck",
-    "provider:build": "pnpm --dir packages/provider build",
-    "provider:metadata": "pnpm --dir packages/provider exec ts-node /Users/seun/yieldsync/yieldgeko/scripts/print-provider-metadata.ts",
     "attestation:fetch": "pnpm --dir packages/agent exec ts-node /Users/seun/yieldsync/yieldgeko/scripts/fetch-tee-attestation.ts"
   },
   "keywords": [],
@@ -42,4 +37,3 @@
     ]
   }
 }
-

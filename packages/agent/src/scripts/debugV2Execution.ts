@@ -1,13 +1,4 @@
-/**
- * V2 Execution Debug Script
- *
- * Bypasses the agent entirely. Signs a delegation, builds redeemDelegations
- * calldata for the WBTC-USDT pool the agent keeps picking, and submits it
- * directly via Pimlico — so we see the exact error instead of a silent IDLE loop.
- *
- * Run:
- *   npx ts-node src/scripts/debugV2Execution.ts
- */
+
 
 import 'dotenv/config';
 import {
@@ -27,14 +18,10 @@ import { toSimpleSmartAccount } from 'permissionless/accounts';
 import { createPimlicoClient }  from 'permissionless/clients/pimlico';
 import { DelegationClient, depositArgs } from '../orchestrator/delegation-client';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Addresses
-// ─────────────────────────────────────────────────────────────────────────────
-
 const USDC        = '0xaf88d065e77c8cC2239327C5EDb3A432268e5831' as Address;
 const WBTC        = '0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f' as Address;
 const USDT        = '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9' as Address;
-const POOL        = '0x5969EFddE3cF5C0D9a88aE51E47d721096A97203' as Address; // WBTC-USDT 0.05%
+const POOL        = '0x5969EFddE3cF5C0D9a88aE51E47d721096A97203' as Address; 
 const UNIV3_PM    = '0xC36442b4a4522E871399CD717aBDD847Ab11FE88' as Address;
 const SWAP_ROUTER = '0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45' as Address;
 const EXECUTOR    = (process.env.EXECUTOR_ADDRESS ?? '0x94DE8790BEd6Be0395C6BE7f42FD677b7B8cBcFb') as Address;
@@ -56,9 +43,8 @@ const SWAP_ABI = parseAbi([
 ]);
 
 const ENTRY_POINT = '0x0000000071727De22E5E9d8BAf0edAc6f37da032' as Address;
-const DEPOSIT_AMT = 1_000_000n; // $1 USDC
+const DEPOSIT_AMT = 1_000_000n; 
 
-// Matches execution.ts rangePctToTicks exactly — log-based, floor/ceil aligned
 function rangePctToTicks(currentTick: number, rangePct: number, spacing: number) {
   const r         = rangePct / 100;
   const halfTicks = Math.round(Math.log(1 + r) / Math.log(1.0001));
@@ -106,7 +92,7 @@ async function main() {
   console.log(`  Agent Pimlico SA (delegate): ${agentPimlicoSA}`);
   console.log(`  Pool: WBTC-USDT 0.05% ${POOL}`);
 
-  // ── 1. Derive user's smart account ────────────────────────────────────────
+  
 
   const delegatorSA = await toMetaMaskSmartAccount({
     client: publicClient, implementation: Implementation.Hybrid,
@@ -127,7 +113,7 @@ async function main() {
     return;
   }
 
-  // Check and approve USDC for both executor and swapper from the smart account
+  
   const USDC_ALLOWANCE_ABI = parseAbi(['function allowance(address,address) external view returns (uint256)', 'function approve(address,uint256) external returns (bool)']);
   const [execAllowance, swapAllowance] = await Promise.all([
     publicClient.readContract({ address: USDC, abi: USDC_ALLOWANCE_ABI, functionName: 'allowance', args: [smartAcct, EXECUTOR] }),
@@ -140,8 +126,8 @@ async function main() {
   if (execAllowance < DEPOSIT_AMT) approvalCalls.push({ to: USDC, value: 0n, data: encodeFunctionData({ abi: USDC_ALLOWANCE_ABI, functionName: 'approve', args: [EXECUTOR, DEPOSIT_AMT * 1000n] }) });
   if (swapAllowance < DEPOSIT_AMT) approvalCalls.push({ to: USDC, value: 0n, data: encodeFunctionData({ abi: USDC_ALLOWANCE_ABI, functionName: 'approve', args: [SWAPPER,  DEPOSIT_AMT * 1000n] }) });
 
-  // No volatile (WBTC/USDT) approvals needed — Swapper now sends tokens directly to
-  // executor. executeFromBalance uses executor's own balance; no smart account allowance needed.
+  
+  
 
   if (approvalCalls.length > 0) {
     console.log(`\n  Approving tokens for executor + swapper (${approvalCalls.length} approval(s))...`);
@@ -150,7 +136,7 @@ async function main() {
     console.log(`  ✅ Approved (tx: ${opReceipt.receipt.transactionHash})`);
   }
 
-  // ── 2. Read live pool state ──────────────────────────────────────────────
+  
 
   const [slot0, spacing] = await Promise.all([
     publicClient.readContract({ address: POOL, abi: POOL_ABI, functionName: 'slot0' }),
@@ -160,7 +146,7 @@ async function main() {
   const { tickLower, tickUpper } = rangePctToTicks(currentTick, 3, spacing);
   console.log(`\n  Pool tick: ${currentTick} | range: [${tickLower}, ${tickUpper}]`);
 
-  // ── 3. Sign delegation (delegate = agent Pimlico SA) ─────────────────────
+  
 
   const expiresAt   = BigInt(Math.floor(Date.now() / 1000) + 365 * 24 * 3600);
   const policyTerms = encodeAbiParameters(
@@ -169,9 +155,9 @@ async function main() {
   ) as Hex;
   const allowedTargetsTerms = encodePacked(['address', 'address'], [EXECUTOR, SWAPPER]) as Hex;
 
-  // AllowedTargetsEnforcer only handles SINGLE mode — throws CaveatEnforcer:invalid-call-type
-  // on BATCH mode (3-exec delta-neutral path). YieldGekoPolicyCaveatEnforcer covers policy
-  // enforcement, so AllowedTargets is dropped here.
+  
+  
+  
   const delegation = {
     delegate:  agentPimlicoSA,
     delegator: smartAcct,
@@ -185,13 +171,13 @@ async function main() {
   const signedDelegation = { ...delegation, signature };
   console.log(`\n  Delegation signed. delegate=${agentPimlicoSA.slice(0, 12)}…`);
 
-  // ── 4. Build calldata ────────────────────────────────────────────────────
+  
 
   const halfAmt  = DEPOSIT_AMT / 2n;
-  const minOut0  = 600n;  // WBTC satoshis (very conservative for $0.5)
-  const minOut1  = 490000n; // USDT micro
+  const minOut0  = 600n;  
+  const minOut1  = 490000n; 
 
-  // DEX calldatas: recipient = SWAPPER (Swapper measures balance delta, then forwards to EXECUTOR)
+  
   const dexCd0 = encodeFunctionData({
     abi: SWAP_ABI, functionName: 'exactInputSingle',
     args: [{ tokenIn: USDC, tokenOut: WBTC, fee: 500, recipient: SWAPPER,
@@ -202,7 +188,7 @@ async function main() {
     args: [{ tokenIn: USDC, tokenOut: USDT, fee: 100, recipient: SWAPPER,
              amountIn: halfAmt, amountOutMinimum: minOut1, sqrtPriceLimitX96: 0n }],
   });
-  // Mint calldata: LP NFT recipient = smart account, amounts are desired (executor uses full balance)
+  
   const mintCd = encodeFunctionData({
     abi: UNIV3_MINT_ABI, functionName: 'mint',
     args: [{
@@ -211,7 +197,7 @@ async function main() {
       amount0Desired: (minOut0 * 99n) / 100n,
       amount1Desired: (minOut1 * 99n) / 100n,
       amount0Min: 0n, amount1Min: 0n,
-      recipient: smartAcct,  // LP NFT goes to smart account
+      recipient: smartAcct,  
       deadline: BigInt(Math.floor(Date.now() / 1000) + 600),
     }],
   });
@@ -244,7 +230,7 @@ async function main() {
   console.log(`\n  redeemDelegations calldata built (${redeemCd.length / 2} bytes)`);
   console.log(`  Target: DelegationManager ${DM_ADDR}`);
 
-  // ── 5. Submit via Pimlico (agent's smart account calls DM) ────────────────
+  
 
   console.log('\n  Submitting UserOperation via Pimlico...\n');
   try {

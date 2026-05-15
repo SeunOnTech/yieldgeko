@@ -1,38 +1,21 @@
-/**
- * UniV3 LVR Screener — production module
- *
- * Screens all Arbitrum Uniswap V3 pools through 5 quantitative criteria and
- * returns ranked ScreenedPool objects ready for the allocation engine.
- *
- * Criteria (in order):
- *   1. LVR screen      fee > σ²_ratio/8 at C=1 (pool fundamentally profitable)
- *   2. Min LVR ratio   fee/LVR ≥ 3×             (conservative safety margin)
- *   3. TVL check       position ≤ 2% of TVL     (no market impact)
- *   4. Optimal range   highest net APY with C/C_avg fee scaling
- *   5. IL guard        epoch fees / epoch IL ≥ 1.2× (IL never eats profit)
- *
- * Cache: 15-minute TTL. All DeFiLlama calls are parallel and free of rate limits.
- * Provider: only needed for UniV3 factory.getPool() address resolution.
- */
+
 
 import { ethers } from 'ethers';
 import { resolveSwapRoute, type SwapRoute } from './swapRouter';
 
-// ── Config ────────────────────────────────────────────────────────────────────
-
 const SCREEN_TTL_MS    = 15 * 60_000;
 const MIN_LVR_RATIO    = 3.0;
-const MAX_POSITION_PCT = 0.02;        // 2% of pool TVL
+const MAX_POSITION_PCT = 0.02;        
 const MIN_EPOCH_RATIO  = 1.20;
 const MIGRATION_TRIGGER = 0.70;
-const GAS_PER_MIGRATION = 0.20;       // USD on Arbitrum
+const GAS_PER_MIGRATION = 0.20;       
 const GAS_FRICTION_CAP  = 0.01;
 const DEFAULT_C_AVG     = 3.5;
 const EWMA_LAMBDA       = 0.94;
-const DEFAULT_CAPITAL   = 10_000;     // reference for screener cache — per-user check uses real capital
-// Minimum capital to attempt DELTA_NEUTRAL. 0 = disabled (dev). Set to 10 at launch.
+const DEFAULT_CAPITAL   = 10_000;     
+
 export const MIN_DELTA_NEUTRAL_USD = Number(process.env.MIN_DELTA_NEUTRAL_USD ?? 0);
-// Gas may consume up to this fraction of annual profit before a range is rejected.
+
 const MAX_GAS_FRACTION_OF_PROFIT = 0.10;
 
 const UNI_FACTORY = '0x1F98431c8aD98523631AE4a59f267346ea31F984';
@@ -44,39 +27,34 @@ const STABLECOINS = new Set([
   '0xff970a61a04b1ca14834a43f5de4533ebddb5cc8',
 ]);
 
-// ── Types ─────────────────────────────────────────────────────────────────────
-
 export interface ScreenedPool {
   address:         string;
   symbol:          string;
   token0:          string;
   token1:          string;
-  feeTierBps:      number;    // e.g. 500 = 0.05%
-  dllamaAPY:       number;    // DeFiLlama reported APY (average LP, includes C_avg)
+  feeTierBps:      number;    
+  dllamaAPY:       number;    
   volume24hUSD:    number;
   tvlUSD:          number;
-  cAvg:            number;    // estimated pool-average concentration
-  optimalRangePct: number;    // ±r% where net APY is maximised
-  concentrationC:  number;    // C at optimalRangePct
-  adjFeeAPY:       number;    // dllamaAPY × (C / cAvg) — what we actually earn
-  netAPY:          number;    // adjFeeAPY − lvrCost − gasFriction
-  sigmaRatioDaily: number;    // daily ratio volatility (%)
-  epochRatio:      number;    // epoch fees / epoch IL
-  lvrRatio:        number;    // fee / LVR at C=1 baseline
+  cAvg:            number;    
+  optimalRangePct: number;    
+  concentrationC:  number;    
+  adjFeeAPY:       number;    
+  netAPY:          number;    
+  sigmaRatioDaily: number;    
+  epochRatio:      number;    
+  lvrRatio:        number;    
   scoredAt:        number;
-  // Pre-validated swap routes — resolved at screen time so execution never hits an unknown path.
-  // null = no swap needed (token IS USDC). undefined = not yet resolved (legacy / no provider).
+  
+  
   swapRoute0:      SwapRoute | null | undefined;
   swapRoute1:      SwapRoute | null | undefined;
 }
-
-// ── Cache ─────────────────────────────────────────────────────────────────────
 
 let cachedPools: ScreenedPool[] = [];
 let cachedAt = 0;
 let runningScreen: Promise<ScreenedPool[]> | null = null;
 
-/** Force-expire the cache — call after fixing screener config so next tick rescans. */
 export function invalidateScreenerCache(): void {
   cachedAt    = 0;
   cachedPools = [];
@@ -90,15 +68,13 @@ export async function getTopScreenedPools(
   if (Date.now() - cachedAt < SCREEN_TTL_MS && cachedPools.length > 0) {
     return cachedPools.slice(0, n);
   }
-  // Deduplicate concurrent callers — only one screen runs at a time
+  
   if (!runningScreen) {
     runningScreen = _runFullScreen(provider).finally(() => { runningScreen = null; });
   }
   const result = await runningScreen;
   return result.slice(0, n);
 }
-
-// ── Math ──────────────────────────────────────────────────────────────────────
 
 function dailyReturns(prices: number[]): number[] {
   const r: number[] = [];
@@ -197,11 +173,9 @@ function computeOptimalRange(feeAPY: number, sigmaDaily: number, cAvg: number) {
            mpy: fallback.mpy, epochFees: fallback.epochFees, epochIL: fallback.epochIL, epochRatio: fallback.epochRatio };
 }
 
-// ── Price data ────────────────────────────────────────────────────────────────
-
 const priceCache = new Map<string, number[]>();
 const priceFetchedAt = new Map<string, number>();
-const PRICE_TTL_MS = 60 * 60_000; // 1 hour
+const PRICE_TTL_MS = 60 * 60_000; 
 
 async function fetchPricesParallel(addresses: string[]): Promise<void> {
   const now = Date.now();
@@ -232,8 +206,6 @@ async function fetchPricesParallel(addresses: string[]): Promise<void> {
   }));
 }
 
-// ── Pool discovery ────────────────────────────────────────────────────────────
-
 async function discoverPools(provider?: ethers.JsonRpcProvider): Promise<Array<{
   symbol: string; address: string; token0: string; token1: string;
   feeTierBps: number; feeAPY: number; volume24hUSD: number; tvlUSD: number; cAvg: number;
@@ -251,7 +223,7 @@ async function discoverPools(provider?: ethers.JsonRpcProvider): Promise<Array<{
     (p.apy ?? 0) > 0,
   );
 
-  // Deduplicate by token pair — keep highest APY
+  
   const byPair = new Map<string, any>();
   for (const p of raw) {
     const key = [...p.underlyingTokens].map((t: string) => t.toLowerCase()).sort().join('-');
@@ -279,9 +251,9 @@ async function discoverPools(provider?: ethers.JsonRpcProvider): Promise<Array<{
   }> = [];
 
   for (const p of byPair.values()) {
-    // Parse DeFiLlama's poolMeta to get the exact fee tier they measured.
-    // e.g. "0.05%" → 500. Prevents deploying into the wrong pool (e.g. 0.01%)
-    // when DeFiLlama's APY data actually belongs to the 0.05% pool.
+    
+    
+    
     const poolMetaFee = (() => {
       const meta = (p.poolMeta ?? '') as string;
       const match = meta.match(/(\d+(?:\.\d+)?)\s*%/);
@@ -298,7 +270,7 @@ async function discoverPools(provider?: ethers.JsonRpcProvider): Promise<Array<{
           addr = await factory.getPool(p.underlyingTokens[0], p.underlyingTokens[1], feeTier) as string;
           if (addr === ethers.ZeroAddress) continue;
         } else {
-          // Fallback: use DeFiLlama pool ID as address (works when pool is a UniV3 address)
+          
           addr = p.pool as string;
           if (!/^0x[a-fA-F0-9]{40}$/.test(addr)) continue;
         }
@@ -321,19 +293,17 @@ async function discoverPools(provider?: ethers.JsonRpcProvider): Promise<Array<{
           feeTierBps: feeTier, feeAPY, volume24hUSD, tvlUSD, cAvg,
         });
         break;
-      } catch { /* next fee tier */ }
+      } catch {  }
     }
   }
   return pools;
 }
 
-// ── Full screening pipeline ───────────────────────────────────────────────────
-
 async function _runFullScreen(provider?: ethers.JsonRpcProvider): Promise<ScreenedPool[]> {
   try {
     const pools = await discoverPools(provider);
 
-    // Fetch price data for all tokens in parallel
+    
     const allTokens = [...new Set(pools.flatMap(p => [p.token0, p.token1]))];
     await fetchPricesParallel(allTokens);
 
@@ -341,11 +311,11 @@ async function _runFullScreen(provider?: ethers.JsonRpcProvider): Promise<Screen
     const minTVL = DEFAULT_CAPITAL / MAX_POSITION_PCT;
 
     for (const pool of pools) {
-      // Hard exclude stablecoin-stablecoin pairs (USDC-USDT, USDC-DAI, etc.).
-      // The LVR framework requires σ > 0 to function correctly. When both tokens
-      // are stablecoins: σ≈0, LVR≈0, C_avg is wildly underestimated (real LPs
-      // concentrate at ±0.01%, not ±3%), and DeFiLlama APY represents fees earned
-      // by hyper-concentrated LPs — completely inapplicable to our position.
+      
+      
+      
+      
+      
       if (STABLECOINS.has(pool.token0) && STABLECOINS.has(pool.token1)) continue;
 
       const r0 = dailyReturns(priceCache.get(pool.token0) ?? []);
@@ -360,29 +330,29 @@ async function _runFullScreen(provider?: ethers.JsonRpcProvider): Promise<Screen
       const σRatioDaily  = Math.sqrt(Math.max(0, σ0 ** 2 + σ1 ** 2 - 2 * ρ * σ0 * σ1)) * 100;
       const σRatioAnnual = σRatioDaily * Math.sqrt(365);
 
-      // Criterion 1: LVR screen at C=1 — requires real volatility
+      
       const lvrBaseline = (σRatioAnnual / 100) ** 2 / 8 * 100;
       const lvrRatio    = lvrBaseline > 0 ? pool.feeAPY / lvrBaseline : 999;
 
-      // No price data for a non-stable token → can't compute σ → skip
+      
       if (σRatioDaily === 0 && !STABLECOINS.has(pool.token0) && !STABLECOINS.has(pool.token1)) continue;
       if (lvrBaseline > 0 && pool.feeAPY <= lvrBaseline) continue;
 
-      // Criterion 2: min LVR ratio
+      
       if (lvrRatio < MIN_LVR_RATIO && lvrRatio < 999) continue;
 
-      // Criterion 3: TVL
+      
       if (pool.tvlUSD < minTVL) continue;
 
-      // Criteria 4 + 5: optimal range with C/C_avg scaling
+      
       const opt = computeOptimalRange(pool.feeAPY, σRatioDaily, pool.cAvg);
 
       if (opt.netAPY <= 0) continue;
       if (opt.epochRatio < MIN_EPOCH_RATIO) continue;
 
-      // Criterion 6: swap route validation — every non-USDC token must have a
-      // routable path from USDC. Pools with unroutable tokens are excluded here
-      // so the executor never hits an unknown path mid-batch.
+      
+      
+      
       const USDC_ADDR = '0xaf88d065e77c8cc2239327c5edb3a432268e5831';
       let swapRoute0: SwapRoute | null | undefined;
       let swapRoute1: SwapRoute | null | undefined;
@@ -391,9 +361,9 @@ async function _runFullScreen(provider?: ethers.JsonRpcProvider): Promise<Screen
           pool.token0 === USDC_ADDR ? Promise.resolve(null) : resolveSwapRoute(pool.token0, provider),
           pool.token1 === USDC_ADDR ? Promise.resolve(null) : resolveSwapRoute(pool.token1, provider),
         ]);
-        // null = token IS USDC (no swap needed) → OK
-        // non-null route = routable → OK
-        // undefined should never happen here, but treat missing route for a non-USDC token as skip
+        
+        
+        
         const t0NeedsSwap = pool.token0 !== USDC_ADDR;
         const t1NeedsSwap = pool.token1 !== USDC_ADDR;
         if (t0NeedsSwap && r0 === null) {
@@ -431,32 +401,22 @@ async function _runFullScreen(provider?: ethers.JsonRpcProvider): Promise<Screen
       });
     }
 
-    // Sort by netAPY descending
+    
     results.sort((a, b) => b.netAPY - a.netAPY);
     cachedPools = results;
     cachedAt    = Date.now();
     return results;
   } catch (err: any) {
     console.warn('[UniV3Screener] Screen failed:', err.message);
-    return cachedPools; // return stale cache on failure
+    return cachedPools; 
   }
 }
-
-// ── Per-user capital viability check ─────────────────────────────────────────
-//
-//  The screener cache uses DEFAULT_CAPITAL ($10k) for gas friction.
-//  For small deposits, rebalance gas eats a much larger % of the position.
-//  This function re-runs the gas check with the user's ACTUAL capital and
-//  returns only pools where gas friction stays below 1% of net APY.
-//
-//  Returns the adjusted pool (with corrected netAPY) or null if not viable.
-//  Callers should route to Aave passive if this returns null.
 
 export function adjustPoolForCapital(
   pool:       ScreenedPool,
   capitalUSD: number,
 ): { rangePct: number; netAPY: number; viable: boolean } | null {
-  // Hard minimum only enforced when MIN_DELTA_NEUTRAL_USD > 0 (set at launch via env).
+  
   if (MIN_DELTA_NEUTRAL_USD > 0 && capitalUSD < MIN_DELTA_NEUTRAL_USD) return null;
 
   const σ = pool.sigmaRatioDaily / 100;
@@ -473,10 +433,10 @@ export function adjustPoolForCapital(
     const lvrAPY     = C * σ ** 2 * 365 / 8 * 100;
     const netAPY     = adjFeeAPY - lvrAPY - (gasPerYear / Math.max(capitalUSD, 0.01)) * 100;
 
-    // Track the widest range where netAPY > 0 (fallback for small capital)
+    
     if (netAPY > 0) widestViable = { rangePct: rPct, netAPY };
 
-    // Preferred: gas ≤ 10% of annual profit
+    
     const annualProfit = (netAPY / 100) * capitalUSD;
     const gasOk = annualProfit > 0 && gasPerYear <= MAX_GAS_FRACTION_OF_PROFIT * annualProfit;
     if (gasOk && netAPY > 0 && (!bestRange || netAPY > bestRange.netAPY)) {
@@ -484,8 +444,8 @@ export function adjustPoolForCapital(
     }
   }
 
-  // Use best gas-efficient range; fall back to widest profitable range for small capital;
-  // as last resort use ±50% so the position always opens (gas overhead accepted for testing).
+  
+  
   const chosen = bestRange ?? widestViable ?? { rangePct: 50, netAPY: 0 };
   return { rangePct: chosen.rangePct, netAPY: chosen.netAPY, viable: bestRange !== null };
 }

@@ -2,34 +2,15 @@ import { Contract, Interface, JsonRpcProvider } from 'ethers';
 import type { PriceMap } from './chainlink';
 import { getPrice } from './chainlink';
 
-// ── Morpho Blue on Arbitrum ───────────────────────────────────────────────────
-//
-//  Morpho Blue: 650-line immutable lending primitive.
-//  Architecture: isolated markets with peer-to-peer matching.
-//
-//  Why Morpho > Aave for conservative strategy:
-//    · P2P matching eliminates spread → lender earns closer to borrow rate
-//    · 50-150bps better supply rate than Aave on same assets
-//    · Immutable contracts — no governance risk
-//    · When no P2P match → falls back to underlying (Aave/Compound)
-//
-//  Supply APY calculation:
-//    utilizationRate = totalBorrow / totalSupply
-//    borrowRate      = IRM(utilizationRate)
-//    supplyRate      = borrowRate × utilizationRate × (1 - fee)
-//    APY             = (1 + supplyRate/365)^365 - 1
-// ─────────────────────────────────────────────────────────────────────────────
-
 const MULTICALL3  = '0xcA11bde05977b3631167028862bE2a173976CA11';
-const MORPHO_BLUE = '0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb'; // Arbitrum
+const MORPHO_BLUE = '0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb'; 
 
-// MetaMorpho Vault addresses on Arbitrum (curated vaults — highest-rated)
 export const MORPHO_VAULTS: Record<string, {
   vaultAddress: string;
   asset:        string;
   assetSym:     string;
   decimals:     number;
-  curator:      string;  // who manages the vault
+  curator:      string;  
 }> = {
   'Morpho USDC': {
     vaultAddress: '0x78Ff5a83beE95F0f4Ebc44D7F37FE92a62e34b31',
@@ -54,15 +35,13 @@ export const MORPHO_VAULTS: Record<string, {
   },
 };
 
-// ── Types ─────────────────────────────────────────────────────────────────────
-
 export interface MorphoVault {
   name:           string;
   vaultAddress:   string;
   asset:          string;
   assetSym:       string;
-  totalAssetsUSD: number;   // total deposits in USD
-  supplyAPY:      number;   // current supply APY %
+  totalAssetsUSD: number;   
+  supplyAPY:      number;   
   utilizationPct: number;
   updatedAt:      number;
 }
@@ -74,8 +53,6 @@ export interface MorphoUserPosition {
   currentAPY:   number;
 }
 
-// ── ABIs ──────────────────────────────────────────────────────────────────────
-
 const MC3_ABI = ['function aggregate3(tuple(address target, bool allowFailure, bytes callData)[] calls) view returns (tuple(bool success, bytes returnData)[] returnData)'];
 
 const ERC4626_ABI = [
@@ -84,15 +61,6 @@ const ERC4626_ABI = [
   'function convertToAssets(uint256 shares) view returns (uint256)',
   'function balanceOf(address account) view returns (uint256)',
 ];
-
-// ── Estimate APY from total asset growth rate ─────────────────────────────────
-//
-//  For MetaMorpho vaults, APY is best estimated by:
-//    1. Track convertToAssets(1e18) across two blocks → annualise the rate
-//    2. Or use DeFiLlama API (our primary source) and verify with a spot check
-//
-//  We use DeFiLlama as primary and do a sanity-check here.
-//  If DeFiLlama APY > 50% above on-chain estimate, flag as suspicious.
 
 export async function fetchMorphoVaults(
   provider: JsonRpcProvider,
@@ -108,7 +76,7 @@ export async function fetchMorphoVaults(
     calls.push(
       { target: v.vaultAddress, allowFailure: true, callData: iface.encodeFunctionData('totalAssets')  },
       { target: v.vaultAddress, allowFailure: true, callData: iface.encodeFunctionData('totalSupply')  },
-      // convertToAssets(1e18) — share price in underlying terms
+      
       { target: v.vaultAddress, allowFailure: true, callData: iface.encodeFunctionData('convertToAssets', [BigInt('1000000000000000000')]) },
     );
   }
@@ -130,7 +98,7 @@ export async function fetchMorphoVaults(
         const totalSupply = raw[base + 1].success
           ? BigInt(iface.decodeFunctionResult('totalSupply', raw[base + 1].returnData)[0].toString())
           : 0n;
-        // sharePrice in underlying units (e.g. USDC with 6 decimals if vault tracks USDC)
+        
         const sharePrice = raw[base + 2].success
           ? Number(iface.decodeFunctionResult('convertToAssets', raw[base + 2].returnData)[0].toString()) / 10 ** v.decimals
           : 1.0;
@@ -140,10 +108,10 @@ export async function fetchMorphoVaults(
         const price         = getPrice(prices, v.assetSym);
         const totalAssetsUSD = Number(totalAssets) / 10 ** v.decimals * price;
 
-        // We cannot compute APY from a single snapshot without tracking over time.
-        // Use sharePrice deviation from 1.0 as a rough indicator, but rely on DeFiLlama
-        // for the actual APY figure (set to 0 here, universe engine overwrites from DeFiLlama)
-        const supplyAPY      = 0; // set by universe engine from DeFiLlama
+        
+        
+        
+        const supplyAPY      = 0; 
         const utilizationPct = totalSupply > 0n ? Number(totalAssets * 10_000n / totalSupply) / 100 : 0;
 
         vaults.push({
@@ -152,71 +120,91 @@ export async function fetchMorphoVaults(
           totalAssetsUSD, supplyAPY, utilizationPct,
           updatedAt: Date.now(),
         });
-      } catch { /* skip this vault */ }
+      } catch {  }
     }
-  } catch { /* multicall failed */ }
+  } catch {  }
 
   return vaults;
 }
 
-// ── Fetch user Morpho positions ───────────────────────────────────────────────
-
-export async function fetchMorphoUserPositions(
-  userAddress: string,
-  vaults:      MorphoVault[],
-  provider:    JsonRpcProvider,
-  prices:      PriceMap,
-): Promise<MorphoUserPosition[]> {
-  if (vaults.length === 0) return [];
+export async function fetchMorphoBatchPositions(
+  userAddresses: string[],
+  vaults:        MorphoVault[],
+  provider:      JsonRpcProvider,
+  prices:        PriceMap,
+): Promise<Map<string, MorphoUserPosition[]>> {
+  if (vaults.length === 0 || userAddresses.length === 0) return new Map();
 
   const mc    = new Contract(MULTICALL3, MC3_ABI, provider);
   const iface = new Interface(ERC4626_ABI);
 
   const calls: { target: string; allowFailure: boolean; callData: string }[] = [];
-  for (const vault of vaults) {
-    calls.push({
-      target:       vault.vaultAddress,
-      allowFailure: true,
-      callData:     iface.encodeFunctionData('balanceOf', [userAddress]),
-    });
-    // Also get share → asset conversion
-    calls.push({
-      target:       vault.vaultAddress,
-      allowFailure: true,
-      callData:     iface.encodeFunctionData('convertToAssets', [BigInt('1000000000000000000')]),
-    });
+  for (const user of userAddresses) {
+    for (const vault of vaults) {
+      calls.push({
+        target:       vault.vaultAddress,
+        allowFailure: true,
+        callData:     iface.encodeFunctionData('balanceOf', [user]),
+      });
+    }
   }
 
-  const positions: MorphoUserPosition[] = [];
+  
+  const convCalls = vaults.map(v => ({
+    target:       v.vaultAddress,
+    allowFailure: true,
+    callData:     iface.encodeFunctionData('convertToAssets', [BigInt('1000000000000000000')]),
+  }));
+
+  const results = new Map<string, MorphoUserPosition[]>();
 
   try {
-    const raw: { success: boolean; returnData: string }[] = await mc.aggregate3(calls);
-    for (let i = 0; i < vaults.length; i++) {
-      const vault = vaults[i];
-      const base  = i * 2;
-      const v     = MORPHO_VAULTS[vault.name];
-      if (!v) continue;
+    const [rawBalances, rawConv] = await Promise.all([
+      mc.aggregate3(calls),
+      mc.aggregate3(convCalls),
+    ]);
 
-      const shareBal = raw[base].success
-        ? BigInt(iface.decodeFunctionResult('balanceOf',       raw[base].returnData)[0].toString())
-        : 0n;
-      const convRate = raw[base + 1].success
-        ? Number(iface.decodeFunctionResult('convertToAssets', raw[base + 1].returnData)[0].toString()) / 10 ** v.decimals
+    const convRates = vaults.map((vault, i) => {
+      const v = MORPHO_VAULTS[vault.name];
+      return rawConv[i].success
+        ? Number(iface.decodeFunctionResult('convertToAssets', rawConv[i].returnData)[0].toString()) / 10 ** (v?.decimals ?? 18)
         : 1.0;
+    });
 
-      if (shareBal === 0n) continue;
+    const stride = vaults.length;
+    for (let u = 0; u < userAddresses.length; u++) {
+      const user = userAddresses[u];
+      const base = u * stride;
+      const userPos: MorphoUserPosition[] = [];
 
-      const price    = getPrice(prices, v.assetSym);
-      const valueUSD = (Number(shareBal) / 1e18) * convRate * price;
+      for (let vIdx = 0; vIdx < vaults.length; vIdx++) {
+        const vault = vaults[vIdx];
+        const res = rawBalances[base + vIdx];
+        if (!res?.success || !res.returnData || res.returnData === '0x') continue;
 
-      positions.push({ vault: vault.name, shareBalance: shareBal, valueUSD, currentAPY: vault.supplyAPY });
+        try {
+          const shareBal = BigInt(iface.decodeFunctionResult('balanceOf', res.returnData)[0].toString());
+          if (shareBal === 0n) continue;
+
+          const price = getPrice(prices, vault.assetSym);
+          const valueUSD = (Number(shareBal) / 1e18) * convRates[vIdx] * price;
+
+          userPos.push({
+            vault:      vault.name,
+            shareBalance: shareBal,
+            valueUSD,
+            currentAPY: vault.supplyAPY,
+          });
+        } catch {  }
+      }
+      results.set(user, userPos);
     }
-  } catch { /* multicall failed */ }
+  } catch (err: any) {
+    console.warn('[Morpho] Batch fetch failed:', err.message);
+  }
 
-  return positions;
+  return results;
 }
-
-// ── Verify Morpho vault before entry ─────────────────────────────────────────
 
 export async function verifyMorphoVault(
   vaultName:  string,

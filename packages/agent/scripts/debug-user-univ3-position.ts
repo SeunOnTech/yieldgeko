@@ -20,6 +20,7 @@ import { ethers } from 'ethers';
 import * as dotenv from 'dotenv';
 import * as path from 'node:path';
 import * as http from 'node:http';
+import { fetchPrices, getPriceByAddress, pricesAreHealthy, type PriceMap } from '../src/orchestrator/protocols/chainlink';
 
 dotenv.config({ path: path.resolve(__dirname, '..', '.env') });
 
@@ -132,14 +133,23 @@ function symbol(token: string): string {
   return TOKEN_SYMBOLS[token.toLowerCase()] ?? `${token.slice(0, 6)}…${token.slice(-4)}`;
 }
 
-function priceUSD(token: string): number {
+function fallbackPriceUSD(token: string): number {
   const addr = token.toLowerCase();
   if (STABLES.has(addr)) return 1;
-  // Debug fallback only. For volatile production checks, wire Chainlink here.
   if (addr === ADDR.WETH.toLowerCase()) return Number(process.env.DEBUG_ETH_PRICE_USD ?? 3000);
   if (addr === ADDR.WBTC.toLowerCase()) return Number(process.env.DEBUG_BTC_PRICE_USD ?? 100000);
   if (addr === ADDR.ARB.toLowerCase()) return Number(process.env.DEBUG_ARB_PRICE_USD ?? 1);
   return 1;
+}
+
+function priceUSD(prices: PriceMap, token: string): number {
+  const addr = token.toLowerCase();
+  if (STABLES.has(addr)) return 1;
+
+  const livePrice = getPriceByAddress(prices, token);
+  if (livePrice > 0) return livePrice;
+
+  return fallbackPriceUSD(token);
 }
 
 function fmtUnits(raw: bigint, dec: number): string {
@@ -223,6 +233,7 @@ async function main() {
   const posMgr = new ethers.Contract(ADDR.UNIV3_POS_MGR, POS_MGR_ABI, provider);
   const factory = new ethers.Contract(ADDR.UNIV3_FACTORY, FACTORY_ABI, provider);
   const vault = new ethers.Contract(VAULT_ADDRESS, VAULT_ABI, provider);
+  const prices = await fetchPrices(provider);
 
   const agentState = await getJSON(`${AGENT_URL}/state/${USER_ADDRESS}`);
   const position = agentState?.portfolio?.positions?.find((p: any) => p.uniV3TokenId)
@@ -268,8 +279,8 @@ async function main() {
   const currentTick = Number(slot0[1]);
   const dec0 = decimals(token0);
   const dec1 = decimals(token1);
-  const price0 = priceUSD(token0);
-  const price1 = priceUSD(token1);
+  const price0 = priceUSD(prices, token0);
+  const price1 = priceUSD(prices, token1);
   const { amount0RawApprox, amount1RawApprox } = liquidityAmounts(liquidity, sqrtPriceX96, tickLower, tickUpper);
 
   const principal0 = amount0RawApprox / (10 ** dec0);
@@ -340,6 +351,9 @@ async function main() {
   console.log(`  price t1/t0 lower/current/upper: ${lowerPrice.toString()} / ${currentPrice.toString()} / ${upperPrice.toString()}`);
 
   console.log('\n4. Principal NAV');
+  console.log(`  price source:         ${pricesAreHealthy(prices) ? 'Chainlink live' : 'Chainlink partial/fallback'}`);
+  console.log(`  ${symbol(token0)} price USD:     ${fmtUSD(price0)}`);
+  console.log(`  ${symbol(token1)} price USD:     ${fmtUSD(price1)}`);
   console.log(`  ${symbol(token0)} amount approx: ${principal0.toString()} (${fmtUSD(principal0USD)} USD)`);
   console.log(`  ${symbol(token1)} amount approx: ${principal1.toString()} (${fmtUSD(principal1USD)} USD)`);
   console.log(`  principal USD:       ${fmtUSD(principalUSD)}`);

@@ -20,7 +20,7 @@ async function main() {
 
   console.log(`\nWithdrawal Target: ${userAccount.address}`);
 
-  // 1. Setup Smart Account
+  
   const smartAccount = await toMetaMaskSmartAccount({
     client: publicClient,
     implementation: Implementation.Hybrid,
@@ -31,7 +31,7 @@ async function main() {
 
   console.log(`Smart Account Address: ${smartAccount.address}`);
 
-  // 2. Setup Bundler with Pimlico Paymaster
+  
   const pimlicoClient = createPimlicoClient({
     transport: http(PIMLICO_URL),
     entryPoint: { address: '0x0000000071727De22E5E9d8BAf0edAc6f37da032' as Address, version: '0.7' },
@@ -46,7 +46,7 @@ async function main() {
     },
   });
 
-  // 3. Check Balance
+  
   const ERC20_ABI = parseAbi(['function balanceOf(address) view returns (uint256)', 'function transfer(address, uint256) returns (bool)']);
   const balance = await publicClient.readContract({
     address: USDC_ADDR,
@@ -63,7 +63,7 @@ async function main() {
   console.log(`Current Balance: ${formatUnits(balance, 6)} USDC`);
   console.log(`Sending ALL funds back to EOA sponsored by Pimlico...`);
 
-  // 4. Send Withdrawal UserOp
+  
   const opHash = await bundlerClient.sendUserOperation({
     account: smartAccount,
     calls: [

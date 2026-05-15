@@ -2,8 +2,6 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 
-// ── Types (mirrors packages/agent/src/orchestrator/types.ts) ──────────────────
-
 export type RiskTier     = 'conservative' | 'balanced' | 'aggressive' | 'advanced';
 export type StrategyType =
   | 'GMX_REAL_YIELD' | 'DELTA_NEUTRAL' | 'AAVE_LENDING'
@@ -118,8 +116,6 @@ export interface AllocationDecision {
   currentOpportunity: Opportunity | null; reason: string; upliftPct: number;
 }
 
-// ── Stream state ──────────────────────────────────────────────────────────────
-
 export interface StreamState {
   agent:       AgentState | null;
   connected:   boolean;
@@ -131,8 +127,6 @@ export interface StreamState {
 const DEFAULT: StreamState = { agent: null, connected: false, lastEvent: null, allocation: null, safetyCheck: null };
 
 const SSE_URL = process.env.NEXT_PUBLIC_AGENT_SSE_URL ?? 'http://localhost:3001/events';
-
-// ── Hook ──────────────────────────────────────────────────────────────────────
 
 export function useAgentStream(): StreamState {
   const [stream, setStream] = useState<StreamState>(DEFAULT);
@@ -155,7 +149,7 @@ export function useAgentStream(): StreamState {
       try {
         const { type, payload } = JSON.parse(evt.data) as { type: EventType; payload: unknown };
         setStream(prev => applyEvent(prev, type, payload));
-      } catch { /* ignore parse errors */ }
+      } catch {  }
     };
   }, []);
 
@@ -169,8 +163,6 @@ export function useAgentStream(): StreamState {
 
   return stream;
 }
-
-// ── Event reducer ─────────────────────────────────────────────────────────────
 
 function applyEvent(prev: StreamState, type: EventType, payload: unknown): StreamState {
   const next = { ...prev, lastEvent: type };

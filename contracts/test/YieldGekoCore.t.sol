@@ -1,35 +1,10 @@
-// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.34;
 
 import "forge-std/Test.sol";
 import "../contracts/YieldGeko.sol";
 import "../contracts/test/MockToken.sol";
 
-/**
- * @notice Comprehensive unit tests for YieldGeko.sol (security-hardened version)
- *
- * Coverage:
- *  ✓ Constructor validation
- *  ✓ deposit / withdraw (CEI, idle tracking)
- *  ✓ emergencyWithdraw (mode gate)
- *  ✓ registerPolicy (EIP-712, nonce, expiry, caps)
- *  ✓ revokePolicy
- *  ✓ reportValue + auto-pause on drawdown breach
- *  ✓ executeDeposit (minAPY enforced, managedUSD cap, atomic balance deduction)
- *  ✓ executeWithdraw (actual-return measured, open during emergency)
- *  ✓ execute (generic, paused during emergency)
- *  ✓ executeBatch (atomic, net-flow accounting)
- *  ✓ approveToken (whitelisted spender, blocked during pause)
- *  ✓ collectFee (user maxFeeBps cap enforced, blocked during pause)
- *  ✓ recordExecution (audit trail)
- *  ✓ Target whitelist enforcement across all execute paths
- *  ✓ Policy enforcement (active, expiry, drawdown pause) in all execute paths
- *  ✓ Emergency mode lifecycle (blocks agent, enables self-rescue)
- *  ✓ Admin: setAgent, setTreasury, setDefaultFeeBps, approveTarget, revokeTarget
- *  ✓ Two-step ownership (Ownable2Step)
- */
 contract YieldGekoTest is Test {
-    // ── Actors ────────────────────────────────────────────────────────────────
     address constant OWNER = address(0x1001);
     address constant AGENT = address(0x1002);
     address constant TREASURY = address(0x1003);
@@ -38,21 +13,18 @@ contract YieldGekoTest is Test {
 
     uint256 constant USER_KEY = 0xA11CE;
 
-    // ── Contracts ─────────────────────────────────────────────────────────────
     YieldGeko core;
     MockToken token;
     MockToken tokenB;
     MockTarget mockTarget;
 
-    uint256 CHAIN_ID; // set from block.chainid in setUp — correct for both unit + fork
-
-    // ─────────────────────────────────────────────────────────────────────────
+    uint256 CHAIN_ID;
 
     function setUp() public {
         CHAIN_ID = block.chainid;
 
         vm.startPrank(OWNER);
-        core = new YieldGeko(AGENT, TREASURY, 10); // 0.10% default fee
+        core = new YieldGeko(AGENT, TREASURY, 10);
         token = new MockToken("USD Coin", "USDC");
         tokenB = new MockToken("Wrapped Ether", "WETH");
         mockTarget = new MockTarget();
@@ -65,8 +37,6 @@ contract YieldGekoTest is Test {
         tokenB.mint(user, 100_000e18);
         tokenB.mint(USER, 100_000e18);
     }
-
-    // ── Helpers ───────────────────────────────────────────────────────────────
 
     function _buildPolicy(address user, uint256 nonce) internal view returns (YieldGeko.Policy memory) {
         return YieldGeko.Policy({
@@ -123,14 +93,10 @@ contract YieldGekoTest is Test {
         _depositFor(user, amount);
         vm.prank(AGENT);
         bytes memory data = abi.encodeWithSignature("absorb(address,uint256)", address(token), amount);
-        // approveToken so mock can pull
+
         core.approveToken(address(token), address(mockTarget), amount);
         core.executeDeposit(user, address(token), amount, 1000, address(mockTarget), data, bytes32(0));
     }
-
-    // =========================================================================
-    // DEPLOYMENT
-    // =========================================================================
 
     function test_Constructor_SetsState() public view {
         assertEq(core.authorizedAgent(), AGENT);
@@ -156,10 +122,6 @@ contract YieldGekoTest is Test {
         vm.expectRevert(abi.encodeWithSelector(YieldGeko.FeeTooHigh.selector, 2001, 2000));
         new YieldGeko(AGENT, TREASURY, 2001);
     }
-
-    // =========================================================================
-    // DEPOSIT / WITHDRAW
-    // =========================================================================
 
     function test_Deposit_Credits() public {
         _depositFor(USER, 1_000e18);
@@ -191,10 +153,6 @@ contract YieldGekoTest is Test {
         core.withdraw(address(token), 1e18);
     }
 
-    // =========================================================================
-    // EMERGENCY WITHDRAW
-    // =========================================================================
-
     function test_EmergencyWithdraw_Reverts_WhenModeOff() public {
         _depositFor(USER, 1_000e18);
         vm.prank(USER);
@@ -216,7 +174,7 @@ contract YieldGekoTest is Test {
         vm.prank(OWNER);
         core.setEmergencyMode(true);
         vm.prank(AGENT);
-        vm.expectRevert(); // Pausable: paused
+        vm.expectRevert();
         core.execute(user, address(mockTarget), "", bytes32(0), address(token));
     }
 
@@ -252,7 +210,7 @@ contract YieldGekoTest is Test {
         _depositFor(user, 1_000e18);
         vm.prank(OWNER);
         core.setEmergencyMode(true);
-        // executeWithdraw should NOT revert — recovery path stays open
+
         vm.prank(AGENT);
         bytes memory pingData = abi.encodeWithSignature("ping()");
         core.executeWithdraw(user, address(token), 0, address(mockTarget), pingData, bytes32(0));
@@ -265,10 +223,6 @@ contract YieldGekoTest is Test {
         vm.expectRevert(YieldGeko.EmergencyModeOff.selector);
         core.unpause();
     }
-
-    // =========================================================================
-    // POLICY
-    // =========================================================================
 
     function test_RegisterPolicy_Stores() public {
         address user = _registerUserPolicy();
@@ -292,7 +246,7 @@ contract YieldGekoTest is Test {
         address user = vm.addr(USER_KEY);
         YieldGeko.Policy memory p = _buildPolicy(user, 0);
         p.deadline = block.timestamp - 1;
-        bytes memory sig = _signPolicy(p); // compute BEFORE expectRevert — _signPolicy calls core
+        bytes memory sig = _signPolicy(p);
         vm.expectRevert(YieldGeko.PolicyExpired.selector);
         core.registerPolicy(p, sig);
     }
@@ -301,7 +255,7 @@ contract YieldGekoTest is Test {
         address user = vm.addr(USER_KEY);
         YieldGeko.Policy memory p = _buildPolicy(user, 0);
         bytes memory sig = _signPolicy(p);
-        p.managedUSD = 999; // tamper
+        p.managedUSD = 999;
         vm.expectRevert(YieldGeko.InvalidSignature.selector);
         core.registerPolicy(p, sig);
     }
@@ -309,7 +263,7 @@ contract YieldGekoTest is Test {
     function test_RegisterPolicy_Reverts_WrongNonce() public {
         address user = vm.addr(USER_KEY);
         YieldGeko.Policy memory p = _buildPolicy(user, 5);
-        bytes memory sig = _signPolicy(p); // compute BEFORE expectRevert
+        bytes memory sig = _signPolicy(p);
         vm.expectRevert(YieldGeko.InvalidSignature.selector);
         core.registerPolicy(p, sig);
     }
@@ -318,7 +272,7 @@ contract YieldGekoTest is Test {
         address user = vm.addr(USER_KEY);
         YieldGeko.Policy memory p = _buildPolicy(user, 0);
         p.maxDrawdownBps = 6_000;
-        bytes memory sig = _signPolicy(p); // compute BEFORE expectRevert
+        bytes memory sig = _signPolicy(p);
         vm.expectRevert(abi.encodeWithSelector(YieldGeko.DrawdownTooHigh.selector, 6_000, 5_000));
         core.registerPolicy(p, sig);
     }
@@ -331,10 +285,6 @@ contract YieldGekoTest is Test {
         assertFalse(active);
     }
 
-    // =========================================================================
-    // DRAWDOWN + AUTO-PAUSE
-    // =========================================================================
-
     function test_ReportValue_UpdatesPeak() public {
         address user = _registerUserPolicy();
         vm.prank(AGENT);
@@ -346,10 +296,10 @@ contract YieldGekoTest is Test {
     }
 
     function test_ReportValue_AutoPausesOnDrawdownBreach() public {
-        address user = _registerUserPolicy(); // maxDrawdownBps = 1000 (10%)
-        vm.prank(AGENT); // set peak
+        address user = _registerUserPolicy();
+        vm.prank(AGENT);
         core.reportValue(user, 10_000e18);
-        vm.prank(AGENT); // 20% drop — exceeds 10% threshold
+        vm.prank(AGENT);
         core.reportValue(user, 8_000e18);
         assertTrue(core.userPaused(user));
     }
@@ -358,7 +308,7 @@ contract YieldGekoTest is Test {
         address user = _registerUserPolicy();
         vm.prank(AGENT);
         core.reportValue(user, 10_000e18);
-        vm.prank(AGENT); // 5% drop — below 10% threshold
+        vm.prank(AGENT);
         core.reportValue(user, 9_500e18);
         assertFalse(core.userPaused(user));
     }
@@ -367,7 +317,7 @@ contract YieldGekoTest is Test {
         address user = _registerUserPolicy();
         vm.prank(AGENT);
         core.reportValue(user, 10_000e18);
-        vm.prank(AGENT); // auto-pause
+        vm.prank(AGENT);
         core.reportValue(user, 8_000e18);
         _depositFor(user, 1_000e18);
         vm.prank(AGENT);
@@ -387,12 +337,8 @@ contract YieldGekoTest is Test {
         assertFalse(core.userPaused(user));
     }
 
-    // =========================================================================
-    // EXECUTE DEPOSIT — minAPY + managedUSD enforcement
-    // =========================================================================
-
     function test_ExecuteDeposit_Reverts_APYTooLow() public {
-        address user = _registerUserPolicy(); // minAPY = 800
+        address user = _registerUserPolicy();
         _depositFor(user, 1_000e18);
         vm.prank(AGENT);
         vm.expectRevert(abi.encodeWithSelector(YieldGeko.APYTooLow.selector, 700, 800));
@@ -400,12 +346,12 @@ contract YieldGekoTest is Test {
     }
 
     function test_ExecuteDeposit_Reverts_ExceedsManaged() public {
-        address user = _registerUserPolicy(); // managedUSD = 100_000e18
-        // deposit more than managed cap
+        address user = _registerUserPolicy();
+
         token.mint(user, 200_000e18);
         _depositFor(user, 100_001e18);
         vm.prank(AGENT);
-        vm.expectRevert(); // ExceedsManagedCapacity
+        vm.expectRevert();
         core.executeDeposit(user, address(token), 100_001e18, 1000, address(mockTarget), "", bytes32(0));
     }
 
@@ -482,10 +428,6 @@ contract YieldGekoTest is Test {
         vm.stopPrank();
     }
 
-    // =========================================================================
-    // EXECUTE WITHDRAW — actual return measured
-    // =========================================================================
-
     function test_ExecuteWithdraw_MeasuresActualReturn() public {
         address user = _registerUserPolicy();
         _depositFor(user, 1_000e18);
@@ -494,12 +436,11 @@ contract YieldGekoTest is Test {
         bytes memory depData = abi.encodeWithSignature("absorb(address,uint256)", address(token), 1_000e18);
         core.executeDeposit(user, address(token), 1_000e18, 1000, address(mockTarget), depData, bytes32(0));
 
-        token.mint(address(mockTarget), 50e18); // simulate 5% yield
+        token.mint(address(mockTarget), 50e18);
         bytes memory wdData = abi.encodeWithSignature("release(address,uint256)", address(token), 1_050e18);
         core.executeWithdraw(user, address(token), 1_000e18, address(mockTarget), wdData, keccak256("r2"));
         vm.stopPrank();
 
-        // surplus = 1050 - 1000 = 50, feeBps = 10, fee = 50e18 * 10 / 10_000 = 5e16
         uint256 fee = (50e18 * 10) / 10_000;
         assertEq(core.balances(user, address(token)), 1_050e18 - fee);
         assertEq(core.deployed(user, address(token)), 0);
@@ -521,7 +462,6 @@ contract YieldGekoTest is Test {
             bytes32(0)
         );
 
-        // Protocol only returns 900 (10% IL) — no fee charged, full return credited
         bytes memory wdData = abi.encodeWithSignature("release(address,uint256)", address(token), 900e18);
         core.executeWithdraw(user, address(token), 1_000e18, address(mockTarget), wdData, keccak256("il"));
         vm.stopPrank();
@@ -535,15 +475,11 @@ contract YieldGekoTest is Test {
         address user = _registerUserPolicy();
         vm.prank(OWNER);
         core.setEmergencyMode(true);
-        // Should not revert
+
         vm.prank(AGENT);
         bytes memory pingData = abi.encodeWithSignature("ping()");
         core.executeWithdraw(user, address(token), 0, address(mockTarget), pingData, keccak256("r"));
     }
-
-    // =========================================================================
-    // EXECUTE (generic)
-    // =========================================================================
 
     function test_Execute_CallsTarget() public {
         address user = _registerUserPolicy();
@@ -602,10 +538,6 @@ contract YieldGekoTest is Test {
         assertEq(core.deployed(user, address(token)), 0);
         assertEq(token.balanceOf(address(core)), 1_000e18);
     }
-
-    // =========================================================================
-    // EXECUTE BATCH
-    // =========================================================================
 
     function test_ExecuteBatch_MeasuresNetFlow() public {
         address user = _registerUserPolicy();
@@ -746,8 +678,7 @@ contract YieldGekoTest is Test {
 
         assertEq(core.deployed(user, address(token)), 0);
         assertEq(core.deployed(user, address(tokenB)), 0);
-        // token: surplus=100e18, feeBps=10 → fee=1e16
-        // tokenB: surplus=1e18, feeBps=10 → fee=1e14
+
         uint256 feeToken = (100e18 * 10) / 10_000;
         uint256 feeTokenB = (1e18 * 10) / 10_000;
         assertEq(core.balances(user, address(token)), 1_100e18 - feeToken);
@@ -766,10 +697,6 @@ contract YieldGekoTest is Test {
         core.executeWithdrawMulti(user, assets, deployedAmounts, address(mockTarget), "", bytes32(0));
     }
 
-    // =========================================================================
-    // APPROVE TOKEN
-    // =========================================================================
-
     function test_ApproveToken_SetsAllowance() public {
         vm.prank(AGENT);
         core.approveToken(address(token), address(mockTarget), 500e18);
@@ -782,14 +709,10 @@ contract YieldGekoTest is Test {
         core.approveToken(address(token), address(0xBAD), 1e18);
     }
 
-    // =========================================================================
-    // FEE COLLECTION
-    // =========================================================================
-
     function test_CollectFee_UsesMinOfDefaultAndMax() public {
-        address user = _registerUserPolicy(); // maxFeeBps = 50
+        address user = _registerUserPolicy();
         _depositFor(user, 1_000e18);
-        // defaultFeeBps = 10 < maxFeeBps = 50 → charge 10 (0.10%)
+
         vm.prank(AGENT);
         uint256 net = core.collectFee(address(token), user, 1_000e18);
         uint256 fee = (1_000e18 * 10) / 10_000;
@@ -798,13 +721,13 @@ contract YieldGekoTest is Test {
     }
 
     function test_CollectFee_CappedAtUserMaxFeeBps() public {
-        vm.prank(OWNER); // raise to 1%
+        vm.prank(OWNER);
         core.setDefaultFeeBps(100);
-        address user = _registerUserPolicy(); // maxFeeBps = 50 (0.5%)
+        address user = _registerUserPolicy();
         _depositFor(user, 1_000e18);
         vm.prank(AGENT);
         uint256 net = core.collectFee(address(token), user, 1_000e18);
-        // Must use 50 bps, NOT 100 bps
+
         uint256 expectedFee = (1_000e18 * 50) / 10_000;
         assertEq(net, 1_000e18 - expectedFee);
     }
@@ -818,10 +741,6 @@ contract YieldGekoTest is Test {
         vm.expectRevert();
         core.collectFee(address(token), user, 1_000e18);
     }
-
-    // =========================================================================
-    // AUDIT TRAIL
-    // =========================================================================
 
     function test_RecordExecution_StoresEntry() public {
         address user = _registerUserPolicy();
@@ -838,10 +757,6 @@ contract YieldGekoTest is Test {
         vm.expectRevert(YieldGeko.PolicyNotActive.selector);
         core.recordExecution(USER, bytes32(0), 42161, "GENESIS", 0);
     }
-
-    // =========================================================================
-    // ADMIN
-    // =========================================================================
 
     function test_ApproveTarget_Whitelist() public {
         vm.prank(OWNER);
@@ -879,14 +794,10 @@ contract YieldGekoTest is Test {
         core.approveTarget(42161, address(0xABC));
     }
 
-    // =========================================================================
-    // TWO-STEP OWNERSHIP
-    // =========================================================================
-
     function test_Ownership_TwoStep() public {
         vm.prank(OWNER);
         core.transferOwnership(ATTACKER);
-        assertEq(core.owner(), OWNER); // not transferred yet
+        assertEq(core.owner(), OWNER);
         assertEq(core.pendingOwner(), ATTACKER);
         vm.prank(ATTACKER);
         core.acceptOwnership();
@@ -899,13 +810,6 @@ contract YieldGekoTest is Test {
         core.acceptOwnership();
     }
 
-    // =========================================================================
-    // SECURITY — audit findings (regression suite)
-    // =========================================================================
-
-    /// Finding 1: understated deployedAmount must not leave deployed overstated.
-    /// Agent returns 1_000 but claims only 1 was deployed.
-    /// deployed should reach 0 (not 999) because max(1, 1000) is used.
     function test_ExecuteWithdraw_UnderstatedDeployedAmount_CannotCorruptAccounting() public {
         address user = _registerUserPolicy();
         _depositFor(user, 1_000e18);
@@ -921,29 +825,24 @@ contract YieldGekoTest is Test {
             bytes32(0)
         );
 
-        // Agent understates deployedAmount by 999 — claims only 1 was deployed.
-        // The protocol still returns all 1_000 tokens.
         bytes memory wdData = abi.encodeWithSignature("release(address,uint256)", address(token), 1_000e18);
         core.executeWithdraw(user, address(token), 1, address(mockTarget), wdData, keccak256("r_understate"));
         vm.stopPrank();
 
-        // Ghost deployed must be zero — max(deployedAmount=1, returned=1000) was used.
         assertEq(core.deployed(user, address(token)), 0, "ghost deployed balance");
-        // surplus ≈ 1000e18, feeBps=10 → fee ≈ 1e18 (exact: (1000e18-1)*10/10000)
+
         uint256 returned_ = 1_000e18;
         uint256 fee = ((returned_ - 1) * 10) / 10_000;
         assertEq(core.balances(user, address(token)), 1_000e18 - fee, "idle balance after fee");
     }
 
-    /// Finding 2: drawdown pause must block execute() as well, not only fund-moving paths.
     function test_Execute_Reverts_WhenUserPaused() public {
         address user = _registerUserPolicy();
         _depositFor(user, 10_000e18);
 
-        // Trigger drawdown auto-pause via reportValue
         vm.startPrank(AGENT);
-        core.reportValue(user, 10_000e18); // establish peak
-        core.reportValue(user, 8_000e18); // -20% drawdown — exceeds 10% maxDrawdownBps policy
+        core.reportValue(user, 10_000e18);
+        core.reportValue(user, 8_000e18);
         vm.stopPrank();
 
         assertTrue(core.userPaused(user), "user should be paused");
@@ -953,8 +852,6 @@ contract YieldGekoTest is Test {
         core.execute(user, address(mockTarget), abi.encodeWithSignature("ping()"), bytes32(0), address(token));
     }
 
-    /// Finding 3: executeWithdraw must work even when the user's policy is expired,
-    /// so deployed funds can always be unwound and users can self-rescue.
     function test_ExecuteWithdraw_WorksAfterPolicyExpiry() public {
         address user = _registerUserPolicy();
         _depositFor(user, 1_000e18);
@@ -971,10 +868,8 @@ contract YieldGekoTest is Test {
         );
         vm.stopPrank();
 
-        // Policy expires
         vm.warp(block.timestamp + 366 days);
 
-        // executeWithdraw must still succeed — recovery path stays open
         bytes memory wdData = abi.encodeWithSignature("release(address,uint256)", address(token), 1_000e18);
         vm.prank(AGENT);
         core.executeWithdraw(user, address(token), 1_000e18, address(mockTarget), wdData, keccak256("r_expiry"));
@@ -983,22 +878,18 @@ contract YieldGekoTest is Test {
         assertEq(core.balances(user, address(token)), 1_000e18);
     }
 
-    /// Finding 4: re-registering a policy must clear any prior drawdown pause.
     function test_RegisterPolicy_ClearsDrawdownPause() public {
         address user = _registerUserPolicy();
         _depositFor(user, 10_000e18);
 
-        // Pause via drawdown
         vm.startPrank(AGENT);
         core.reportValue(user, 10_000e18);
         core.reportValue(user, 8_000e18);
         vm.stopPrank();
         assertTrue(core.userPaused(user));
 
-        // Warp so the old nonce can be reused in a fresh policy
         vm.warp(block.timestamp + 1);
 
-        // Register a new policy with incremented nonce — should clear pause
         uint256 newNonce = core.nonces(user);
         YieldGeko.Policy memory p = YieldGeko.Policy({
             user: user,
@@ -1016,7 +907,6 @@ contract YieldGekoTest is Test {
         assertFalse(core.userPaused(user), "pause should be cleared by new policy");
     }
 
-    /// Finding 5 (regression): collectFee must be blocked after policy is revoked.
     function test_CollectFee_Reverts_AfterPolicyRevoked() public {
         address user = _registerUserPolicy();
         _depositFor(user, 1_000e18);
@@ -1029,13 +919,9 @@ contract YieldGekoTest is Test {
         core.collectFee(address(token), user, 1_000e18);
     }
 
-    // =========================================================================
-    // EXECUTE HARVEST — auto-fee on harvested yield
-    // =========================================================================
-
     function test_ExecuteHarvest_AutoFeeOnHarvested() public {
         address user = _registerUserPolicy();
-        // Fund mock to simulate reward collection (e.g. UniV3 fee income)
+
         token.mint(address(mockTarget), 100e18);
 
         address[] memory targets = new address[](1);
@@ -1046,7 +932,6 @@ contract YieldGekoTest is Test {
         vm.prank(AGENT);
         core.executeHarvest(user, address(token), targets, data, keccak256("harvest1"));
 
-        // harvested=100e18, feeBps=10 → fee=1e16
         uint256 fee = (100e18 * 10) / 10_000;
         assertEq(core.balances(user, address(token)), 100e18 - fee);
         assertEq(token.balanceOf(TREASURY), fee);
@@ -1058,7 +943,7 @@ contract YieldGekoTest is Test {
         address[] memory targets = new address[](1);
         bytes[] memory data = new bytes[](1);
         targets[0] = address(mockTarget);
-        data[0] = abi.encodeWithSignature("ping()"); // no token movement
+        data[0] = abi.encodeWithSignature("ping()");
 
         vm.prank(AGENT);
         core.executeHarvest(user, address(token), targets, data, keccak256("harvest-noop"));
@@ -1108,16 +993,16 @@ contract YieldGekoTest is Test {
 
     function test_ExecuteHarvest_MultiStep_AtomicCollectAndSwap() public {
         address user = _registerUserPolicy();
-        // Simulate: step1 absorbs tokenB (volatile), step2 releases token (USDC normalised)
-        tokenB.mint(address(core), 1e18); // vault "receives" volatile from collect
-        token.mint(address(mockTarget), 3_000e6); // mock "returns" USDC after swap
+
+        tokenB.mint(address(core), 1e18);
+        token.mint(address(mockTarget), 3_000e6);
 
         address[] memory targets = new address[](2);
         bytes[] memory data = new bytes[](2);
         targets[0] = address(mockTarget);
-        data[0] = abi.encodeWithSignature("absorb(address,uint256)", address(tokenB), 1e18); // consume volatile
+        data[0] = abi.encodeWithSignature("absorb(address,uint256)", address(tokenB), 1e18);
         targets[1] = address(mockTarget);
-        data[1] = abi.encodeWithSignature("release(address,uint256)", address(token), 3_000e6); // emit USDC
+        data[1] = abi.encodeWithSignature("release(address,uint256)", address(token), 3_000e6);
         vm.startPrank(AGENT);
         core.approveToken(address(tokenB), address(mockTarget), 1e18);
         core.executeHarvest(user, address(token), targets, data, keccak256("harvest-swap"));
@@ -1128,8 +1013,6 @@ contract YieldGekoTest is Test {
         assertEq(token.balanceOf(TREASURY), fee);
     }
 }
-
-// ── Mock contracts ────────────────────────────────────────────────────────────
 
 contract MockTarget {
     uint256 public callCount;
@@ -1148,13 +1031,11 @@ contract MockTarget {
 
     function receiveETH() external payable {}
 
-    /// @dev Pulls `amount` of `token` from caller — simulates protocol deposit.
     function absorb(address token_, uint256 amount) external {
         callCount++;
         IERC20Like(token_).transferFrom(msg.sender, address(this), amount);
     }
 
-    /// @dev Sends `amount` of `token` to caller — simulates protocol withdrawal.
     function release(address token_, uint256 amount) external {
         IERC20Like(token_).transfer(msg.sender, amount);
     }

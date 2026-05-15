@@ -10,34 +10,18 @@ import { estimatePendingRewards } from './compounder';
 import { updatePortfolio, computePortfolioMetrics } from './portfolio';
 import { readRealPositionValue } from './position-reader';
 
-// ── Position Monitor ──────────────────────────────────────────────────────────
-//
-//  Updates every position in the portfolio every tick:
-//    1. NAV simulation (income accrual from netAPY)
-//    2. IL calculation from live Chainlink prices
-//    3. Pending rewards estimation
-//    4. Per-position peak/drawdown tracking
-//
-//  For GMX positions: simulate small NAV fluctuation (trader PnL effect).
-//  For all others: clean compound growth from netAPY.
-// ─────────────────────────────────────────────────────────────────────────────
-
 const TICK_SECONDS = 60;
 
-// ── NAV fluctuation for GMX (trader PnL effect) ───────────────────────────────
-
-const gmxFluctMap = new Map<string, number>();  // positionId → cumulative factor
+const gmxFluctMap = new Map<string, number>();  
 
 function gmxNavFactor(positionId: string): number {
   const prev = gmxFluctMap.get(positionId) ?? 1.0;
-  // ±0.15% per tick with slight positive bias (fees usually outpace trader wins)
+  
   const delta = (Math.random() - 0.48) * 0.003;
   const next  = Math.max(0.95, Math.min(1.08, prev * (1 + delta)));
   gmxFluctMap.set(positionId, next);
   return next;
 }
-
-// ── Update single position ────────────────────────────────────────────────────
 
 export function updatePosition(
   pos:        PortfolioPosition,
@@ -49,11 +33,11 @@ export function updatePosition(
   const grossAPY = opp?.grossAPY ?? pos.currentAPY;
   const yearFrac  = elapsedSec / 31_536_000;
 
-  // Income accrual
+  
   const newIncome = pos.allocationUSD * (netAPY / 100) * yearFrac;
   const totalIncome = pos.incomeEarnedUSD + newIncome;
 
-  // NAV: GMX gets trader PnL simulation, others are clean compound growth
+  
   let navUSD = pos.entryUSD;
   if (pos.strategyType === 'GMX_REAL_YIELD') {
     navUSD = pos.entryUSD * gmxNavFactor(pos.id);
@@ -67,10 +51,10 @@ export function updatePosition(
   const peakUSD        = Math.max(pos.peakUSD, currentUSD);
   const drawdownPct    = peakUSD > 0 ? ((peakUSD - currentUSD) / peakUSD) * 100 : 0;
 
-  // IL update from live Chainlink prices
+  
   let currentPriceUSD = pos.entryPriceUSD;
   if (pos.entryPriceUSD > 0 && prices) {
-    // Try to find current price for the volatile asset in this LP
+    
     for (const [sym, tp] of prices.entries()) {
       if (pos.venueName.toUpperCase().includes(sym.toUpperCase()) && sym !== 'USDC' && sym !== 'USDT' && sym !== 'DAI') {
         currentPriceUSD = tp.priceUSD;
@@ -79,9 +63,9 @@ export function updatePosition(
     }
   }
 
-  const ilUpdate = applyILUpdate(pos, currentPriceUSD, newIncome * 0.3);  // 30% of income is "fees" for IL tracking
+  const ilUpdate = applyILUpdate(pos, currentPriceUSD, newIncome * 0.3);  
 
-  // Pending rewards estimation
+  
   const pendingRewardsUSD = estimatePendingRewards(
     { ...pos, currentNetAPY: netAPY },
     elapsedSec,
@@ -104,11 +88,6 @@ export function updatePosition(
   };
 }
 
-// ── Update full portfolio — formula-based (demo users, /agent page) ───────────
-//
-//  Used for Alice / Bob / Carol and any user without policy.isReal.
-//  Completely unchanged — demo page stays exactly as-is.
-
 export function updatePortfolioPositions(
   portfolio:  Portfolio,
   opportunities: Opportunity[],
@@ -122,19 +101,6 @@ export function updatePortfolioPositions(
   return updatePortfolio(portfolio, updated);
 }
 
-// ── Update full portfolio — real on-chain reads (isReal users only) ───────────
-//
-//  For each position, calls position-reader.ts which reads the ACTUAL current
-//  value from the protocol (Aave aUSDC balance, UniV3 NFT, Pendle oracle, etc.).
-//
-//  Falls back to formula-based estimate if any on-chain read fails (network error,
-//  position not yet settled, etc.) — the tick loop never stalls.
-//
-//  The formula is still used for:
-//    · APY/IL/circuit-breaker derived fields (these stay formula-based even for
-//      real users because they describe rate/risk, not absolute value)
-//    · GMX pending deposits (gmTokenAmount = '' until async order settles)
-
 export async function updatePortfolioPositionsReal(
   portfolio:    Portfolio,
   opportunities: Opportunity[],
@@ -143,44 +109,46 @@ export async function updatePortfolioPositionsReal(
   provider:     JsonRpcProvider,
   vaultAddress: string,
   userAddress?: string,
+  batchPositions?: import('./protocols').UserOnChainPositions,
 ): Promise<Portfolio> {
   const updated = await Promise.all(
     portfolio.positions.map(async (pos) => {
       const opp = opportunities.find(o => o.id === pos.venueId) ?? null;
 
-      // 1. Start with the formula-based update for APY/IL/drawdown/rewards fields
+      
       const formulaPos = updatePosition(pos, opp, elapsedSec, prices);
 
-      // 2. Attempt real on-chain value read
+      
       let realRead: Awaited<ReturnType<typeof readRealPositionValue>> = null;
       try {
-        realRead = await readRealPositionValue(pos, provider, vaultAddress, prices, userAddress);
+        realRead = await readRealPositionValue(pos, provider, vaultAddress, prices, userAddress, batchPositions);
       } catch (err: any) {
         console.warn(`[Monitor] Real read failed for ${pos.strategyType} — using formula. ${err.message}`);
       }
 
       if (!realRead) {
-        // No real data available — keep formula result
+        
         return formulaPos;
       }
 
-      // 3. Merge: override currentUSD + incomeEarnedUSD with real values,
-      //    keep everything else (APY, IL, drawdown, peak tracking) from formula
+      
+      
       const currentUSD      = realRead.currentUSD;
-      const incomeEarnedUSD = Math.max(0, realRead.incomeEarnedUSD);  // clamp negatives from rounding
-      const totalReturnUSD  = currentUSD - pos.entryUSD;
+      const incomeEarnedUSD = Math.max(0, realRead.incomeEarnedUSD);  
+      const currentValueUSD = currentUSD + incomeEarnedUSD;
+      const totalReturnUSD  = currentValueUSD - pos.entryUSD;
       const totalReturnPct  = pos.entryUSD > 0 ? (totalReturnUSD / pos.entryUSD) * 100 : 0;
       const daysHeld        = (Date.now() - pos.entryTime) / 86_400_000;
       const effectiveAPY    = daysHeld > 0 ? (totalReturnPct / daysHeld) * 365 : formulaPos.currentNetAPY;
-      const peakUSD         = Math.max(formulaPos.peakUSD, currentUSD);
-      const drawdownPct     = peakUSD > 0 ? ((peakUSD - currentUSD) / peakUSD) * 100 : 0;
+      const peakUSD         = Math.max(formulaPos.peakUSD, currentValueUSD);
+      const drawdownPct     = peakUSD > 0 ? ((peakUSD - currentValueUSD) / peakUSD) * 100 : 0;
 
       return {
         ...formulaPos,
         currentUSD,
         incomeEarnedUSD,
-        // Self-heal: if NAV reader found a better tokenId (0-liquidity → active),
-        // patch it into the position so future reads use the correct one directly.
+        
+        
         totalReturnUSD,
         totalReturnPct,
         effectiveAPY,
@@ -189,23 +157,23 @@ export async function updatePortfolioPositionsReal(
         currentUSDExact:        realRead.currentUSDExact ?? currentUSD.toString(),
         incomeEarnedUSDExact:   realRead.incomeEarnedUSDExact ?? incomeEarnedUSD.toString(),
         pendingRewardsUSDExact: realRead.pendingRewardsUSDExact ?? realRead.pendingRewardsUSD.toString(),
-        // Real pending rewards drives the harvest decision (not formula estimate)
+        
         pendingRewardsUSD: realRead.pendingRewardsUSD,
-        // UniV3: real fees owed = actual income; for other protocols income is NAV delta
+        
         feesEarnedUSD: pos.strategyType === 'DELTA_NEUTRAL'
           ? realRead.incomeEarnedUSD
           : formulaPos.feesEarnedUSD,
         feesEarnedUSDExact: pos.strategyType === 'DELTA_NEUTRAL'
           ? (realRead.incomeEarnedUSDExact ?? realRead.incomeEarnedUSD.toString())
           : formulaPos.feesEarnedUSD.toString(),
-        // Track consecutive out-of-range ticks for UniV3 range circuit breaker
+        
         uniV3OutOfRangeTicks: pos.strategyType === 'DELTA_NEUTRAL'
           ? (realRead.outOfRange ? (pos.uniV3OutOfRangeTicks ?? 0) + 1 : 0)
           : pos.uniV3OutOfRangeTicks,
-        // LEVERAGED_LOOP: persist health factor for circuit breaker
+        
         ...(realRead.healthFactor != null ? { healthFactor: realRead.healthFactor } : {}),
-        // UniV3 exact fee state: keep raw token units so tiny fees do not
-        // disappear behind USD rounding or JS number formatting.
+        
+        
         ...(realRead.uniV3Fees ? {
           uniV3Token0:          realRead.uniV3Fees.token0,
           uniV3Token1:          realRead.uniV3Fees.token1,
@@ -228,11 +196,6 @@ export async function updatePortfolioPositionsReal(
   return updatePortfolio(portfolio, updated);
 }
 
-// ── Circuit Breakers ──────────────────────────────────────────────────────────
-//
-//  Portfolio-level + per-position breakers.
-//  Red = exit immediately. Yellow = monitor closely. Green = all clear.
-
 export function checkCircuitBreakers(
   portfolio:  Portfolio | null,
   opportunities: Opportunity[],
@@ -243,18 +206,22 @@ export function checkCircuitBreakers(
 
   const m = portfolio.metrics;
 
-  // ── 1. Portfolio NAV drawdown ────────────────────────────────────────────
-  // Sanity cap: peak cannot exceed 1.5× entry unless genuinely earned.
-  // Rebalance floor: when all positions have liquidity=0 (between close and remint),
-  // funds exist as idle WETH/ARB in vault balances. IL from market movement is real
-  // but should not exceed 15% of entry — if it does, cap the peak to current value
-  // to avoid a false circuit breaker during the transitional state.
-  const sanePeak = m.totalEntryUSD * 1.5;
-  const allPositionsEmpty = portfolio.positions.every(p => p.currentUSD === 0 || p.uniV3Liquidity === '0');
-  const rebalanceFloor   = allPositionsEmpty ? m.totalEntryUSD * 0.85 : 0;
-  const cappedPeak       = m.peakValueUSD <= sanePeak ? m.peakValueUSD : m.totalValueUSD;
-  const truePeak         = m.totalValueUSD >= rebalanceFloor ? cappedPeak : m.totalValueUSD;
-  const dd       = truePeak > 0 ? Math.max(0, ((truePeak - m.totalValueUSD) / truePeak) * 100) : 0;
+  
+  
+  
+  
+  
+  
+  const allPositionsInTransit = portfolio.positions.length > 0 &&
+    portfolio.positions.every(p => (p.currentUSD ?? 0) === 0 || p.uniV3Liquidity === '0');
+  const walletAwareNAV = allPositionsInTransit
+    ? Math.max(m.totalValueUSD, m.totalEntryUSD * 0.95)  
+    : m.totalValueUSD;
+
+  const sanePeak       = m.totalEntryUSD * 1.5;
+  const cappedPeak     = m.peakValueUSD <= sanePeak ? m.peakValueUSD : walletAwareNAV;
+  const truePeak       = allPositionsInTransit ? walletAwareNAV : cappedPeak;
+  const dd     = truePeak > 0 ? Math.max(0, ((truePeak - walletAwareNAV) / truePeak) * 100) : 0;
   const maxDD    = policy.maxDrawdownPct;
   breakers.push({
     id: 'portfolio-drawdown', name: 'Portfolio Drawdown',
@@ -263,7 +230,7 @@ export function checkCircuitBreakers(
     description: 'Total portfolio USD value decline from peak',
   });
 
-  // ── 2. Weighted APY vs minimum ───────────────────────────────────────────
+  
   const apy   = m.weightedNetAPY;
   const floor = policy.minAPY;
   breakers.push({
@@ -273,7 +240,7 @@ export function checkCircuitBreakers(
     description: 'Capital-weighted net APY across all positions',
   });
 
-  // ── 3. IL coverage (fees beating IL?) ───────────────────────────────────
+  
   if (!m.ilCoveredByFees && Math.abs(m.totalILUSD) > 10) {
     breakers.push({
       id: 'il-coverage', name: 'IL vs Fees Coverage',
@@ -284,11 +251,11 @@ export function checkCircuitBreakers(
     });
   }
 
-  // ── 4. Per-position checks ───────────────────────────────────────────────
+  
   for (const pos of portfolio.positions) {
     const opp = opportunities.find(o => o.id === pos.venueId);
 
-    // IL exit signal per position
+    
     const ilCheck = shouldExitForIL(pos);
     if (ilCheck.shouldExit) {
       breakers.push({
@@ -302,15 +269,15 @@ export function checkCircuitBreakers(
       });
     }
 
-    // LEVERAGED_LOOP health factor — must unwind before Aave liquidates (HF < 1.0)
+    
     if (pos.strategyType === 'LEVERAGED_LOOP' && pos.healthFactor != null) {
       const hf = pos.healthFactor;
       if (hf < 1.3) {
         breakers.push({
           id:          `hf-${pos.id.slice(0, 8)}`,
           name:        `Aave Health Factor — ${pos.protocol}`,
-          // RED at HF < 1.1: immediate unwind required (liquidation bot threshold is 1.0)
-          // YELLOW at HF < 1.3: de-risk, consider unwinding
+          
+          
           status:      hf < 1.1 ? 'RED' : 'YELLOW',
           value:       `HF ${hf.toFixed(3)}`,
           threshold:   'Min 1.3 safe | Unwind at 1.1',
@@ -322,14 +289,14 @@ export function checkCircuitBreakers(
       }
     }
 
-    // UniV3 out-of-range (real users only — field is undefined for demo users)
+    
     if (pos.strategyType === 'DELTA_NEUTRAL' && pos.uniV3OutOfRangeTicks != null) {
       const oor = pos.uniV3OutOfRangeTicks;
       if (oor > 0) {
         breakers.push({
           id:          `univ3-oor-${pos.id.slice(0, 8)}`,
           name:        `UniV3 Out-of-Range — ${pos.protocol}`,
-          // RED after 3 consecutive out-of-range ticks (~3 min): earning 0 fees, must rebalance
+          
           status:      oor >= 3 ? 'RED' : 'YELLOW',
           value:       `${oor} tick${oor > 1 ? 's' : ''} out of range`,
           threshold:   '3 ticks = rebalance',
@@ -339,7 +306,7 @@ export function checkCircuitBreakers(
       }
     }
 
-    // GMX OI balance per position
+    
     if (pos.strategyType === 'GMX_REAL_YIELD' && opp?.risk.oiBalance !== null) {
       const oiBal = opp?.risk.oiBalance ?? 0.5;
       const skew  = Math.abs(oiBal - 0.5) * 2;
@@ -356,7 +323,7 @@ export function checkCircuitBreakers(
       }
     }
 
-    // Liquidity per position
+    
     if (opp) {
       const tvl    = opp.tvlUSD;
       const minTvl = policy.managedUSD * 50 * (pos.allocationPct / 100);
@@ -385,8 +352,6 @@ export function redBreakerForPosition(breakers: CircuitBreaker[], positionId: st
   return breakers.some(b => b.status === 'RED' && b.positionId === positionId);
 }
 
-// ── Execution record ──────────────────────────────────────────────────────────
-
 export function buildExecutionRecord(
   action:    ActionType,
   from:      string | null,
@@ -402,6 +367,7 @@ export function buildExecutionRecord(
   return {
     action, from, to, amountUSD,
     simulated:   true,
+    status:      'planned',
     receiptHash: `0x${hash}`,
     timestamp:   Date.now(),
     portfolioValueBefore,

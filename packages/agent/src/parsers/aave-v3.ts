@@ -36,15 +36,15 @@ export async function fetchAaveUSDCSupplyAPY(): Promise<{
 
   const decoded = decodeAbiParameters(fields as any, rawResult) as bigint[];
 
-  // Field mapping (Aave V3 ReserveData struct)
-  // index 2: currentLiquidityRate (Ray 1e27)
-  // index 13: totalAToken
-  // index 14: totalVariableDebt
+  
+  
+  
+  
   const liquidityRate = decoded[2]!;
   const totalAToken = decoded[13]!;
   const totalVariableDebt = decoded[14]!;
 
-  // liquidityRate / 1e23 = BPS (10000 = 100%)
+  
   const apyBps = liquidityRate / 10n**23n; 
 
   const utilization = totalAToken > 0n 

@@ -1,12 +1,12 @@
 export interface NormalizedYield {
-  venue: string; // "aave-v3-arbitrum-usdc"
+  venue: string; 
   chainId: number; 
   contractAddress: string;
-  apyBps: bigint; // 500 = 5.00%
-  liquidityUsd: bigint; // In wei equivalent
+  apyBps: bigint; 
+  liquidityUsd: bigint; 
   utilizationBps: bigint; 
   maturityTimestamp?: number; 
-  riskScore: number; // 0-100
+  riskScore: number; 
   lastUpdated: number; 
   source: 'aave-v3' | 'pendle' | 'erc4626';
 }

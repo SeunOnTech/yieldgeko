@@ -1,63 +1,50 @@
-/**
- * teeIntelligence.ts — 0G Compute TEE Market Intelligence
- *
- * Queries DeepSeek V3 running inside an Intel TDX + NVIDIA H100 TEE enclave
- * on the 0G Compute Network. Every response is cryptographically signed by
- * the enclave hardware — proving the decision was made privately and before
- * any transaction was submitted (no front-running possible).
- *
- * Proof chain:
- *   0G Compute TEE  →  signs decision (chatID + signerRA + chatSig URLs)
- *         ↓
- *   0G Storage      →  attestation blob stored (public, immutable)
- *         ↓
- *   0G Chain        →  attestCID anchored in YieldGekoRegistry forever
- *
- * The attestation blob is retrievable by CID. Any party can:
- *   1. Fetch signerRaUrl  → download the Intel TDX hardware attestation report
- *   2. Fetch chatSigUrl   → download the enclave signature for this specific response
- *   3. Verify independently: `ethers.recoverAddress(hashMessage(responseText), sig) === signerAddress`
- *
- * Fallback: if 0G Compute is unavailable (not funded, provider down), falls back
- * to local EIP-191 signing. Blob is clearly marked `mode: 'local-signing'` so
- * verifiers know which path was taken. Arbitrum execution is never blocked.
- *
- * Env vars:
- *   ZG_COMPUTE_PROVIDER_ADDRESS — provider on 0G Compute Network
- *   ZG_COMPUTE_MODEL            — model name (default: deepseek-chat)
- *   PRIVATE_KEY                 — agent wallet (ledger must be pre-funded with OG)
- *   RPC_URL                     — 0G Chain RPC (default: https://evmrpc.0g.ai)
- */
 
-import * as dns    from 'node:dns';
-import * as crypto from 'node:crypto';
+
+import * as dns from 'node:dns';
 import { ethers } from 'ethers';
 import type { Opportunity, AllocationDecision } from './types';
 import { detect0GConfig } from './persistence';
 
 dns.setDefaultResultOrder('ipv4first');
 
-// ── Config ────────────────────────────────────────────────────────────────────
-
-const ZG_CHAIN_RPC        = process.env.RPC_URL ?? 'https://evmrpc.0g.ai';
 const ZG_CHAIN_ID         = 16661;
-const ZG_COMPUTE_PROVIDER = process.env.ZG_COMPUTE_PROVIDER_ADDRESS ?? '';
-const ZG_COMPUTE_MODEL    = process.env.ZG_COMPUTE_MODEL ?? 'deepseek-chat';
-const AGENT_PRIVATE_KEY   = process.env.PRIVATE_KEY ?? '';
 const SCHEMA              = 'yieldgeko.tee.decision.v1' as const;
 
-// ── Singleton broker ───────────────────────────────────────────────────────────
+function getZGChainRpc(): string {
+  return process.env.RPC_URL ?? 'https://evmrpc.0g.ai';
+}
+
+function getComputeProviderAddress(): string {
+  return process.env.ZG_COMPUTE_PROVIDER_ADDRESS ?? '';
+}
+
+function getComputeModel(): string {
+  return process.env.ZG_COMPUTE_MODEL ?? 'deepseek-chat';
+}
+
+function getAgentPrivateKey(): string {
+  return process.env.PRIVATE_KEY ?? '';
+}
 
 type Broker = Awaited<ReturnType<typeof import('@0gfoundation/0g-compute-ts-sdk').createZGComputeNetworkBroker>>;
 
 let _broker: Broker | null = null;
 let _brokerEndpoint: string | null = null;
 let _brokerModel: string | null = null;
-let _brokerFailed = false;
+let _brokerFailedUntil = 0;   
+
+export function resetBroker(): void {
+  _broker         = null;
+  _brokerEndpoint = null;
+  _brokerModel    = null;
+  _brokerFailedUntil = 0;
+}
 
 async function getBroker(): Promise<{ broker: Broker; endpoint: string; model: string } | null> {
-  if (_brokerFailed) return null;
-  if (!ZG_COMPUTE_PROVIDER || !AGENT_PRIVATE_KEY) return null;
+  const computeProvider = getComputeProviderAddress();
+  const agentPrivateKey = getAgentPrivateKey();
+  if (Date.now() < _brokerFailedUntil) return null;
+  if (!computeProvider || !agentPrivateKey) return null;
 
   if (_broker && _brokerEndpoint && _brokerModel) {
     return { broker: _broker, endpoint: _brokerEndpoint, model: _brokerModel };
@@ -65,44 +52,47 @@ async function getBroker(): Promise<{ broker: Broker; endpoint: string; model: s
 
   try {
     const { createZGComputeNetworkBroker } = await import('@0gfoundation/0g-compute-ts-sdk');
-    const provider = new ethers.JsonRpcProvider(ZG_CHAIN_RPC, ZG_CHAIN_ID, { staticNetwork: true });
-    const wallet   = new ethers.Wallet(AGENT_PRIVATE_KEY, provider);
+    const provider = new ethers.JsonRpcProvider(getZGChainRpc(), ZG_CHAIN_ID, { staticNetwork: true });
+    const wallet   = new ethers.Wallet(agentPrivateKey, provider);
+
+    const balance = await provider.getBalance(wallet.address);
+    const minBalance = ethers.parseEther('1');
+    if (balance < minBalance) {
+      throw new Error(`Insufficient 0G balance: need ≥1 OG, have ${ethers.formatEther(balance)} OG — fund ${wallet.address} on 0G Chain`);
+    }
 
     _broker = await createZGComputeNetworkBroker(wallet);
 
-    // Ensure ledger exists — one-time setup, creates with 0.5 OG if missing
     try {
       await _broker.ledger.getLedger();
     } catch {
-      console.log('[TEE] Creating 0G Compute ledger (one-time, 0.5 OG)...');
+      console.log('[TEE] Creating 0G Compute ledger (one-time setup)...');
       await _broker.ledger.addLedger(3);
     }
 
-    // Acknowledge provider signer — one-time, idempotent
-    const acked = await _broker.inference.acknowledged(ZG_COMPUTE_PROVIDER).catch(() => false);
+    
+    const acked = await _broker.inference.acknowledged(computeProvider).catch(() => false);
     if (!acked) {
       console.log('[TEE] Acknowledging 0G Compute provider signer...');
-      await _broker.inference.acknowledgeProviderSigner(ZG_COMPUTE_PROVIDER);
+      await _broker.inference.acknowledgeProviderSigner(computeProvider);
     }
 
-    const meta = await _broker.inference.getServiceMetadata(ZG_COMPUTE_PROVIDER);
+    const meta = await _broker.inference.getServiceMetadata(computeProvider);
     _brokerEndpoint = meta.endpoint;
-    _brokerModel    = meta.model || ZG_COMPUTE_MODEL;
+    _brokerModel    = meta.model || getComputeModel();
 
     console.log('[TEE] ✅ 0G Compute broker ready');
-    console.log(`[TEE]    Provider:  ${ZG_COMPUTE_PROVIDER}`);
+    console.log(`[TEE]    Provider:  ${computeProvider}`);
     console.log(`[TEE]    Endpoint:  ${_brokerEndpoint}`);
     console.log(`[TEE]    Model:     ${_brokerModel}`);
 
     return { broker: _broker, endpoint: _brokerEndpoint, model: _brokerModel };
   } catch (err: any) {
-    _brokerFailed = true;
-    console.warn(`[TEE] 0G Compute broker init failed (will use local fallback): ${err.message?.slice(0, 100)}`);
+    _brokerFailedUntil = Date.now() + 5 * 60 * 1000;  
+    console.warn(`[TEE] 0G Compute broker init failed (will retry in 5 min): ${err.message?.slice(0, 100)}`);
     return null;
   }
 }
-
-// ── Prompt builder ────────────────────────────────────────────────────────────
 
 function buildPrompt(opportunities: Opportunity[], policy: { minAPY: number; maxDrawdownPct: number }): string {
   const top5 = opportunities.slice(0, 5).map((o, i) => ({
@@ -139,8 +129,6 @@ Respond with this exact JSON:
 }`;
 }
 
-// ── TEE inference call ────────────────────────────────────────────────────────
-
 interface TEECallResult {
   confirmedRank:   number;
   confidence:      number;
@@ -162,13 +150,14 @@ async function callTEE(
   if (!ctx) return null;
 
   const { broker, endpoint, model } = ctx;
+  const computeProvider = getComputeProviderAddress();
   const prompt = buildPrompt(opportunities, policy);
 
   try {
-    // 1. Get billing headers (signed proof of request)
-    const headers = await broker.inference.getRequestHeaders(ZG_COMPUTE_PROVIDER, prompt);
+    
+    const headers = await broker.inference.getRequestHeaders(computeProvider, prompt);
 
-    // 2. Call TEE inference endpoint
+    
     const res = await fetch(`${endpoint}/chat/completions`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json', ...headers } as Record<string, string>,
@@ -184,13 +173,14 @@ async function callTEE(
 
     const data = await res.json() as any;
     const responseText = (data.choices?.[0]?.message?.content ?? '') as string;
-    const chatID       = (data.id ?? '') as string;
+    const responseKeyHeader = res.headers.get('ZG-Res-Key') || res.headers.get('zg-res-key') || '';
+    const chatID = (responseKeyHeader || data.id || '') as string;
 
-    // 3. Parse TEE response
+    
     let parsed: any = { confirmedRank: 1, confidence: 80, rationale: 'LVR top pick confirmed', riskFlags: [] };
     try {
       parsed = JSON.parse(responseText.replace(/```json|```/g, '').trim());
-    } catch { /* use defaults */ }
+    } catch {  }
 
     const confirmedRank = Math.max(1, Math.min(5, Number(parsed.confirmedRank ?? 1)));
 
@@ -199,10 +189,10 @@ async function callTEE(
     console.log(`[TEE]    Decision:  rank=${confirmedRank} confidence=${parsed.confidence}%`);
     console.log(`[TEE]    Rationale: ${parsed.rationale}`);
 
-    // 4. Process response — on-chain settlement + TEE signature verification
-    // New SDK: processResponse(provider, chatID, content) — args order changed in 0.8.x
+    
+    
     const verified = await broker.inference.processResponse(
-      ZG_COMPUTE_PROVIDER,
+      computeProvider,
       chatID,
       responseText,
     ).catch((e: any) => {
@@ -212,10 +202,10 @@ async function callTEE(
 
     console.log(`[TEE]    Verified:  ${verified}`);
 
-    // 5. Get attestation download links for the blob
+    
     const [signerRaUrl, chatSignatureUrl] = await Promise.all([
-      broker.inference.getSignerRaDownloadLink(ZG_COMPUTE_PROVIDER).catch(() => ''),
-      chatID ? broker.inference.getChatSignatureDownloadLink(ZG_COMPUTE_PROVIDER, chatID).catch(() => '') : Promise.resolve(''),
+      broker.inference.getSignerRaDownloadLink(computeProvider).catch(() => ''),
+      chatID ? broker.inference.getChatSignatureDownloadLink(computeProvider, chatID).catch(() => '') : Promise.resolve(''),
     ]);
 
     return {
@@ -227,7 +217,7 @@ async function callTEE(
       signerRaUrl,
       chatSignatureUrl,
       verified,
-      providerAddress:  ZG_COMPUTE_PROVIDER,
+      providerAddress:  computeProvider,
       model,
     };
   } catch (err: any) {
@@ -236,16 +226,14 @@ async function callTEE(
   }
 }
 
-// ── Local EIP-191 fallback ────────────────────────────────────────────────────
-
 async function localSignFallback(
-  opportunities: Opportunity[],
+  _opportunities: Opportunity[],
   decision: AllocationDecision,
   userId: string,
   userAddress: string,
   receiptHash: string,
-): Promise<{ signature: string; agentAddress: string }> {
-  const wallet = new ethers.Wallet(AGENT_PRIVATE_KEY);
+): Promise<{ signature: string; agentAddress: string; signedPayload: string }> {
+  const wallet = new ethers.Wallet(getAgentPrivateKey());
   const payload = {
     schema:      SCHEMA,
     mode:        'local-signing',
@@ -259,11 +247,10 @@ async function localSignFallback(
     reason:      decision.reason,
     timestamp:   Date.now(),
   };
-  const signature = await wallet.signMessage(JSON.stringify(payload));
-  return { signature, agentAddress: wallet.address };
+  const signedPayload = JSON.stringify(payload);
+  const signature = await wallet.signMessage(signedPayload);
+  return { signature, agentAddress: wallet.address, signedPayload };
 }
-
-// ── Public types ──────────────────────────────────────────────────────────────
 
 export interface TEEAttestParams {
   opportunities: Opportunity[];
@@ -278,20 +265,10 @@ export interface TEEAttestResult {
   mode:      'tee-compute' | 'local-signing';
 }
 
-// ── Public API ────────────────────────────────────────────────────────────────
-
-/**
- * Generate a TEE-attested decision blob and store it on 0G Storage.
- *
- * Primary path:  0G Compute TEE → DeepSeek V3 in TDX+H100 enclave → signed blob
- * Fallback path: local EIP-191 signing with agent wallet (clearly marked in blob)
- *
- * Non-fatal — returns null on any upload failure. Never blocks Arbitrum execution.
- */
 export async function generateTEEAttestation(
   params: TEEAttestParams,
 ): Promise<TEEAttestResult | null> {
-  if (!AGENT_PRIVATE_KEY) {
+  if (!getAgentPrivateKey()) {
     console.warn('[TEE] PRIVATE_KEY not set — skipping attestation');
     return null;
   }
@@ -308,16 +285,19 @@ export async function generateTEEAttestation(
     maxDrawdownPct: 20,
   };
 
-  // Try real 0G Compute TEE call first
+  
   const teeResult = await callTEE(params.opportunities, userPolicy);
 
   let blob: Record<string, unknown>;
   let mode: 'tee-compute' | 'local-signing';
 
   if (teeResult) {
-    // Primary path — real TEE attestation
+    
     mode = 'tee-compute';
     const confirmedPool = params.opportunities[teeResult.confirmedRank - 1] ?? params.opportunities[0];
+    const confirmedPoolLabel = confirmedPool
+      ? `${confirmedPool.protocol} ${confirmedPool.pool}`
+      : 'No opportunity list supplied';
     blob = {
       schema:           SCHEMA,
       mode,
@@ -337,11 +317,11 @@ export async function generateTEEAttestation(
         strategyType: o.strategyType,
         netAPY:       o.netAPY,
         geckoScore:   o.geckoScore,
-        selected:     o.id === confirmedPool.id,
+        selected:     confirmedPool ? o.id === confirmedPool.id : false,
       })),
       decision: {
         confirmedRank: teeResult.confirmedRank,
-        confirmedPool: `${confirmedPool.protocol} ${confirmedPool.pool}`,
+        confirmedPool: confirmedPoolLabel,
         confidence:    teeResult.confidence,
         rationale:     teeResult.rationale,
         riskFlags:     teeResult.riskFlags,
@@ -349,9 +329,9 @@ export async function generateTEEAttestation(
       timestamp: Date.now(),
     };
   } else {
-    // Fallback path — local EIP-191 signing
+    
     mode = 'local-signing';
-    const { signature, agentAddress } = await localSignFallback(
+    const { signature, agentAddress, signedPayload } = await localSignFallback(
       params.opportunities,
       params.decision,
       params.userId,
@@ -363,6 +343,7 @@ export async function generateTEEAttestation(
       mode,
       agentAddress,
       signature,
+      signedPayload,
       userId:       params.userId,
       userAddress:  params.userAddress,
       action:       params.decision.action,
@@ -388,8 +369,8 @@ export async function generateTEEAttestation(
     console.log('[TEE] Fallback: EIP-191 signed attestation (0G Compute unavailable)');
   }
 
-  // Upload to 0G Storage using the shared singleton signer (avoids nonce conflicts
-  // with concurrent state-save and trace-upload transactions from the same wallet)
+  
+  
   const cfg = detect0GConfig();
   if (!cfg) {
     console.warn('[TEE] 0G Storage not configured — skipping attestation upload');

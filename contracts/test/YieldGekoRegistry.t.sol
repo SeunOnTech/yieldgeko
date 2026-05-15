@@ -1,26 +1,8 @@
-// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
 import "../contracts/YieldGekoRegistry.sol";
 
-/**
- * @title  YieldGekoRegistry — Full Test Suite (post-audit)
- *
- * Covers:
- *   • Happy-path anchor + query
- *   • All revert conditions (including new audit fixes)
- *   • String length caps (MEDIUM-01)
- *   • Action validation (LOW-01)
- *   • getLatestProofs n cap (LOW-02)
- *   • Constructor events (LOW-03)
- *   • Zero address agent guard (LOW-04)
- *   • Multi-strategy per wallet
- *   • Access control
- *   • Events
- *   • Pagination
- *   • Fuzz tests
- */
 contract YieldGekoRegistryTest is Test {
     YieldGekoRegistry internal registry;
 
@@ -43,18 +25,13 @@ contract YieldGekoRegistryTest is Test {
     string internal constant CID_TRACE = "0xabc123trace456def789";
     string internal constant CID_ATTEST = "0xdef456attest789abc123";
 
-    // 129-char string — exceeds MAX_CID_LEN
     string internal constant CID_TOO_LONG = "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
         "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1";
-
-    // ── Setup ─────────────────────────────────────────────────────────────────
 
     function setUp() public {
         registry = new YieldGekoRegistry();
         registry.setAgentAuthorised(agent, true);
     }
-
-    // ── Constructor ───────────────────────────────────────────────────────────
 
     function test_Constructor_SetsOwner() public view {
         assertEq(registry.owner(), owner);
@@ -69,7 +46,6 @@ contract YieldGekoRegistryTest is Test {
     }
 
     function test_Constructor_EmitsOwnershipTransferredFromZero() public {
-        // Deploy a fresh instance and capture events
         vm.recordLogs();
         YieldGekoRegistry fresh = new YieldGekoRegistry();
 
@@ -91,15 +67,11 @@ contract YieldGekoRegistryTest is Test {
         assertTrue(fresh.authorisedAgents(address(this)));
     }
 
-    // ── Constants ─────────────────────────────────────────────────────────────
-
     function test_Constants_Values() public view {
         assertEq(registry.MAX_ACTION_LEN(), 32);
         assertEq(registry.MAX_CID_LEN(), 128);
         assertEq(registry.MAX_LATEST_N(), 100);
     }
-
-    // ── Happy path ────────────────────────────────────────────────────────────
 
     function test_Anchor_SucceedsFromAgent() public {
         vm.prank(agent);
@@ -153,8 +125,6 @@ contract YieldGekoRegistryTest is Test {
         assertEq(registry.totalAnchored(), 3);
     }
 
-    // ── Events ────────────────────────────────────────────────────────────────
-
     function test_Anchor_EmitsProofAnchored() public {
         vm.expectEmit(true, true, true, true);
         emit YieldGekoRegistry.ProofAnchored(
@@ -163,8 +133,6 @@ contract YieldGekoRegistryTest is Test {
         vm.prank(agent);
         registry.anchor(HASH_A, user1, STRATEGY_0, "GENESIS", CID_TRACE, CID_ATTEST);
     }
-
-    // ── Exists ────────────────────────────────────────────────────────────────
 
     function test_Exists_FalseForUnknown() public view {
         assertFalse(registry.exists(HASH_A));
@@ -175,8 +143,6 @@ contract YieldGekoRegistryTest is Test {
         registry.anchor(HASH_A, user1, STRATEGY_0, "GENESIS", CID_TRACE, "");
         assertTrue(registry.exists(HASH_A));
     }
-
-    // ── Revert: invalid inputs ────────────────────────────────────────────────
 
     function test_Anchor_Reverts_ZeroReceiptHash() public {
         vm.prank(agent);
@@ -204,8 +170,6 @@ contract YieldGekoRegistryTest is Test {
         registry.anchor(HASH_A, user1, STRATEGY_0, "GENESIS", CID_TRACE, "");
     }
 
-    // ── Action validation (LOW-01 fix) ────────────────────────────────────────
-
     function test_Anchor_Reverts_InvalidAction_Junk() public {
         vm.prank(agent);
         vm.expectRevert(YieldGekoRegistry.InvalidAction.selector);
@@ -220,20 +184,17 @@ contract YieldGekoRegistryTest is Test {
 
     function test_Anchor_Reverts_InvalidAction_Empty() public {
         vm.prank(agent);
-        // empty string fails InvalidAction (not in whitelist) AND ActionTooLong=0 < 32 ok,
-        // but keccak("") != any valid action
+
         vm.expectRevert(YieldGekoRegistry.InvalidAction.selector);
         registry.anchor(HASH_A, user1, STRATEGY_0, "", CID_TRACE, "");
     }
 
     function test_Anchor_Reverts_ActionTooLong() public {
-        string memory longAction = "GENESIS_EXTRA_CHARS_PADDING_HERE_X"; // 34 chars
+        string memory longAction = "GENESIS_EXTRA_CHARS_PADDING_HERE_X";
         vm.prank(agent);
         vm.expectRevert(YieldGekoRegistry.ActionTooLong.selector);
         registry.anchor(HASH_A, user1, STRATEGY_0, longAction, CID_TRACE, "");
     }
-
-    // ── CID length caps (MEDIUM-01 fix) ──────────────────────────────────────
 
     function test_Anchor_Reverts_TraceCIDTooLong() public {
         vm.prank(agent);
@@ -248,7 +209,6 @@ contract YieldGekoRegistryTest is Test {
     }
 
     function test_Anchor_Accepts_MaxLenCID() public {
-        // exactly 128 chars — should pass (no 0x prefix to stay at 128)
         string memory maxCID =
             "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
         assertEq(bytes(maxCID).length, 128);
@@ -257,10 +217,7 @@ contract YieldGekoRegistryTest is Test {
         assertTrue(registry.exists(HASH_A));
     }
 
-    // ── getLatestProofs cap (LOW-02 fix) ──────────────────────────────────────
-
     function test_GetLatestProofs_CapsAtMaxN() public {
-        // Anchor 5 proofs
         vm.startPrank(agent);
         for (uint256 i = 0; i < 5; i++) {
             bytes32 h = keccak256(abi.encodePacked("cap", i));
@@ -268,10 +225,9 @@ contract YieldGekoRegistryTest is Test {
         }
         vm.stopPrank();
 
-        // Request more than MAX_LATEST_N — should be silently capped
         YieldGekoRegistry.Proof[] memory latest = registry.getLatestProofs(user1, 200);
         assertLe(latest.length, registry.MAX_LATEST_N());
-        assertEq(latest.length, 5); // only 5 exist
+        assertEq(latest.length, 5);
     }
 
     function test_GetLatestProofs_ReturnsNewestFirst() public {
@@ -283,15 +239,13 @@ contract YieldGekoRegistryTest is Test {
 
         YieldGekoRegistry.Proof[] memory latest = registry.getLatestProofs(user1, 2);
         assertEq(latest.length, 2);
-        assertEq(latest[0].receiptHash, HASH_C); // newest first
+        assertEq(latest[0].receiptHash, HASH_C);
         assertEq(latest[1].receiptHash, HASH_B);
     }
 
     function test_GetLatestProofs_NoHistory_ReturnsEmpty() public view {
         assertEq(registry.getLatestProofs(user1, 5).length, 0);
     }
-
-    // ── Multi-strategy (new feature) ──────────────────────────────────────────
 
     function test_MultiStrategy_ReceiptsIsolatedByStrategyId() public {
         vm.startPrank(agent);
@@ -300,19 +254,15 @@ contract YieldGekoRegistryTest is Test {
         registry.anchor(HASH_C, user1, STRATEGY_1, "REBALANCE", CID_TRACE, "");
         vm.stopPrank();
 
-        // Per-strategy counts
         assertEq(registry.getStrategyReceiptCount(user1, STRATEGY_1), 2);
         assertEq(registry.getStrategyReceiptCount(user1, STRATEGY_2), 1);
 
-        // Global user count includes all strategies
         assertEq(registry.getUserReceiptCount(user1), 3);
 
-        // Strategy 1 receipts
         bytes32[] memory s1 = registry.getStrategyReceipts(user1, STRATEGY_1);
         assertEq(s1[0], HASH_A);
         assertEq(s1[1], HASH_C);
 
-        // Strategy 2 receipts
         bytes32[] memory s2 = registry.getStrategyReceipts(user1, STRATEGY_2);
         assertEq(s2[0], HASH_B);
     }
@@ -350,10 +300,9 @@ contract YieldGekoRegistryTest is Test {
 
         YieldGekoRegistry.Proof[] memory s1 = registry.getLatestStrategyProofs(user1, STRATEGY_1, 2);
         assertEq(s1.length, 2);
-        assertEq(s1[0].receiptHash, HASH_D); // newest first
+        assertEq(s1[0].receiptHash, HASH_D);
         assertEq(s1[1].receiptHash, HASH_C);
 
-        // Strategy 2 has only 1
         YieldGekoRegistry.Proof[] memory s2 = registry.getLatestStrategyProofs(user1, STRATEGY_2, 10);
         assertEq(s2.length, 1);
         assertEq(s2[0].receiptHash, HASH_B);
@@ -366,8 +315,6 @@ contract YieldGekoRegistryTest is Test {
         YieldGekoRegistry.Proof memory p = registry.getProof(HASH_A);
         assertEq(p.strategyId, STRATEGY_1);
     }
-
-    // ── User history ──────────────────────────────────────────────────────────
 
     function test_UserReceipts_StartsEmpty() public view {
         assertEq(registry.getUserReceiptCount(user1), 0);
@@ -384,8 +331,6 @@ contract YieldGekoRegistryTest is Test {
         assertEq(registry.getUserReceiptCount(user1), 2);
         assertEq(registry.getUserReceiptCount(user2), 1);
     }
-
-    // ── Pagination ────────────────────────────────────────────────────────────
 
     function test_Pagination_CorrectPage() public {
         bytes32[5] memory hashes;
@@ -431,8 +376,6 @@ contract YieldGekoRegistryTest is Test {
         assertEq(page[0], HASH_B);
     }
 
-    // ── Access control: owner functions ───────────────────────────────────────
-
     function test_SetAgentAuthorised_Grants() public {
         registry.setAgentAuthorised(agent2, true);
         assertTrue(registry.authorisedAgents(agent2));
@@ -456,7 +399,6 @@ contract YieldGekoRegistryTest is Test {
     }
 
     function test_SetAgentAuthorised_Reverts_ZeroAddress() public {
-        // LOW-04 fix
         vm.expectRevert(YieldGekoRegistry.InvalidAgentAddress.selector);
         registry.setAgentAuthorised(address(0), true);
     }
@@ -491,8 +433,6 @@ contract YieldGekoRegistryTest is Test {
         registry.transferOwnership(newOwner);
     }
 
-    // ── Fuzz ──────────────────────────────────────────────────────────────────
-
     function testFuzz_Anchor_StoresCorrectly(bytes32 receiptHash, address userAddress, bytes32 strategyId) public {
         vm.assume(receiptHash != bytes32(0));
         vm.assume(userAddress != address(0));
@@ -522,7 +462,6 @@ contract YieldGekoRegistryTest is Test {
     }
 
     function test_CIDTooLong_Boundary_129Chars_Reverts() public {
-        // 129 chars = exactly 1 over the limit
         string memory cid129 =
             "12345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678X";
         assertEq(bytes(cid129).length, 129);

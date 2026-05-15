@@ -83,7 +83,7 @@ async function main() {
 
   const scout = new OpportunityScout(config.arbitrumRpcUrl, config.managedAmount);
 
-  // 1. Live Yield Sync Logic
+  
   const fetchYields = async (): Promise<YieldVenue[]> => {
     const leaderboard: ScannedVenue[] = await scout.getAlphaLeaderboard();
     return leaderboard.map((v, i) => ({
@@ -104,7 +104,7 @@ async function main() {
         type: v.apy > 15 ? 'boost' : 'safe'
       }))
     };
-    // Use absolute path relative to this file to be monorepo-safe
+    
     const publicPath = path.resolve(__dirname, '../../../frontend/public/yield-status.json');
     fs.writeFileSync(publicPath, JSON.stringify(status, null, 2));
   };
@@ -178,14 +178,14 @@ async function main() {
     await persistQueue();
   };
 
-  // 2. The Autonomous Management Loop
+  
   const tick = async () => {
     console.log(`\n[Manager] 🦎 Checking state for ${config.userId}...`);
     try {
       const venues = await fetchYields();
       syncDashboard(venues);
 
-      // A. GENESIS: Initial Deployment (If unallocated)
+      
       if (!runtimeState.currentPosition) {
         console.log(`[Genesis] 🚀 Unallocated funds detected ($${config.managedAmount}). Deploying to safest venue...`);
 
@@ -206,7 +206,7 @@ async function main() {
         return;
       }
 
-      // B. MONITORING: Risk Analysis & Opportunity Scouting
+      
       const currentPos = runtimeState.currentPosition;
       const currentVenue = venues.find(v => v.id === currentPos.venueId);
       
@@ -214,8 +214,8 @@ async function main() {
         `[Monitor] Currently in ${currentPos.venueName} @ ${currentPos.apy}%. Stability: ${currentVenue?.stability.toFixed(1) ?? '100'}%`
       );
 
-      // --- SAFETY CHECK: CIRCUIT BREAKER ---
-      // If current asset is depegging (< 95% stability), flee to Aave USDC
+      
+      
       if (currentVenue && currentVenue.stability < 95 && currentVenue.protocol !== 'Aave V3') {
         const safeHaven = venues.find(v => v.protocol === 'Aave V3') || venues[venues.length - 1];
         console.warn(`[CIRCUIT BREAKER] ⚠️ Stability alert on ${currentPos.venueName} (${currentVenue.stability.toFixed(1)}%). Fleeing to ${safeHaven.protocol}!`);
@@ -237,8 +237,8 @@ async function main() {
         return;
       }
 
-      // --- OPPORTUNITY ANALYSIS: FIND BEST VALID ALPHA ---
-      // Find the highest yield venue that passes both Stability (> 95) and Liquidity (> 30)
+      
+      
       const target = venues.find(v => v.stability >= 95 && v.score >= 30);
       
       if (!target) {
@@ -248,7 +248,7 @@ async function main() {
 
       const uplift = target.apy - currentPos.apy;
 
-      // Production Threshold: 2% uplift required to justify gas/risk
+      
       if (uplift > 2.0 && target.id !== currentPos.venueId) {
         console.log(`[Migration] 🔥 Yield Spike Detected! ${target.protocol} (${target.name}) offers +${uplift.toFixed(2)}% uplift. Triggering migration...`);
 
@@ -278,9 +278,9 @@ async function main() {
     }
   };
 
-  // Run the loop
+  
   await tick();
-  setInterval(tick, 60000); // Check every 60s
+  setInterval(tick, 60000); 
 }
 
 main();

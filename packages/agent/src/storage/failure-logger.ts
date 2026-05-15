@@ -1,14 +1,8 @@
 import { Signer } from 'ethers';
 import { persistJsonArtifact, PersistedArtifact } from './persist';
 
-/**
- * 0G Storage Failure Logger
- * Immutably records every hard abort for user audit.
- */
 export class FailureLogger {
-  /**
-   * Logs a safety abort to 0G Storage
-   */
+  
   public static async logAbort(params: {
     userHash: string;
     reason: string;

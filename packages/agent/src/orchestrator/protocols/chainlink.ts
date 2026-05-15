@@ -1,16 +1,8 @@
 import { Contract, Interface, JsonRpcProvider } from 'ethers';
 
-// ── Chainlink Price Oracle ────────────────────────────────────────────────────
-//
-//  All price feeds are batched into a single Multicall3 call.
-//  Staleness check: reject prices older than STALE_THRESHOLD_S.
-//  Fallback: last known good price (never null — stale > absent).
-// ─────────────────────────────────────────────────────────────────────────────
-
 const MULTICALL3        = '0xcA11bde05977b3631167028862bE2a173976CA11';
-const STALE_THRESHOLD_S = 3_600; // 1 hour
+const STALE_THRESHOLD_S = 3_600; 
 
-// Chainlink feeds on Arbitrum (all verified against Chainlink docs)
 export const FEEDS: Record<string, { feed: string; decimals: number }> = {
   WETH: { feed: '0x639Fe6ab55C921f74e7fac1ee960C0B6293ba612', decimals: 8 },
   WBTC: { feed: '0xd0C7101eACbB49F3deCcCc166d238410D6D46d57', decimals: 8 },
@@ -22,14 +14,12 @@ export const FEEDS: Record<string, { feed: string; decimals: number }> = {
 export interface TokenPrice {
   symbol:    string;
   priceUSD:  number;
-  updatedAt: number;   // unix seconds
+  updatedAt: number;   
   isStale:   boolean;
   source:    'chainlink' | 'fallback';
 }
 
 export type PriceMap = Map<string, TokenPrice>;
-
-// ── ABIs ──────────────────────────────────────────────────────────────────────
 
 const MC3_ABI = [
   'function aggregate3(tuple(address target, bool allowFailure, bytes callData)[] calls) view returns (tuple(bool success, bytes returnData)[] returnData)',
@@ -39,11 +29,7 @@ const FEED_ABI = [
   'function latestRoundData() view returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)',
 ];
 
-// ── In-memory last-known-good cache ──────────────────────────────────────────
-
 const cache = new Map<string, TokenPrice>();
-
-// ── Fetch all prices in one Multicall3 round-trip ────────────────────────────
 
 export async function fetchPrices(provider: JsonRpcProvider): Promise<PriceMap> {
   const mc    = new Contract(MULTICALL3, MC3_ABI, provider);
@@ -61,7 +47,7 @@ export async function fetchPrices(provider: JsonRpcProvider): Promise<PriceMap> 
   try {
     raw = await mc.aggregate3(calls);
   } catch {
-    // Full multicall failure — return stale cache for all
+    
     const result = new Map<string, TokenPrice>();
     for (const sym of syms) {
       const cached = cache.get(sym);
@@ -87,12 +73,12 @@ export async function fetchPrices(provider: JsonRpcProvider): Promise<PriceMap> 
 
         const entry: TokenPrice = { symbol: sym, priceUSD, updatedAt, isStale, source: 'chainlink' };
         result.set(sym, entry);
-        cache.set(sym, entry);   // update cache on success
+        cache.set(sym, entry);   
         continue;
-      } catch { /* fall through to cache */ }
+      } catch {  }
     }
 
-    // Use last known good value
+    
     const cached = cache.get(sym);
     if (cached) {
       result.set(sym, { ...cached, isStale: true, source: 'fallback' });
@@ -102,12 +88,10 @@ export async function fetchPrices(provider: JsonRpcProvider): Promise<PriceMap> 
   return result;
 }
 
-// ── Convenience getter (never returns 0 for stablecoins) ─────────────────────
-
 export function getPrice(prices: PriceMap, symbol: string): number {
   const p = prices.get(symbol);
   if (p) return p.priceUSD;
-  // Stablecoin fallback
+  
   if (symbol === 'USDC' || symbol === 'USDT' || symbol === 'DAI') return 1.0;
   return 0;
 }

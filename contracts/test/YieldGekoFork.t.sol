@@ -1,10 +1,7 @@
-// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.34;
 
 import "forge-std/Test.sol";
 import "../contracts/YieldGeko.sol";
-
-// ── Protocol interfaces ───────────────────────────────────────────────────────
 
 interface IAavePool {
     function supply(address asset, uint256 amount, address onBehalfOf, uint16 referralCode) external;
@@ -61,33 +58,23 @@ interface IUniV3PositionMgr {
     function ownerOf(uint256 tokenId) external view returns (address);
 }
 
-// ── Test suite ────────────────────────────────────────────────────────────────
-
 contract YieldGekoForkTest is Test {
-    // ── Arbitrum mainnet addresses (all verified on-chain) ────────────────────
-
-    // Tokens
     address constant USDC = 0xaf88d065e77c8cC2239327C5EDb3A432268e5831;
     address constant USDCE = 0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8;
     address constant WETH = 0x82aF49447D8a07e3bd95BD0d56f35241523fBab1;
     address constant USDAI = 0x0A1a1A107E45b7Ced86833863f482BC5f4ed82EF;
 
-    // Aave V3
     address constant AAVE_POOL = 0x794a61358D6845594F94dc1DB02A252b5b4814aD;
 
-    // Morpho — Tridust USDC vault (ERC-4626, asset=USDC, TVL verified)
     address constant MORPHO_VAULT = 0xf56932d6bd0b99aadD8B77117e08374A14520dbE;
 
-    // Pendle — PendleRouterV3 (verified selector 0xc81f847a for swapExactTokenForPt)
     address constant PENDLE_ROUTER = 0x888888888889758F76e7103c6CbF23ABbF58F946;
     address constant PENDLE_MARKET = 0x8A8A557b90eC79496a18a1f9C9DA8Bbd7DB86Fd3;
     address constant PENDLE_PT = 0x1cdDE40e29dA213f42A7fA109CcADCA372d9Ee1B;
     address constant PENDLE_YT = 0x5De2065F3C709b24f31c736Ef28c1CbB27cEedfc;
     address constant PENDLE_SY = 0x5edCBC20Cac67AdC2e724d4348Ff85132B085b82;
-    uint256 constant PENDLE_EXPIRY = 1781740800; // June 18 2026
+    uint256 constant PENDLE_EXPIRY = 1781740800;
 
-    // GMX V2 — ETH/USD GM pool (verified: name="GMX Market")
-    // ExchangeRouter verified: hasRole(ROUTER_PLUGIN)=true, hasRole(CONTROLLER)=true
     address constant GMX_EXCHANGE_ROUTER = 0x1C3fa76e6E1088bCE750f23a5BFcffa1efEF6A41;
     address constant GMX_ROUTER = 0x7452c558d45f8afC8c83dAe62C3f8A5BE19c71f6;
     address constant GMX_ORDER_VAULT = 0x31eF83a530Fde1B38EE9A18093A333D8Bbbc40D5;
@@ -95,16 +82,14 @@ contract YieldGekoForkTest is Test {
     address constant GMX_WITHDRAWAL_VAULT = 0x0628D46b5D145f183AdB6Ef1f2c97eD1C4701C55;
     address constant GMX_ETH_USD_MARKET = 0x70d95587d40A2caf56bd97485aB3Eec10Bee6336;
 
-    // Uniswap V3 — USDC/WETH 0.3% pool (verified: fee=3000)
     address constant UNI_V3_POSITION_MGR = 0xC36442b4a4522E871399CD717aBDD847Ab11FE88;
     address constant UNI_USDC_WETH_POOL = 0x17c14D2c404D167802b16C450d3c99F88F2c4F4d;
 
-    // ── Test accounts ─────────────────────────────────────────────────────────
     address constant OWNER = address(0x1001);
     address constant AGENT = address(0x1002);
     address constant TREASURY = address(0x1003);
     uint256 constant USER_KEY = 0xF04C7E571234;
-    address USER; // derived from USER_KEY in setUp
+    address USER;
 
     YieldGeko vault;
 
@@ -116,7 +101,7 @@ contract YieldGekoForkTest is Test {
 
         vm.startPrank(OWNER);
         vault = new YieldGeko(AGENT, TREASURY, 10);
-        // Approve all protocol targets for this chain
+
         vault.approveTarget(block.chainid, AAVE_POOL);
         vault.approveTarget(block.chainid, MORPHO_VAULT);
         vault.approveTarget(block.chainid, PENDLE_ROUTER);
@@ -125,7 +110,6 @@ contract YieldGekoForkTest is Test {
         vault.approveTarget(block.chainid, UNI_V3_POSITION_MGR);
         vm.stopPrank();
 
-        // Register a permissive test policy for USER (minAPY=0 so all deposits pass)
         _registerTestPolicy();
 
         deal(USDC, USER, 100_000e6);
@@ -136,8 +120,8 @@ contract YieldGekoForkTest is Test {
     function _registerTestPolicy() internal {
         YieldGeko.Policy memory p = YieldGeko.Policy({
             user: USER,
-            managedUSD: type(uint256).max / 1e18, // no cap for tests
-            minAPY: 0, // no APY floor
+            managedUSD: type(uint256).max / 1e18,
+            minAPY: 0,
             maxDrawdownBps: 5_000,
             maxFeeBps: 200,
             nonce: 0,
@@ -160,10 +144,6 @@ contract YieldGekoForkTest is Test {
         vm.prank(AGENT);
         vault.registerPolicy(p, abi.encodePacked(r, s, v));
     }
-
-    // =========================================================================
-    // VAULT CORE
-    // =========================================================================
 
     function test_Fork_VaultDepositWithdraw() public {
         vm.startPrank(USER);
@@ -192,10 +172,6 @@ contract YieldGekoForkTest is Test {
         vm.expectRevert();
         vault.execute(USER, AAVE_POOL, "", keccak256("r"), USDC);
     }
-
-    // =========================================================================
-    // AAVE V3
-    // =========================================================================
 
     function test_Fork_Aave_Supply() public {
         _depositToVault(USDC, 1_000e6);
@@ -242,7 +218,6 @@ contract YieldGekoForkTest is Test {
         );
         vm.stopPrank();
 
-        // Allow 10 wei rounding from Aave interest accrual
         assertGe(IERC20Fork(USDC).balanceOf(address(vault)), 1_000e6 - 10, "Should recover principal");
     }
 
@@ -284,22 +259,15 @@ contract YieldGekoForkTest is Test {
         vault.executeBatch(USER, USDC, targets, data, keccak256("bad-batch"));
         vm.stopPrank();
 
-        // Atomicity: no state changes — supply was rolled back
         (uint256 col,,,,,) = IAavePool(AAVE_POOL).getUserAccountData(address(vault));
         assertEq(col, 0, "Batch should have fully reverted");
     }
 
-    // =========================================================================
-    // MORPHO (ERC-4626)
-    // =========================================================================
-
     function test_Fork_Morpho_DepositAndWithdraw() public {
-        // Verify vault accepts USDC
         assertEq(IERC4626Fork(MORPHO_VAULT).asset(), USDC, "Vault asset mismatch");
 
         _depositToVault(USDC, 1_000e6);
 
-        // Deposit into Morpho
         vm.startPrank(AGENT);
         vault.approveToken(USDC, MORPHO_VAULT, 1_000e6);
         vault.executeDeposit(
@@ -317,7 +285,6 @@ contract YieldGekoForkTest is Test {
         assertGt(shares, 0, "No Morpho shares received");
         assertEq(IERC20Fork(USDC).balanceOf(address(vault)), 0, "USDC should be in Morpho");
 
-        // Withdraw back
         vm.startPrank(AGENT);
         vault.executeWithdraw(
             USER,
@@ -332,20 +299,10 @@ contract YieldGekoForkTest is Test {
         assertGt(IERC20Fork(USDC).balanceOf(address(vault)), 0, "No USDC returned from Morpho");
     }
 
-    // =========================================================================
-    // PENDLE PT
-    // =========================================================================
-    //
-    //  Market: PT-USDai-18JUN2026  (expiry verified: 1781740800)
-    //  Router: PendleRouterV3 0x888... (selector 0xc81f847a verified on-chain)
-    //  LimitOrderData uses correct FillOrderParams with Order struct (12 fields)
-    //  Input:  USDai (getTokensIn returns [PYUSD, USDai], verified on-chain)
-
     function test_Fork_Pendle_SwapForPT() public {
         uint256 amount = 1_000e18;
         _depositToVault(USDAI, amount);
 
-        // Build calldata using a helper contract to get correct ABI tuple encoding
         PendleCalldataBuilder builder = new PendleCalldataBuilder();
         bytes memory callData =
             builder.buildSwapForPt(address(vault), PENDLE_MARKET, (amount * 90) / 100, USDAI, amount);
@@ -359,30 +316,19 @@ contract YieldGekoForkTest is Test {
         assertGt(ptBalance, 0, "No PT received from Pendle");
     }
 
-    // =========================================================================
-    // UNISWAP V3 (DELTA_NEUTRAL LP)
-    // =========================================================================
-    //
-    //  Pool: WETH/USDC.e 0.3% (token0=WETH, token1=USDC.e, fee=3000, verified)
-    //  In-range position: provide both tokens across current tick.
-    //  currentTick verified on-chain: -198786 (tickSpacing=60)
-
     function test_Fork_UniV3_MintLP() public {
         (, int24 currentTick,,,,,) = IUniV3Pool(UNI_USDC_WETH_POOL).slot0();
 
-        // Floor-divide for negative ticks (Solidity truncates toward zero)
         int24 tickSpacing = 60;
         int24 currentFloor = currentTick >= 0
             ? (currentTick / tickSpacing) * tickSpacing
             : ((currentTick - tickSpacing + 1) / tickSpacing) * tickSpacing;
 
-        // In-range: 5 tick spacings either side of current price
         int24 tickLower = currentFloor - tickSpacing * 5;
         int24 tickUpper = currentFloor + tickSpacing * 5;
 
-        // token0=WETH, token1=USDC.e — need both for in-range liquidity
         uint256 wethAmount = 0.1 ether;
-        uint256 usdceAmount = 300e6; // ~$300 USDC.e as the paired side
+        uint256 usdceAmount = 300e6;
         _depositToVault(WETH, wethAmount);
         _depositToVault(USDCE, usdceAmount);
 
@@ -395,8 +341,8 @@ contract YieldGekoForkTest is Test {
             uint24(3000),
             tickLower,
             tickUpper,
-            wethAmount, // amount0Desired (WETH)
-            usdceAmount, // amount1Desired (USDC.e)
+            wethAmount,
+            usdceAmount,
             uint256(0),
             uint256(0),
             address(vault),
@@ -420,22 +366,12 @@ contract YieldGekoForkTest is Test {
         assertGt(nftBalance, 0, "No UniV3 NFT received");
     }
 
-    // =========================================================================
-    // GMX V2 REAL YIELD (GM Pool deposit via multicall)
-    // =========================================================================
-    //
-    //  GM ETH/USD market (verified: name="GMX Market")
-    //  Multicall: sendWnt(depositVault, fee) + sendTokens(USDC, depositVault, amount) + createDeposit(params)
-
-    // Kept as a verification that the token transfer path works end-to-end.
-    // Full createDeposit tested in test_Fork_GMX_FullDeposit above.
     function test_Fork_GMX_CreateDeposit() public {
         uint256 usdcAmount = 1_000e6;
         uint256 execFee = 1e15;
         _depositToVault(USDC, usdcAmount);
         deal(AGENT, 1 ether);
 
-        // New ExchangeRouter has ROUTER_PLUGIN role — no mocking needed
         bytes[] memory calls = new bytes[](2);
         calls[0] = abi.encodeWithSignature("sendWnt(address,uint256)", GMX_DEPOSIT_VAULT, execFee);
         calls[1] = abi.encodeWithSignature("sendTokens(address,address,uint256)", USDC, GMX_DEPOSIT_VAULT, usdcAmount);
@@ -454,25 +390,12 @@ contract YieldGekoForkTest is Test {
         assertEq(IERC20Fork(USDC).balanceOf(GMX_DEPOSIT_VAULT), balanceBefore + usdcAmount, "USDC in GMX DepositVault");
     }
 
-    // =========================================================================
-    // GMX V2 REAL YIELD — FULL createDeposit (no role mocking needed)
-    // =========================================================================
-    //
-    //  New ExchangeRouter 0x1C3fa76e... has both ROUTER_PLUGIN and CONTROLLER
-    //  roles on-chain. No vm.mockCall required.
-
-    // test_Fork_GMX_FullDeposit verifies struct encoding + token transfer.
-    // createDeposit itself is confirmed correctly encoded (visible in trace with nested
-    // CreateDepositParamsAddresses struct). Fails only at GMX's internal oracle lookup
-    // (address(0) call inside DepositHandler) — live GMX infrastructure not available
-    // in fork. On real mainnet all oracle feeds are live and this executes correctly.
     function test_Fork_GMX_FullDeposit() public {
         uint256 usdcAmount = 1_000e6;
         uint256 execFee = 1e15;
         _depositToVault(USDC, usdcAmount);
         deal(AGENT, 1 ether);
 
-        // First prove sendWnt + sendTokens work with new router (no mocking needed)
         bytes[] memory tokenCalls = new bytes[](2);
         tokenCalls[0] = abi.encodeWithSignature("sendWnt(address,uint256)", GMX_DEPOSIT_VAULT, execFee);
         tokenCalls[1] =
@@ -488,35 +411,25 @@ contract YieldGekoForkTest is Test {
         );
         vm.stopPrank();
 
-        // USDC moved correctly from vault to GMX DepositVault
         assertEq(IERC20Fork(USDC).balanceOf(address(vault)), 0, "USDC left vault");
         assertEq(IERC20Fork(USDC).balanceOf(GMX_DEPOSIT_VAULT), depositVaultBefore + usdcAmount, "USDC in DepositVault");
 
-        // Verify createDeposit calldata is correctly encoded (build and decode)
         GMXCalldataBuilder gmxBuilder = new GMXCalldataBuilder();
         bytes memory fullMulticall = gmxBuilder.buildDepositMulticall(
             GMX_DEPOSIT_VAULT, USDC, usdcAmount, GMX_ETH_USD_MARKET, address(vault), execFee
         );
-        // If encoding is wrong this would revert during build — passing here proves correctness
+
         assertGt(fullMulticall.length, 0, "Multicall data built correctly");
     }
 
-    // =========================================================================
-    // PENDLE LP — addLiquidity + removeLiquidity
-    // =========================================================================
-    //
-    //  addLiquidityDualTokenAndPt: vault provides USDai + PT, receives LP tokens.
-    //  removeLiquidityDualTokenAndPt: vault burns LP, receives USDai + PT back.
-
     function test_Fork_Pendle_AddRemoveLiquidity() public {
         uint256 tokenAmount = 500e18;
-        uint256 ptAmount = 400e18; // slightly less PT for price ratio
+        uint256 ptAmount = 400e18;
         _depositToVault(USDAI, tokenAmount);
         _depositToVault(PENDLE_PT, ptAmount);
 
         PendleCalldataBuilder builder = new PendleCalldataBuilder();
 
-        // Add liquidity
         bytes memory addData = builder.buildAddLiquidity(address(vault), PENDLE_MARKET, USDAI, tokenAmount, ptAmount);
         vm.startPrank(AGENT);
         vault.approveToken(USDAI, PENDLE_ROUTER, tokenAmount);
@@ -531,13 +444,11 @@ contract YieldGekoForkTest is Test {
         vault.executeBatchMulti(USER, addAssets, addTargets, addDataArr, keccak256("pendle-lp-add"));
         vm.stopPrank();
 
-        // Vault should now hold LP tokens (the SY-LP shares)
-        address lpToken = PENDLE_SY; // LP token is the SY token in Pendle
-        // Instead verify both input tokens left the vault
+        address lpToken = PENDLE_SY;
+
         assertLt(IERC20Fork(USDAI).balanceOf(address(vault)), tokenAmount, "USDai should have entered LP");
         assertLt(IERC20Fork(PENDLE_PT).balanceOf(address(vault)), ptAmount, "PT should have entered LP");
 
-        // Remove liquidity — burn all LP tokens
         uint256 lpBalance = IERC20Fork(PENDLE_MARKET).balanceOf(address(vault));
         assertGt(lpBalance, 0, "No LP tokens received");
 
@@ -555,22 +466,16 @@ contract YieldGekoForkTest is Test {
         );
         vm.stopPrank();
 
-        // Vault should recover USDai and PT
         assertGt(IERC20Fork(USDAI).balanceOf(address(vault)), 0, "No USDai returned");
         assertGt(IERC20Fork(PENDLE_PT).balanceOf(address(vault)), 0, "No PT returned");
     }
 
-    // =========================================================================
-    // PENDLE YT — buy YT + redeem after maturity
-    // =========================================================================
-
     function test_Fork_Pendle_YT_BuyAndRedeem() public {
         uint256 amount = 1_000e18;
-        _depositToVault(USDAI, amount * 2); // extra for both buy + redeem
+        _depositToVault(USDAI, amount * 2);
 
         PendleCalldataBuilder builder = new PendleCalldataBuilder();
 
-        // Buy YT
         bytes memory ytData = builder.buildSwapForYt(address(vault), PENDLE_MARKET, (amount * 90) / 100, USDAI, amount);
         vm.startPrank(AGENT);
         vault.approveToken(USDAI, PENDLE_ROUTER, amount);
@@ -580,14 +485,11 @@ contract YieldGekoForkTest is Test {
         uint256 ytBalance = IERC20Fork(PENDLE_YT).balanceOf(address(vault));
         assertGt(ytBalance, 0, "No YT tokens received");
 
-        // Also buy matching PT for redeemPyToToken (needs equal PT + YT)
         uint256 ptAmount = ytBalance;
         deal(PENDLE_PT, address(vault), ptAmount);
 
-        // Warp past maturity
         vm.warp(PENDLE_EXPIRY + 1);
 
-        // Redeem PT + YT back to USDai
         bytes memory redeemData = builder.buildRedeemPyToToken(address(vault), PENDLE_YT, ptAmount, USDAI);
         vm.startPrank(AGENT);
         vault.approveToken(PENDLE_PT, PENDLE_ROUTER, ptAmount);
@@ -600,21 +502,12 @@ contract YieldGekoForkTest is Test {
         assertGt(IERC20Fork(USDAI).balanceOf(address(vault)), 0, "No USDai returned on redeem");
     }
 
-    // =========================================================================
-    // PENDLE PT — pre-maturity exit via swapExactPtForToken
-    // =========================================================================
-    //
-    //  Sells PT on Pendle AMM before expiry. Takes a small discount vs face value
-    //  (shrinks as maturity approaches). This is the agent's exit path for SAFETY_EXIT
-    //  and MIGRATE actions when holding PENDLE_PT before June 18, 2026.
-
     function test_Fork_Pendle_PT_PreMaturityExit() public {
         uint256 amount = 1_000e18;
         _depositToVault(USDAI, amount);
 
         PendleCalldataBuilder builder = new PendleCalldataBuilder();
 
-        // Buy PT
         bytes memory buyData = builder.buildSwapForPt(address(vault), PENDLE_MARKET, (amount * 90) / 100, USDAI, amount);
         vm.startPrank(AGENT);
         vault.approveToken(USDAI, PENDLE_ROUTER, amount);
@@ -624,7 +517,6 @@ contract YieldGekoForkTest is Test {
         uint256 ptBalance = IERC20Fork(PENDLE_PT).balanceOf(address(vault));
         assertGt(ptBalance, 0, "No PT received");
 
-        // Pre-maturity exit: sell PT on AMM (block.timestamp < PENDLE_EXPIRY)
         bytes memory sellData = builder.buildSwapPtForToken(address(vault), PENDLE_MARKET, USDAI, ptBalance);
         vm.startPrank(AGENT);
         vault.approveToken(PENDLE_PT, PENDLE_ROUTER, ptBalance);
@@ -633,7 +525,6 @@ contract YieldGekoForkTest is Test {
         );
         vm.stopPrank();
 
-        // Vault gets back USDai at a slight discount (PT trades below face value pre-maturity)
         uint256 usdaiBack = IERC20Fork(USDAI).balanceOf(address(vault));
         assertGt(usdaiBack, 0, "No USDai returned pre-maturity");
         assertLt(usdaiBack, amount, "Got more than deposited - impossible");
@@ -641,17 +532,12 @@ contract YieldGekoForkTest is Test {
         assertEq(IERC20Fork(PENDLE_PT).balanceOf(address(vault)), 0, "PT not fully sold");
     }
 
-    // =========================================================================
-    // PENDLE YT — pre-maturity exit via swapExactYtForToken
-    // =========================================================================
-
     function test_Fork_Pendle_YT_PreMaturityExit() public {
         uint256 amount = 500e18;
         _depositToVault(USDAI, amount);
 
         PendleCalldataBuilder builder = new PendleCalldataBuilder();
 
-        // Buy YT
         bytes memory buyData = builder.buildSwapForYt(address(vault), PENDLE_MARKET, (amount * 80) / 100, USDAI, amount);
         vm.startPrank(AGENT);
         vault.approveToken(USDAI, PENDLE_ROUTER, amount);
@@ -661,7 +547,6 @@ contract YieldGekoForkTest is Test {
         uint256 ytBalance = IERC20Fork(PENDLE_YT).balanceOf(address(vault));
         assertGt(ytBalance, 0, "No YT received");
 
-        // Pre-maturity exit: sell YT on AMM
         bytes memory sellData = builder.buildSwapYtForToken(address(vault), PENDLE_MARKET, USDAI, ytBalance);
         vm.startPrank(AGENT);
         vault.approveToken(PENDLE_YT, PENDLE_ROUTER, ytBalance);
@@ -675,10 +560,6 @@ contract YieldGekoForkTest is Test {
         assertEq(IERC20Fork(PENDLE_YT).balanceOf(address(vault)), 0, "YT not fully sold");
     }
 
-    // =========================================================================
-    // PENDLE PT — redeem after maturity
-    // =========================================================================
-
     function test_Fork_Pendle_PT_RedeemAtMaturity() public {
         uint256 amount = 1_000e18;
         _depositToVault(USDAI, amount);
@@ -691,7 +572,7 @@ contract YieldGekoForkTest is Test {
 
         uint256 ptBalance = IERC20Fork(PENDLE_PT).balanceOf(address(vault));
         assertGt(ptBalance, 0, "No PT received");
-        // Simulate holding matching YT for redeemPyToToken.
+
         deal(PENDLE_YT, address(vault), amount);
 
         vm.warp(PENDLE_EXPIRY + 1);
@@ -710,10 +591,6 @@ contract YieldGekoForkTest is Test {
         assertEq(IERC20Fork(PENDLE_PT).balanceOf(address(vault)), 0, "PT not fully burned");
     }
 
-    // =========================================================================
-    // UNISWAP V3 — full cycle (mint + collect fees + decreaseLiquidity)
-    // =========================================================================
-
     function test_Fork_UniV3_FullCycle() public {
         (, int24 currentTick,,,,,) = IUniV3Pool(UNI_USDC_WETH_POOL).slot0();
         int24 tickSpacing = 60;
@@ -728,7 +605,6 @@ contract YieldGekoForkTest is Test {
         _depositToVault(WETH, wethAmount);
         _depositToVault(USDCE, usdceAmount);
 
-        // Mint position
         bytes memory mintData = abi.encodeWithSelector(
             bytes4(
                 keccak256("mint((address,address,uint24,int24,int24,uint256,uint256,uint256,uint256,address,uint256))")
@@ -759,17 +635,11 @@ contract YieldGekoForkTest is Test {
         vault.executeBatchMulti(USER, mintAssets, mintTargets, mintDataArr, keccak256("univ3-mint"));
         vm.stopPrank();
 
-        // Parse tokenId and liquidity from Transfer event logs
-        // (vault.execute returns raw bytes from positionMgr.mint)
-        // In tests, check NFT balance to confirm tokenId was assigned
         uint256 nftBalance = IUniV3PositionMgr(UNI_V3_POSITION_MGR).balanceOf(address(vault));
         assertEq(nftBalance, 1, "Should have 1 UniV3 NFT");
 
-        // Get tokenId (tokenId of the first NFT in vault)
-        // The NonfungiblePositionManager.tokenOfOwnerByIndex is available
         uint256 tokenId = _getUniV3TokenId(address(vault));
 
-        // Collect fees (even if 0 — proves the call works)
         bytes memory collectData = abi.encodeWithSelector(
             bytes4(keccak256("collect((uint256,address,uint128,uint128))")),
             tokenId,
@@ -780,7 +650,6 @@ contract YieldGekoForkTest is Test {
         vm.prank(AGENT);
         vault.execute(USER, UNI_V3_POSITION_MGR, collectData, keccak256("univ3-collect"), WETH);
 
-        // Decrease liquidity (close position)
         (,,,,,,, uint128 liquidity,,,,) = _getUniV3Position(tokenId);
         assertGt(liquidity, 0, "Position has no liquidity");
 
@@ -795,7 +664,6 @@ contract YieldGekoForkTest is Test {
         vm.prank(AGENT);
         vault.execute(USER, UNI_V3_POSITION_MGR, decreaseData, keccak256("univ3-decrease"), WETH);
 
-        // Collect the removed liquidity tokens
         address[] memory returnAssets = new address[](2);
         returnAssets[0] = WETH;
         returnAssets[1] = USDCE;
@@ -807,24 +675,14 @@ contract YieldGekoForkTest is Test {
             USER, returnAssets, deployedAmounts, UNI_V3_POSITION_MGR, collectData, keccak256("univ3-collect-final")
         );
 
-        // Vault should have received back WETH and/or USDCE
         uint256 wethBack = IERC20Fork(WETH).balanceOf(address(vault));
         uint256 usdceBack = IERC20Fork(USDCE).balanceOf(address(vault));
         assertGt(wethBack + usdceBack, 0, "No tokens returned on position close");
     }
 
-    // =========================================================================
-    // LEVERAGED LOOP — full cycle (open + unwind)
-    // =========================================================================
-    //
-    //  Open: supply + borrow loop via executeBatch (proven atomic in prior test)
-    //  Unwind: repay all debt + withdraw all collateral via executeBatch.
-    //  The vault receives USDC to cover the debt before unwind.
-
     function test_Fork_LeveragedLoop_FullCycle() public {
         _depositToVault(USDC, 1_000e6);
 
-        // --- Open the leveraged loop ---
         address[] memory targets = new address[](7);
         bytes[] memory data = new bytes[](7);
         uint256 amount = 1_000e6;
@@ -855,9 +713,7 @@ contract YieldGekoForkTest is Test {
         assertGt(totalDebt, 0, "No debt created");
         assertGt(healthFactor, 1e18, "Health factor below 1");
 
-        // --- Unwind: deal vault enough USDC to repay debt ---
-        // totalDebt is in USD with 8 decimals (Aave base units), convert to USDC 6 decimals
-        uint256 repayAmount = (totalDebt / 1e2) + 10e6; // add 10 USDC buffer for interest
+        uint256 repayAmount = (totalDebt / 1e2) + 10e6;
         _depositToVault(USDC, repayAmount);
 
         vm.startPrank(AGENT);
@@ -874,21 +730,15 @@ contract YieldGekoForkTest is Test {
         vault.executeBatch(USER, USDC, unwindTargets, unwindData, keccak256("loop-unwind"));
         vm.stopPrank();
 
-        // After unwind: no debt, USDC recovered
         (, uint256 debtAfter,,,,) = IAavePool(AAVE_POOL).getUserAccountData(address(vault));
         assertEq(debtAfter, 0, "Debt not fully repaid");
         assertGt(IERC20Fork(USDC).balanceOf(address(vault)), 0, "No USDC recovered");
     }
 
-    // =========================================================================
-    // executeWithValue forwards ETH
-    // =========================================================================
-
     function test_Fork_ExecuteWithValue_ForwardsETH() public {
         deal(AGENT, 0.01 ether);
         MockPayable mockTarget = new MockPayable();
 
-        // Whitelist the dynamically-deployed mock target for this chain
         vm.prank(OWNER);
         vault.approveTarget(block.chainid, address(mockTarget));
 
@@ -900,15 +750,6 @@ contract YieldGekoForkTest is Test {
         assertEq(address(mockTarget).balance, 0.001 ether, "ETH not forwarded");
     }
 
-    // =========================================================================
-    // Helpers
-    // =========================================================================
-
-    // =========================================================================
-    // DELTA-NEUTRAL — targeted regression tests for the 3 failure modes
-    // =========================================================================
-
-    // Helper: mint a WETH/USDCE position and return (tokenId, liquidity, wethUsed, usdceUsed)
     function _mintWethUsdcePosition()
         internal
         returns (uint256 tokenId, uint128 liquidity, uint256 wethUsed, uint256 usdceUsed)
@@ -960,12 +801,10 @@ contract YieldGekoForkTest is Test {
         (,,,,,,, liquidity,,,,) = _getUniV3Position(tokenId);
         assertGt(liquidity, 0, "Mint produced no liquidity");
 
-        // weth/usdce consumed = deposit - remaining idle
         wethUsed = wethAmt - vault.balances(USER, WETH);
         usdceUsed = usdceAmt - vault.balances(USER, USDCE);
     }
 
-    // Helper: build multicall([decreaseLiquidity, collect]) payload for the position manager
     function _buildCloseMulticall(uint256 tokenId, uint128 liquidity)
         internal
         view
@@ -992,9 +831,6 @@ contract YieldGekoForkTest is Test {
         multicallData = abi.encodeWithSignature("multicall(bytes[])", inner);
     }
 
-    // ── Test 1: Close position using [0,0] deployedAmounts ──────────────────
-    // Regression: old code used executeWithdraw which required deployed[user][USDC] > 0.
-    // New code uses executeWithdrawMulti([token0,token1],[0,0]) — must work regardless.
     function test_Fork_DeltaNeutral_CloseWithZeroDeployed() public {
         (uint256 tokenId, uint128 liquidity,,) = _mintWethUsdcePosition();
 
@@ -1004,7 +840,7 @@ contract YieldGekoForkTest is Test {
         assets[0] = WETH;
         assets[1] = USDCE;
         uint256[] memory deployedAmts = new uint256[](2);
-        // Deliberately pass 0 for both — the key regression
+
         deployedAmts[0] = 0;
         deployedAmts[1] = 0;
 
@@ -1018,25 +854,18 @@ contract YieldGekoForkTest is Test {
         uint256 usdceAfter = vault.balances(USER, USDCE);
         assertGt(wethAfter + usdceAfter, wethBefore + usdceBefore, "No tokens credited after close");
 
-        // NFT should have 0 liquidity now
         (,,,,,,, uint128 liqAfter,,,,) = _getUniV3Position(tokenId);
         assertEq(liqAfter, 0, "Liquidity should be 0 after close");
     }
 
-    // ── Test 2: Close works even when user is drawdown-paused ────────────────
-    // Regression: old executeWithdraw path checked _assertNotUserPaused → reverted.
-    // executeWithdrawMulti does NOT check userPaused — must succeed while paused.
     function test_Fork_DeltaNeutral_CloseWhilePaused() public {
         (uint256 tokenId, uint128 liquidity,,) = _mintWethUsdcePosition();
 
-        // Set peak value high first, then report collapse → triggers pause.
-        // Policy maxDrawdownBps = 5000 (50%), so reporting < peak/2 pauses the user.
         vm.startPrank(AGENT);
-        vault.reportValue(USER, 1_000e6); // sets peakValueUSD = 1000 USD
-        vault.reportValue(USER, 1); // 1 < 500e6 threshold → pause
+        vault.reportValue(USER, 1_000e6);
+        vault.reportValue(USER, 1);
         vm.stopPrank();
 
-        // Confirm user is now paused
         assertTrue(vault.userPaused(USER), "User should be paused after drawdown");
 
         bytes memory mcData = _buildCloseMulticall(tokenId, liquidity);
@@ -1047,7 +876,6 @@ contract YieldGekoForkTest is Test {
         deployedAmts[0] = 0;
         deployedAmts[1] = 0;
 
-        // This must NOT revert even though the user is paused
         vm.prank(AGENT);
         vault.executeWithdrawMulti(USER, assets, deployedAmts, UNI_V3_POSITION_MGR, mcData, keccak256("close-paused"));
 
@@ -1056,13 +884,9 @@ contract YieldGekoForkTest is Test {
         assertGt(wethAfter + usdceAfter, 0, "Tokens not returned while user paused");
     }
 
-    // ── Test 3: Rebalance cycle — close then remint at new range ────────────
-    // Regression: migrate was non-atomic. New path: close (executeWithdrawMulti)
-    // → remint (executeBatchMulti from existing vault balances). No USDC roundtrip.
     function test_Fork_DeltaNeutral_RebalanceCycle() public {
         (uint256 tokenId, uint128 liquidity,,) = _mintWethUsdcePosition();
 
-        // ── Step 1: Close (executeWithdrawMulti [0,0]) ──────────────────────
         bytes memory mcData = _buildCloseMulticall(tokenId, liquidity);
         address[] memory assets = new address[](2);
         assets[0] = WETH;
@@ -1076,13 +900,12 @@ contract YieldGekoForkTest is Test {
         uint256 usdceIdle = vault.balances(USER, USDCE);
         assertGt(wethIdle + usdceIdle, 0, "No idle balance after close");
 
-        // ── Step 2: Remint at a different (wider) range ─────────────────────
         (, int24 currentTick,,,,,) = IUniV3Pool(UNI_USDC_WETH_POOL).slot0();
         int24 tickSpacing = 60;
         int24 currentFloor = currentTick >= 0
             ? (currentTick / tickSpacing) * tickSpacing
             : ((currentTick - tickSpacing + 1) / tickSpacing) * tickSpacing;
-        int24 newTickLower = currentFloor - tickSpacing * 10; // wider range
+        int24 newTickLower = currentFloor - tickSpacing * 10;
         int24 newTickUpper = currentFloor + tickSpacing * 10;
 
         bytes memory remintData = abi.encodeWithSelector(
@@ -1112,11 +935,9 @@ contract YieldGekoForkTest is Test {
         vault.executeBatchMulti(USER, assets, remintTargets, remintData_, keccak256("rebal-remint"));
         vm.stopPrank();
 
-        // Vault now owns 2 NFTs: old (empty) at index 0, new (with liquidity) at index 1
         uint256 nftCount = IUniV3PositionMgr(UNI_V3_POSITION_MGR).balanceOf(address(vault));
         assertEq(nftCount, 2, "Should have 2 NFTs after rebalance (old empty + new)");
 
-        // Get new tokenId at index 1
         (bool ok2, bytes memory ret2) = UNI_V3_POSITION_MGR.staticcall(
             abi.encodeWithSignature("tokenOfOwnerByIndex(address,uint256)", address(vault), 1)
         );
@@ -1174,11 +995,6 @@ contract YieldGekoForkTest is Test {
 contract MockPayable {
     function receiveETH() external payable {}
 }
-
-// ── Pendle calldata builder ────────────────────────────────────────────────────
-//
-//  Builds correctly ABI-encoded calldata for Pendle V3 swapExactTokenForPt.
-//  Using a helper contract ensures Solidity handles tuple encoding correctly.
 
 interface IPendleRouter {
     struct ApproxParams {
@@ -1289,10 +1105,7 @@ interface IPendleRouter {
     ) external returns (uint256 netTokenOut, uint256 netSyFee, uint256 netSyInterm);
 }
 
-// ── GMX V2 calldata builder ───────────────────────────────────────────────────
-
 interface IGMXExchangeRouter {
-    // Updated struct layout from IDepositUtils.sol (GMX V2 current)
     struct CreateDepositParamsAddresses {
         address receiver;
         address callbackContract;

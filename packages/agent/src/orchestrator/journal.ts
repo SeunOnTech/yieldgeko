@@ -71,9 +71,7 @@ export class JournalManager {
     console.log(`[Journal] Infinity Journal initialized (WAL mode) at ${this.dbPath}`);
   }
 
-
-
-  // ── Logs ───────────────────────────────────────────────────────────────────
+  
 
   addLog(strategyId: string, level: LogLevel, message: string, detail?: string, sessionId?: string): LogEntry {
     const entry: LogEntry = {
@@ -110,7 +108,7 @@ export class JournalManager {
     }));
   }
 
-  // ── Executions ─────────────────────────────────────────────────────────────
+  
 
   addExecution(strategyId: string, record: ExecutionRecord): void {
     const stmt = this.db.prepare(`
@@ -126,7 +124,7 @@ export class JournalManager {
       record.receiptHash,
       record.amountUSD,
       record.simulated ? 1 : 0,
-      JSON.stringify(record) // store full record as JSON for recovery
+      JSON.stringify(record) 
     );
   }
 
@@ -144,7 +142,7 @@ export class JournalManager {
 
     const stmtUpdate = this.db.prepare(`
       UPDATE strategy_executions
-      SET detail = ?, tx_hash = ?, amount_usd = ?
+      SET detail = ?, tx_hash = ?, amount_usd = ?, simulated = ?
       WHERE strategy_id = ? AND receipt_hash = ?
     `);
 
@@ -152,6 +150,7 @@ export class JournalManager {
       JSON.stringify(updated),
       updated.txHash || null,
       updated.amountUSD || null,
+      updated.simulated ? 1 : 0,
       strategyId,
       receiptHash
     );
@@ -169,7 +168,7 @@ export class JournalManager {
     return (stmt.all(strategyId, limit) as any[]).map(r => JSON.parse(r.detail));
   }
 
-  // ── PnL ────────────────────────────────────────────────────────────────────
+  
 
   addPnL(strategyId: string, point: PnLPoint): void {
     const stmt = this.db.prepare(`
@@ -200,7 +199,7 @@ export class JournalManager {
     return (stmt.all(strategyId, limit) as any[]);
   }
 
-  // ── Syncing ────────────────────────────────────────────────────────────────
+  
 
   getUnsyncedData(strategyId: string): { logs: LogEntry[], executions: ExecutionRecord[], pnl: PnLPoint[] } {
     const checkpoint = this.db.prepare(`SELECT * FROM strategy_checkpoints WHERE strategy_id = ?`).get(strategyId) as any || { last_log_ts: 0, last_exec_ts: 0, last_pnl_ts: 0 };
@@ -229,15 +228,13 @@ export class JournalManager {
     }
   }
 
-  // ── Cleanup ────────────────────────────────────────────────────────────────
-
+  
 
   close(): void {
     this.db.close();
   }
 }
 
-// Singleton
 let _journal: JournalManager | null = null;
 export function getJournal(): JournalManager {
   if (!_journal) _journal = new JournalManager();

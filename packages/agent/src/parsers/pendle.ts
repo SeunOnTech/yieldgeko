@@ -1,7 +1,6 @@
 import { arbitrumClient } from '../transport/rpc-config';
 import { decodeAbiParameters, encodeFunctionData, parseAbi, Address, getAddress } from 'viem';
 
-// Active Pendle weETH Market on Arbitrum (25 Jun 2026)
 export const DEFAULT_PENDLE_MARKET = getAddress('0x46d62a8dede1bf2d0de04f2ed863245cbba5e538');
 
 const IMarket = parseAbi([
@@ -35,11 +34,11 @@ export async function fetchPendleMarketYield(market: Address = DEFAULT_PENDLE_MA
 
   const decoded = decodeAbiParameters(fields as any, rawResult) as bigint[];
 
-  // Field mapping verified from raw state:
-  // index 8: lastLnImpliedRate (1e18 based for this market)
-  // index 4: ptPrice
-  // index 5: expiry
-  // index 3: totalLp (liquidity)
+  
+  
+  
+  
+  
   const impliedApyBps = decoded[8]! / 10n**14n; 
 
   return {

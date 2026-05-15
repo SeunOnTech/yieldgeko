@@ -4,8 +4,6 @@ import React, { useMemo, useState } from 'react'
 import { useHeader } from '../../components/HeaderContext'
 import { AppHeader } from '../../components/AppHeader'
 
-// ── Icons ─────────────────────────────────────────────────────────────────────
-
 const IcoChevronRight = () => (
   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.3 }}>
     <polyline points="9 18 15 12 9 6" />
@@ -42,8 +40,6 @@ const IcoGlobe = () => (
     <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
   </svg>
 )
-
-// ── Components ────────────────────────────────────────────────────────────────
 
 const Toggle = ({ active, onToggle }: { active: boolean; onToggle: () => void }) => (
   <div 
@@ -116,8 +112,6 @@ const SettingRow = ({ label, children, description }: { label: string; children:
   </div>
 )
 
-// ── Page ──────────────────────────────────────────────────────────────────────
-
 export default function SettingsPage() {
   const header = useMemo(() => <AppHeader />, [])
   useHeader(header)
@@ -144,7 +138,7 @@ export default function SettingsPage() {
         Settings
       </h1>
 
-      {/* Basic Settings */}
+      
       <div style={{ display: 'flex', flexDirection: 'column' }}>
         <SettingRow label="Theme">
           <div style={{
@@ -189,7 +183,7 @@ export default function SettingsPage() {
         </SettingRow>
       </div>
 
-      {/* Active Delegations Link */}
+      
       <div style={{
         marginTop: 12,
         padding: '20px 24px',
@@ -223,7 +217,7 @@ export default function SettingsPage() {
         <IcoChevronRight />
       </div>
 
-      {/* Privacy Section */}
+      
       <div style={{ marginTop: 64 }}>
         <h2 style={{ fontSize: 20, fontWeight: 600, marginBottom: 24, color: 'var(--text-primary)' }}>Privacy</h2>
         <div style={{ borderTop: '1px solid var(--border)' }}>
@@ -250,7 +244,7 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      {/* Backup Section */}
+      
       <div style={{ marginTop: 64 }}>
         <h2 style={{ fontSize: 20, fontWeight: 600, marginBottom: 12, color: 'var(--text-primary)' }}>Data Export</h2>
         <div style={{ borderTop: '1px solid var(--border)', paddingTop: 24 }}>

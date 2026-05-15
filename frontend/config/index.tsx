@@ -38,12 +38,23 @@ if (!projectId) {
 
 export const networks = [arbitrum, zeroGMainnet, zeroGGalileo] as [typeof arbitrum, typeof zeroGMainnet, typeof zeroGGalileo]
 
-export const wagmiAdapter = new WagmiAdapter({
-  storage: createStorage({ storage: cookieStorage }),
+declare global {
+  // Prevent dev/HMR from recreating wallet infrastructure and stacking listeners.
+  var __yieldgekoWagmiAdapter: WagmiAdapter | undefined
+}
+
+const storage = createStorage({ storage: cookieStorage })
+
+export const wagmiAdapter = globalThis.__yieldgekoWagmiAdapter ?? new WagmiAdapter({
+  storage,
   ssr: true,
   projectId,
   networks,
 })
+
+if (typeof globalThis !== 'undefined') {
+  globalThis.__yieldgekoWagmiAdapter = wagmiAdapter
+}
 
 export const config = wagmiAdapter.wagmiConfig
 
@@ -52,7 +63,7 @@ export const VAULT_ADDRESS = (process.env.NEXT_PUBLIC_VAULT_ADDRESS ?? '') as `0
 
 // V2 public execution config
 export const USDC_ADDRESS = '0xaf88d065e77c8cC2239327C5EDb3A432268e5831' as `0x${string}`
-export const EXECUTOR_ADDRESS = (process.env.NEXT_PUBLIC_EXECUTOR_ADDRESS ?? '0x94DE8790BEd6Be0395C6BE7f42FD677b7B8cBcFb') as `0x${string}`
-export const SWAPPER_ADDRESS = (process.env.NEXT_PUBLIC_SWAPPER_ADDRESS ?? '0x4313539C4fF1b93891B6A66D6a2eb690153A1b33') as `0x${string}`
-export const ENFORCER_ADDRESS = (process.env.NEXT_PUBLIC_ENFORCER_ADDRESS ?? '0x21b25E099CA7AF1BEa3a4558E437C56680B4b925') as `0x${string}`
+export const EXECUTOR_ADDRESS = (process.env.NEXT_PUBLIC_EXECUTOR_ADDRESS ?? '0xdCeF84210321f1F4D851c506bF4f876c1A5E60Af') as `0x${string}`
+export const SWAPPER_ADDRESS  = (process.env.NEXT_PUBLIC_SWAPPER_ADDRESS  ?? '0x2522D02bC841DcdC9a04e7b786D105ef0b429134') as `0x${string}`
+export const ENFORCER_ADDRESS = (process.env.NEXT_PUBLIC_ENFORCER_ADDRESS ?? '0x69571d5e92f4fd49b7995ddc17a3d38961127ab2') as `0x${string}`
 export const TREASURY_ADDRESS = (process.env.NEXT_PUBLIC_TREASURY_ADDRESS ?? '0xd61E4Bfb67514d8ad797495A584f70Cd0878fc5A') as `0x${string}`

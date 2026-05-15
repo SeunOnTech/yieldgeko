@@ -4,23 +4,6 @@ import type { OnChainSnapshot } from './protocols';
 import { computeGeckoScore, applyTierMultiplier, computeRealYieldAPY } from './gecko-scorer';
 import { getTopScreenedPools } from './protocols/uniV3Screener';
 
-// ── Universe Engine ───────────────────────────────────────────────────────────
-//
-//  Discovers and ranks opportunities across all supported strategy types.
-//
-//  Data sources:
-//    Primary    → DeFiLlama Yields API (broad coverage, historical APY)
-//    Verify     → OnChainSnapshot (Chainlink prices, Aave/GMX rates, Morpho)
-//    Supplement → Gains Network API (funding rates for delta-neutral cost)
-//
-//  Strategy priority (active yield first, passive last):
-//    1. GMX_REAL_YIELD    — trader fee income
-//    2. DELTA_NEUTRAL     — LP market-making, hedged
-//    3. MORPHO_LENDING    — optimised lending, 50-150bps > Aave
-//    4. PENDLE_PT / LP    — fixed yield / yield market LP
-//    5. AAVE_LENDING      — last resort safe haven
-// ─────────────────────────────────────────────────────────────────────────────
-
 const TIER_RANK: Record<RiskTier, number> = {
   conservative: 0, balanced: 1, aggressive: 2, advanced: 3,
 };
@@ -29,8 +12,6 @@ const GAS_PCT = (4 * 12 * 0.15 / 10_000) * 100;
 const HEDGE_ASSET: Record<string, string> = {
   ETH: 'WETH', WETH: 'WETH', BTC: 'WBTC', WBTC: 'WBTC', ARB: 'ARB',
 };
-
-// ── DeFiLlama ─────────────────────────────────────────────────────────────────
 
 interface LlamaPool {
   chain: string; project: string; symbol: string; tvlUsd: number;
@@ -76,14 +57,12 @@ async function fetchFundingRates(): Promise<Map<string, number>> {
         if (from === 'ARB') rates.set('ARB',  annual);
       }
     }
-  } catch { /* defaults */ }
+  } catch {  }
   if (!rates.has('WETH')) rates.set('WETH', 6.5);
   if (!rates.has('WBTC')) rates.set('WBTC', 7.0);
   if (!rates.has('ARB'))  rates.set('ARB',  9.0);
   return rates;
 }
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function calcTrend(now: number, d7: number | null, d30: number | null): Trend {
   const ref = d7 ?? d30;
@@ -109,8 +88,6 @@ function emissionFraction(pool: LlamaPool): number {
   return reward > 0 ? Math.min(reward / total, 0.8) : 0;
 }
 
-// ── GMX REAL YIELD ────────────────────────────────────────────────────────────
-
 function buildGMXOpps(pools: LlamaPool[], oc: OnChainSnapshot): Opportunity[] {
   return pools
     .filter(p => p.project.toLowerCase().includes('gmx') && p.tvlUsd >= 500_000)
@@ -122,7 +99,7 @@ function buildGMXOpps(pools: LlamaPool[], oc: OnChainSnapshot): Opportunity[] {
       const oiBal     = mktData?.oiBalance ?? 0.5;
       const oiSkew    = Math.abs(oiBal - 0.5) * 2;
       const oiFlag    = oiSkew > 0.40;
-      const emFrac    = 0;  // GMX is real yield (trading fees)
+      const emFrac    = 0;  
 
       const costs: OpportunityCosts = {
         fundingAnnual: 0, executionPct: 0.10, gasAnnual: GAS_PCT,
@@ -135,7 +112,7 @@ function buildGMXOpps(pools: LlamaPool[], oc: OnChainSnapshot): Opportunity[] {
         protocol: 'GMX V2', pool: p.symbol, asset: mktData?.name ?? sym,
         tvlUSD: mktData?.poolValueUSD ?? p.tvlUsd,
         grossAPY, realYieldAPY: grossAPY, emissionFraction: emFrac, netAPY,
-        geckoScore: 0,  // set by scorer below
+        geckoScore: 0,  
         costs, risk: mkRisk({ counterpartyRisk: oiFlag ? 'medium' : 'low', oiBalance: oiBal, oiRiskFlag: oiFlag }),
         history: { apy7d: p.apyBase7d, apy30d: p.apyMean30d, trend: calcTrend(grossAPY, p.apyBase7d, p.apyMean30d), sigma: p.sigma },
         minTier: 'balanced', verifiedOnChain: mktData !== undefined,
@@ -143,12 +120,6 @@ function buildGMXOpps(pools: LlamaPool[], oc: OnChainSnapshot): Opportunity[] {
       };
     });
 }
-
-// ── DELTA NEUTRAL — LVR-screened via uniV3Screener ───────────────────────────
-//
-//  Replaces the old DeFiLlama-only filter with the full LVR intelligence stack:
-//  C/C_avg fee scaling, epoch ratio guard, optimal tick range pre-computed.
-//  All screener results are cached 15 minutes; no per-tick DeFiLlama calls.
 
 async function buildDeltaNeutralOpps(
   _pools:       LlamaPool[],
@@ -176,16 +147,16 @@ async function buildDeltaNeutralOpps(
       realYieldAPY:    sp.adjFeeAPY,
       emissionFraction: 0,
       netAPY:          sp.netAPY,
-      geckoScore:      0,          // set by scorer below
+      geckoScore:      0,          
       costs,
       risk: mkRisk({ counterpartyRisk: 'low', ilRisk: true, rebalanceNeeded: true }),
       history: { apy7d: null, apy30d: null, trend: 'stable', sigma: sp.sigmaRatioDaily ?? null },
       minTier:         'balanced',
-      verifiedOnChain: true,       // address resolved from on-chain factory
+      verifiedOnChain: true,       
       llamaPoolId:     sp.address,
       address:         sp.address,
       updatedAt:       Date.now(),
-      // LVR screener fields — used by execution for tick range and by screener display
+      
       lvrOptimalRangePct: sp.optimalRangePct,
       lvrConcentrationC:  sp.concentrationC,
       lvrCAvg:            sp.cAvg,
@@ -197,8 +168,6 @@ async function buildDeltaNeutralOpps(
     };
   });
 }
-
-// ── MORPHO LENDING ────────────────────────────────────────────────────────────
 
 function buildMorphoOpps(pools: LlamaPool[], _oc: OnChainSnapshot): Opportunity[] {
   return pools
@@ -217,27 +186,16 @@ function buildMorphoOpps(pools: LlamaPool[], _oc: OnChainSnapshot): Opportunity[
         costs, risk: mkRisk({ counterpartyRisk: 'none' }),
         history: { apy7d: p.apyBase7d, apy30d: p.apyMean30d, trend: calcTrend(p.apy, p.apyBase7d, p.apyMean30d), sigma: p.sigma },
         minTier: 'conservative', verifiedOnChain: false,
-        // DeFiLlama uses the Morpho vault contract address as its pool ID
+        
         llamaPoolId: p.pool, address: p.pool, updatedAt: Date.now(),
       };
     });
 }
 
-// ── PENDLE — Pendle API (real market addresses, expiry, YT address) ───────────
-//
-//  DeFiLlama does not expose Pendle market contract addresses or expiry dates.
-//  The Pendle API (api-v2.pendle.finance) provides all required fields:
-//    address     = market contract (used as marketAddress in YieldGeko execution)
-//    expiry      = maturity date (agent decides pre/post-maturity exit)
-//    pt.address  = PT token
-//    yt.address  = YT token (needed for redeemPyToToken)
-//    impliedApy  = implied APY from AMM price (more accurate than DeFiLlama)
-//    liquidity   = USD TVL in market
-
 interface PendleMarket {
   address:        string;
-  expiry:         string;          // ISO date string
-  impliedApy:     number;          // 0-1 decimal
+  expiry:         string;          
+  impliedApy:     number;          
   liquidity:      { usd: number };
   pt:             { address: string; symbol: string };
   yt:             { address: string; symbol: string };
@@ -265,7 +223,7 @@ async function buildPendleOpps(_pools: LlamaPool[]): Promise<Opportunity[]> {
 
   for (const m of markets) {
     const maturityDate = Math.floor(new Date(m.expiry).getTime() / 1_000);
-    // Skip markets within 7 days of expiry — not worth entering
+    
     if (maturityDate - nowSec < 7 * 24 * 3600) continue;
 
     const grossAPY  = m.impliedApy * 100;
@@ -274,7 +232,7 @@ async function buildPendleOpps(_pools: LlamaPool[]): Promise<Opportunity[]> {
 
     const symbol = `PT-${m.underlyingAsset.symbol}-${new Date(m.expiry).toLocaleDateString('en-US', { month: 'short', year: '2-digit' })}`;
 
-    // PT opportunity — fixed yield until maturity
+    
     results.push({
       id:              `pendle-pt-${m.address.slice(2, 10)}`,
       strategyType:    'PENDLE_PT',
@@ -283,7 +241,7 @@ async function buildPendleOpps(_pools: LlamaPool[]): Promise<Opportunity[]> {
       asset:           m.underlyingAsset.symbol,
       tvlUSD:          m.liquidity.usd,
       grossAPY,
-      realYieldAPY:    grossAPY,   // Pendle PT yield is real — no token emissions
+      realYieldAPY:    grossAPY,   
       emissionFraction: 0,
       netAPY:          Math.max(0, grossAPY - ptCosts.executionPct - ptCosts.gasAnnual),
       geckoScore:      0,
@@ -293,15 +251,15 @@ async function buildPendleOpps(_pools: LlamaPool[]): Promise<Opportunity[]> {
       minTier:         'conservative',
       verifiedOnChain: false,
       llamaPoolId:     m.address,
-      address:         m.address,         // Pendle market contract — used as marketAddress
+      address:         m.address,         
       maturityDate,
       ytAddress:       m.yt.address,
-      ptAddress:       m.pt.address,      // PT token address — needed for balance reads in position-reader
+      ptAddress:       m.pt.address,      
       updatedAt:       Date.now(),
     });
 
-    // LP opportunity — trading fees + market-making
-    const lpAPY = grossAPY * 0.3; // LP earns ~30% of implied APY as fees (rough estimate)
+    
+    const lpAPY = grossAPY * 0.3; 
     results.push({
       id:              `pendle-lp-${m.address.slice(2, 10)}`,
       strategyType:    'PENDLE_LP',
@@ -326,8 +284,8 @@ async function buildPendleOpps(_pools: LlamaPool[]): Promise<Opportunity[]> {
       updatedAt:       Date.now(),
     });
 
-    // YT opportunity — leveraged yield exposure (advanced tier)
-    const ytAPY = grossAPY * 3; // YT has ~3x leverage on implied yield
+    
+    const ytAPY = grossAPY * 3; 
     results.push({
       id:              `pendle-yt-${m.address.slice(2, 10)}`,
       strategyType:    'PENDLE_YT',
@@ -348,15 +306,13 @@ async function buildPendleOpps(_pools: LlamaPool[]): Promise<Opportunity[]> {
       llamaPoolId:     m.address,
       address:         m.address,
       maturityDate,
-      ytAddress:       m.yt.address,     // required for redeemPyToToken at maturity
+      ytAddress:       m.yt.address,     
       updatedAt:       Date.now(),
     });
   }
 
   return results;
 }
-
-// ── AAVE (last resort) ────────────────────────────────────────────────────────
 
 function buildAaveOpps(pools: LlamaPool[], oc: OnChainSnapshot): Opportunity[] {
   return pools
@@ -381,8 +337,6 @@ function buildAaveOpps(pools: LlamaPool[], oc: OnChainSnapshot): Opportunity[] {
       };
     });
 }
-
-// ── Main export ───────────────────────────────────────────────────────────────
 
 export interface UniverseResult {
   opportunities: Opportunity[];
@@ -412,7 +366,7 @@ export async function fetchUniverse(
     ...buildAaveOpps(llamaPools, ocSnapshot),
   ];
 
-  // Apply GeckoScore to every opportunity (no existing positions at discovery stage — per-user scoring happens in portfolio engine)
+  
   const scored = all
     .filter(o => TIER_RANK[o.minTier] <= TIER_RANK[userTier])
     .map(o => ({

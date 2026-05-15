@@ -10,17 +10,17 @@ export function LoadingBar() {
   const timerRef  = useRef<ReturnType<typeof setTimeout>[]>([])
 
   useEffect(() => {
-    // Clear any running timers from a previous navigation
+    
     timerRef.current.forEach(clearTimeout)
     timerRef.current = []
 
-    // Start: snap to 0, then animate to 85% quickly
+    
     setVisible(true)
     setWidth(0)
 
     const t1 = setTimeout(() => setWidth(72),  20)
     const t2 = setTimeout(() => setWidth(90),  200)
-    // "Complete" after a brief pause — fill to 100, then hide
+    
     const t3 = setTimeout(() => setWidth(100), 350)
     const t4 = setTimeout(() => setVisible(false), 580)
 

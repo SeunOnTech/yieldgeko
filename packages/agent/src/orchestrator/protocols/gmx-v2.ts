@@ -2,22 +2,6 @@ import { Contract, Interface, JsonRpcProvider } from 'ethers';
 import type { PriceMap } from './chainlink';
 import { getPrice, getPriceByAddress } from './chainlink';
 
-// ── GMX V2 on Arbitrum ────────────────────────────────────────────────────────
-//
-//  GM token price methodology:
-//    poolValueUSD = longToken.balanceOf(gmToken) × longPrice
-//                + shortToken.balanceOf(gmToken) × shortPrice
-//    gmPriceUSD   = poolValueUSD / gmToken.totalSupply()
-//
-//  This is an approximation — the exact price includes pending trader PnL
-//  which requires the Reader contract. For monitoring, the approximation is
-//  within 0.1–0.5% of the true value under normal market conditions.
-//  For pre-execution, use this + ±1% tolerance buffer.
-//
-//  OI balance: read from the GMX subgraph (long/short open interest).
-//  Falls back to neutral (0.5) if subgraph is unreachable.
-// ─────────────────────────────────────────────────────────────────────────────
-
 const MULTICALL3  = '0xcA11bde05977b3631167028862bE2a173976CA11';
 const GMX_GRAPHQL = 'https://gmx.squids.live/gmx-synthetics-arbitrum:prod/api/graphql';
 
@@ -48,21 +32,19 @@ export const GMX_MARKETS: Record<string, {
   },
 };
 
-// ── Types ─────────────────────────────────────────────────────────────────────
-
 export interface GMXMarket {
   name:          string;
   gmToken:       string;
-  gmPriceUSD:    number;         // current GM token price
-  poolValueUSD:  number;         // total pool USD value
+  gmPriceUSD:    number;         
+  poolValueUSD:  number;         
   gmTotalSupply: bigint;
-  longBalRaw:    bigint;         // long token balance in GMX pool
-  shortBalRaw:   bigint;         // short token balance
-  longOI:        number;         // USD open interest long
+  longBalRaw:    bigint;         
+  shortBalRaw:   bigint;         
+  longOI:        number;         
   shortOI:       number;
-  oiBalance:     number;         // long / (long + short), 0.5 = neutral
-  oiRiskFlag:    boolean;        // true if skew > 40%
-  feeAPY:        number;         // estimated from subgraph (0 if unavailable)
+  oiBalance:     number;         
+  oiRiskFlag:    boolean;        
+  feeAPY:        number;         
   updatedAt:     number;
 }
 
@@ -70,20 +52,16 @@ export interface GMXUserPosition {
   market:        string;
   gmToken:       string;
   gmBalance:     bigint;
-  positionUSD:   number;         // gmBalance × gmPriceUSD
-  entryPriceUSD: number;         // stored at entry — needed for realized PnL
+  positionUSD:   number;         
+  entryPriceUSD: number;         
   oiBalance:     number;
 }
-
-// ── ABIs ──────────────────────────────────────────────────────────────────────
 
 const MC3_ABI   = ['function aggregate3(tuple(address target, bool allowFailure, bytes callData)[] calls) view returns (tuple(bool success, bytes returnData)[] returnData)'];
 const ERC20_ABI = [
   'function balanceOf(address account) view returns (uint256)',
   'function totalSupply() view returns (uint256)',
 ];
-
-// ── OI data from GMX subgraph ─────────────────────────────────────────────────
 
 async function fetchOIFromSubgraph(): Promise<Map<string, { longOI: number; shortOI: number; feeAPY: number }>> {
   const result = new Map<string, { longOI: number; shortOI: number; feeAPY: number }>();
@@ -128,12 +106,10 @@ async function fetchOIFromSubgraph(): Promise<Map<string, { longOI: number; shor
 
       result.set(name, { longOI, shortOI, feeAPY });
     }
-  } catch { /* subgraph unavailable — caller uses neutral fallback */ }
+  } catch {  }
 
   return result;
 }
-
-// ── Fetch all GMX markets ─────────────────────────────────────────────────────
 
 export async function fetchGMXMarkets(
   provider: JsonRpcProvider,
@@ -143,8 +119,8 @@ export async function fetchGMXMarkets(
   const iface = new Interface(ERC20_ABI);
   const names = Object.keys(GMX_MARKETS);
 
-  // Build batched calls:
-  //   For each market: [longToken.balanceOf(gmToken), shortToken.balanceOf(gmToken), gmToken.totalSupply()]
+  
+  
   const calls: { target: string; allowFailure: boolean; callData: string }[] = [];
   for (const name of names) {
     const m = GMX_MARKETS[name];
@@ -155,7 +131,7 @@ export async function fetchGMXMarkets(
     );
   }
 
-  // Fetch OI concurrently with the on-chain call
+  
   const [raw, oi] = await Promise.all([
     mc.aggregate3(calls).catch(() => [] as { success: boolean; returnData: string }[]),
     fetchOIFromSubgraph(),
@@ -186,7 +162,7 @@ export async function fetchGMXMarkets(
 
       const gmPriceUSD = poolValueUSD / (Number(totalSupply) / 1e18);
 
-      // OI from subgraph or neutral fallback
+      
       const oiData  = oi.get(name);
       const longOI  = oiData?.longOI  ?? 0;
       const shortOI = oiData?.shortOI ?? 0;
@@ -205,53 +181,66 @@ export async function fetchGMXMarkets(
         feeAPY:     oiData?.feeAPY ?? 0,
         updatedAt:  Date.now(),
       });
-    } catch { /* skip this market */ }
+    } catch {  }
   }
 
   return markets;
 }
 
-// ── Fetch user GMX positions ──────────────────────────────────────────────────
-
-export async function fetchGMXUserPositions(
-  userAddress: string,
-  markets:     GMXMarket[],
-  provider:    JsonRpcProvider,
-): Promise<GMXUserPosition[]> {
-  if (markets.length === 0) return [];
+export async function fetchGMXBatchPositions(
+  userAddresses: string[],
+  markets:       GMXMarket[],
+  provider:      JsonRpcProvider,
+): Promise<Map<string, GMXUserPosition[]>> {
+  if (markets.length === 0 || userAddresses.length === 0) return new Map();
 
   const mc    = new Contract(MULTICALL3, MC3_ABI, provider);
-  const iface = new Interface(ERC20_ABI);
+  const erc20 = new Interface(ERC20_ABI);
 
-  const calls = markets.map(m => ({
-    target:       m.gmToken,
-    allowFailure: true,
-    callData:     iface.encodeFunctionData('balanceOf', [userAddress]),
-  }));
+  const calls: { target: string; allowFailure: boolean; callData: string }[] = [];
+  for (const user of userAddresses) {
+    for (const m of markets) {
+      calls.push({
+        target:       m.gmToken,
+        allowFailure: true,
+        callData:     erc20.encodeFunctionData('balanceOf', [user]),
+      });
+    }
+  }
 
-  const positions: GMXUserPosition[] = [];
+  const results = new Map<string, GMXUserPosition[]>();
+  const stride  = markets.length;
 
   try {
     const raw: { success: boolean; returnData: string }[] = await mc.aggregate3(calls);
-    for (let i = 0; i < markets.length; i++) {
-      const bal = decodeUint256(iface, raw[i], 'balanceOf');
-      if (bal === 0n) continue;
-      const market = markets[i];
-      positions.push({
-        market:        market.name,
-        gmToken:       market.gmToken,
-        gmBalance:     bal,
-        positionUSD:   Number(bal) / 1e18 * market.gmPriceUSD,
-        entryPriceUSD: market.gmPriceUSD,   // updated by caller at entry
-        oiBalance:     market.oiBalance,
-      });
+
+    for (let u = 0; u < userAddresses.length; u++) {
+      const user = userAddresses[u];
+      const base = u * stride;
+      const userPos: GMXUserPosition[] = [];
+
+      for (let m = 0; m < markets.length; m++) {
+        const market = markets[m];
+        const bal = decodeUint256(erc20, raw[base + m], 'balanceOf');
+        if (bal === 0n) continue;
+
+        userPos.push({
+          market:        market.name,
+          gmToken:       market.gmToken,
+          gmBalance:     bal,
+          positionUSD:   Number(bal) / 1e18 * market.gmPriceUSD,
+          entryPriceUSD: market.gmPriceUSD,
+          oiBalance:     market.oiBalance,
+        });
+      }
+      results.set(user, userPos);
     }
-  } catch { /* multicall failed */ }
+  } catch (err: any) {
+    console.warn('[GMX] Batch fetch failed:', err.message);
+  }
 
-  return positions;
+  return results;
 }
-
-// ── Pre-execution verification ────────────────────────────────────────────────
 
 export async function verifyGMXMarket(
   marketName:     string,
@@ -268,8 +257,6 @@ export async function verifyGMXMarket(
 
   return { ok: true, market, error: null };
 }
-
-// ── Helper ────────────────────────────────────────────────────────────────────
 
 function decodeUint256(
   iface: Interface,

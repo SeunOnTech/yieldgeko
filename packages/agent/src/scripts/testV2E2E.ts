@@ -1,31 +1,4 @@
-/**
- * YieldGeko V2 — Arbitrum Mainnet Full E2E Test
- *
- * Simulates exactly what the frontend will do, then lets the agent do its job:
- *
- *   Phase 1 — Delegation setup (proves crypto layer is correct, no on-chain deposit)
- *     [1] Derive MetaMask HybridDeleGator smart account from EOA
- *     [2] Check smart account USDC balance (must be ≥ DEPOSIT_USDC)
- *     [3] Pimlico UserOp: smart account approves executor to spend USDC
- *     [4] Sign ERC-7710 delegation (what the frontend's "Sign" button does)
- *
- *   Phase 2 — Agent registers + decides + executes (agent does the deployment)
- *     [5] Reset user if already registered (clean slate)
- *     [6] POST /api/register with V2 payload (what frontend sends after signing)
- *     [7] Poll /state until phase = MONITORING (agent ran GENESIS, chose protocol itself)
- *     [8] Verify on-chain: read final position from agent state + Arbiscan links
- *
- * Usage:
- *   PRIVATE_KEY=0x... PIMLICO_API_KEY=pim_... npx ts-node src/scripts/testV2E2E.ts
- *
- * Env:
- *   PRIVATE_KEY      required — EOA (signs delegation + agent wallet)
- *   PIMLICO_API_KEY  required — Pimlico API key for smart account UserOps
- *   ARB_RPC_URL      optional — defaults to Arbitrum public RPC
- *   AGENT_URL        optional — defaults to http://localhost:3001
- *   AGENT_API_KEY    optional — Bearer token for /api/* endpoints
- *   DEPOSIT_USDC     optional — dollar amount to manage (default: 1)
- */
+
 
 import 'dotenv/config';
 import { createPimlicoClient } from 'permissionless/clients/pimlico';
@@ -58,10 +31,6 @@ import {
 import * as https from 'node:https';
 import * as http2 from 'node:http';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Config
-// ─────────────────────────────────────────────────────────────────────────────
-
 const ARB_RPC     = process.env.ARB_RPC_URL ?? 'https://arb1.arbitrum.io/rpc';
 const PIMLICO_KEY = process.env.PIMLICO_API_KEY!;
 const PIMLICO_URL = `https://api.pimlico.io/v2/42161/rpc?apikey=${PIMLICO_KEY}`;
@@ -69,23 +38,15 @@ const AGENT_URL   = process.env.AGENT_URL ?? 'http://localhost:3001';
 const AGENT_KEY   = process.env.AGENT_API_KEY ?? '';
 const DEPOSIT_USD = Number(process.env.DEPOSIT_USDC ?? '1');
 const DEPOSIT_AMT = BigInt(Math.round(DEPOSIT_USD * 1_000_000));
-// Risk tier: conservative | balanced | aggressive | advanced
-const RISK_TIER   = process.env.RISK_TIER ?? 'aggressive';
 
-// ── Arbitrum mainnet addresses ────────────────────────────────────────────────
+const RISK_TIER   = process.env.RISK_TIER ?? 'aggressive';
 
 const USDC     = '0xaf88d065e77c8cC2239327C5EDb3A432268e5831' as Address;
 const EXECUTOR = (process.env.EXECUTOR_ADDRESS ?? '0x94DE8790BEd6Be0395C6BE7f42FD677b7B8cBcFb') as Address;
-const ENFORCER = '0x21b25E099CA7AF1BEa3a4558E437C56680B4b925' as Address;
+const ENFORCER = (process.env.ENFORCER_ADDRESS ?? '0x69571d5e92f4fd49b7995ddc17a3d38961127ab2') as Address;
 const SWAPPER  = (process.env.SWAPPER_ADDRESS  ?? '0x4313539C4fF1b93891B6A66D6a2eb690153A1b33') as Address;
 
-// YieldGeko treasury — receives performance fees and LP mint dust.
-// Must match the treasury set in the deployed YieldGekoExecutor contract.
 const TREASURY = (process.env.TREASURY_ADDRESS ?? '0xd61E4Bfb67514d8ad797495A584f70Cd0878fc5A') as Address;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HTTP helper (no extra deps — uses Node built-ins)
-// ─────────────────────────────────────────────────────────────────────────────
 
 function httpRequest(url: string, options: {
   method?: string;
@@ -135,10 +96,6 @@ async function agentPost(path: string, body: unknown): Promise<{ status: number;
   return { status: res.status, data, raw: res.body };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Logging
-// ─────────────────────────────────────────────────────────────────────────────
-
 const ok   = (step: string, msg: string) => console.log(`  ${step.padEnd(4)} ✅  ${msg}`);
 const info = (step: string, msg: string) => console.log(`  ${step.padEnd(4)} ℹ️   ${msg}`);
 const wait = (step: string, msg: string) => console.log(`  ${step.padEnd(4)} ⏳  ${msg}`);
@@ -152,14 +109,10 @@ function section(title: string): void {
   console.log(`\n${'─'.repeat(58)}\n  ${title}\n${'─'.repeat(58)}\n`);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Main
-// ─────────────────────────────────────────────────────────────────────────────
-
 async function main() {
-  // Two separate keys — correct separation of roles:
-  //   TEST_USER_PRIVKEY  = the user: owns the smart account, holds USDC, signs the delegation
-  //   AGENT_PRIVATE_KEY  = the agent: calls redeemDelegations via its Pimlico smart account
+  
+  
+  
   if (!process.env.TEST_USER_PRIVKEY)  fail('env', 'TEST_USER_PRIVKEY env var required (test user wallet)');
   if (!process.env.AGENT_PRIVATE_KEY)  fail('env', 'AGENT_PRIVATE_KEY env var required (agent wallet)');
   if (!PIMLICO_KEY)                    fail('env', 'PIMLICO_API_KEY env var required');
@@ -167,7 +120,7 @@ async function main() {
   const userAccount = privateKeyToAccount(process.env.TEST_USER_PRIVKEY as Hex);
   const agentEOA    = privateKeyToAccount(process.env.AGENT_PRIVATE_KEY as Hex);
 
-  // Get MetaMask framework addresses for Arbitrum from the SDK
+  
   const environment         = getSmartAccountsEnvironment(arbitrum.id);
   const DELEGATION_MANAGER  = environment.DelegationManager as Address;
   const ALLOWED_TARGETS_ENF = environment.caveatEnforcers.AllowedTargetsEnforcer as Address;
@@ -179,17 +132,17 @@ async function main() {
     transport: http(ARB_RPC),
   });
 
-  // The agent calls redeemDelegations via its Pimlico SimpleSmartAccount (ERC-4337).
-  // The delegation's `delegate` MUST match this address — it's what msg.sender will be
-  // on-chain when the agent submits the UserOperation through Pimlico.
+  
+  
+  
   const agentSimpleAccount = await toSimpleSmartAccount({
     owner:      agentEOA,
     client:     publicClient,
     entryPoint: { address: '0x0000000071727De22E5E9d8BAf0edAc6f37da032' as Address, version: '0.7' },
   });
-  const agentAddress = agentSimpleAccount.address; // e.g. 0x0aC0299A57D8035983EbdC4172F3F1D0698f3d4B
+  const agentAddress = agentSimpleAccount.address; 
 
-  // Pimlico gas price oracle — Arbitrum node returns maxPriorityFeePerGas=0 which Pimlico rejects
+  
   const pimlicoClient = createPimlicoClient({
     transport: http(PIMLICO_URL),
     entryPoint: { address: '0x0000000071727De22E5E9d8BAf0edAc6f37da032' as Address, version: '0.7' },
@@ -226,13 +179,13 @@ async function main() {
   console.log(`  Deposit:               $${DEPOSIT_USD} USDC`);
   console.log(`  Agent URL:             ${AGENT_URL}`);
 
-  // ══════════════════════════════════════════════════════════
-  // PHASE 1 — Delegation setup
-  // ══════════════════════════════════════════════════════════
+  
+  
+  
 
   section('PHASE 1 — Delegation setup');
 
-  // [1] Derive smart account address (counterfactual — no deploy tx needed yet)
+  
   info('[1]', 'Deriving MetaMask HybridDeleGator smart account...');
 
   const delegatorSmartAccount: MetaMaskSmartAccount<Implementation.Hybrid> =
@@ -250,16 +203,16 @@ async function main() {
   ok('[1]', `Smart account: ${smartAccountAddress}`);
   info('[1]', `On-chain: ${deployed ? 'already deployed' : 'counterfactual (deploys on first UserOp)'}`);
 
-  // [2] Fund smart account from EOA — fully gasless for the user.
-  //
-  //     Flow (mirrors what the frontend "Deposit" button does):
-  //       a. EOA signs an EIP-2612 permit off-chain (no gas — just a signature)
-  //       b. Smart account sends a Pimlico-sponsored UserOp:
-  //            USDC.permit(EOA, smartAccount, amount, deadline, v, r, s)
-  //            USDC.transferFrom(EOA, smartAccount, amount)
-  //       → User pays zero ETH. Pimlico covers the UserOp gas.
-  //
-  //     Native USDC on Arbitrum (0xaf88...) implements EIP-2612 natively.
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
   info('[2]', 'Checking USDC balances (EOA → smart account)...');
 
   const USDC_NONCE_ABI = parseAbi([
@@ -289,13 +242,13 @@ async function main() {
 
     wait('[2]', `Signing EIP-2612 permit (gasless — EOA signature only)...`);
 
-    // Step a: EOA signs a permit allowing the smart account to pull USDC
-    const permitDeadline = BigInt(Math.floor(Date.now() / 1000) + 3600); // 1h window
+    
+    const permitDeadline = BigInt(Math.floor(Date.now() / 1000) + 3600); 
     const permitNonce    = await publicClient.readContract({
       address: USDC, abi: USDC_NONCE_ABI, functionName: 'nonces', args: [userAccount.address],
     });
 
-    // User's EOA signs the permit — this is the gasless "Approve" step in the frontend
+    
     const userWalletClient = createWalletClient({ account: userAccount, chain: arbitrum, transport: http(ARB_RPC) });
     const permitSig = await userWalletClient.signTypedData({
       domain: {
@@ -326,9 +279,9 @@ async function main() {
     const { v, r, s } = hexToSignature(permitSig);
     ok('[2]', 'Permit signed (no gas paid)');
 
-    // Step b: Smart account UserOp — Pimlico sponsors the gas
-    //   1. USDC.permit(EOA, smartAccount, amount, deadline, v, r, s)
-    //   2. USDC.transferFrom(EOA, smartAccount, amount)
+    
+    
+    
     wait('[2]', `Sending Pimlico UserOp: permit + transferFrom (${formatUnits(needed, 6)} USDC)...`);
 
     const permitCalldata = encodeFunctionData({
@@ -356,13 +309,15 @@ async function main() {
     ok('[2]', `Smart account already has ${formatUnits(smartAcctUSDC, 6)} USDC ✓`);
   }
 
-  // [3] Approve executor AND swapper to pull USDC from smart account (single Pimlico UserOp).
-  //     - Executor: calls USDC.transferFrom(smartAccount, executor, amount) for direct deposits
-  //     - Swapper:  calls USDC.transferFrom(smartAccount, swapper, amountIn) for swap legs
-  info('[3]', 'Checking USDC allowances: smart account → executor + swapper...');
-  const [allowanceExec, allowanceSwap] = await Promise.all([
+  
+  
+  
+  
+  info('[3]', 'Checking USDC allowances: smart account → executor + swapper + enforcer...');
+  const [allowanceExec, allowanceSwap, allowanceEnforcer] = await Promise.all([
     publicClient.readContract({ address: USDC, abi: ERC20_ABI, functionName: 'allowance', args: [smartAccountAddress, EXECUTOR] }),
     publicClient.readContract({ address: USDC, abi: ERC20_ABI, functionName: 'allowance', args: [smartAccountAddress, SWAPPER] }),
+    publicClient.readContract({ address: USDC, abi: ERC20_ABI, functionName: 'allowance', args: [smartAccountAddress, ENFORCER] }),
   ]);
 
   const approvalCalls: { to: Address; value: bigint; data: Hex }[] = [];
@@ -372,11 +327,11 @@ async function main() {
   if (allowanceSwap < DEPOSIT_AMT) {
     approvalCalls.push({ to: USDC, value: 0n, data: encodeFunctionData({ abi: ERC20_ABI, functionName: 'approve', args: [SWAPPER,   DEPOSIT_AMT * 1000n] }) });
   }
-
-  // No volatile token approvals needed — with the new architecture, Swapper sends
-  // tokenOut directly to executor (not smart account). executor.executeFromBalance /
-  // executePullAndFromBalance uses its own balance, so no smart account allowance is needed
-  // for volatile tokens. Only USDC→Executor + USDC→Swapper are required.
+  if (allowanceEnforcer < DEPOSIT_AMT) {
+    
+    
+    approvalCalls.push({ to: USDC, value: 0n, data: encodeFunctionData({ abi: ERC20_ABI, functionName: 'approve', args: [ENFORCER,  DEPOSIT_AMT * 1000n] }) });
+  }
 
   if (approvalCalls.length > 0) {
     wait('[3]', `Sending approve UserOp (${approvalCalls.length} approval(s)) via Pimlico...`);
@@ -384,20 +339,20 @@ async function main() {
     const opReceipt = await bundlerClient.waitForUserOperationReceipt({ hash: opHash });
     ok('[3]', `Tokens approved (tx: ${opReceipt.receipt.transactionHash})`);
   } else {
-    ok('[3]', `Allowances OK — executor: ${formatUnits(allowanceExec, 6)}, swapper: ${formatUnits(allowanceSwap, 6)} USDC`);
+    ok('[3]', `Allowances OK — executor: ${formatUnits(allowanceExec, 6)}, swapper: ${formatUnits(allowanceSwap, 6)}, enforcer: ${formatUnits(allowanceEnforcer, 6)} USDC`);
   }
 
-  // [3c] Agent EOA must be in the enforcer's authorizedAgents allowlist.
-  //      beforeHook checks authorizedAgents[_redeemer] — every redemption reverts if not set.
-  //      The enforcer owner (deployer) calls setAuthorizedAgent once per agent wallet.
+  
+  
+  
   info('[3]', 'Checking enforcer authorizedAgents allowlist for agent EOA...');
   const isAuthorized = await publicClient.readContract({
     address: ENFORCER, abi: ENFORCER_ABI,
     functionName: 'authorizedAgents', args: [agentAddress],
   });
   if (!isAuthorized) {
-    // setAuthorizedAgent is onlyOwner — must be called by the enforcer deployer wallet (0x78620...)
-    // not by the agent or test user. This is a one-time admin setup step.
+    
+    
     console.log(`\n  ⚠️  Agent ${agentAddress} is not in the enforcer's authorizedAgents.`);
     console.log(`\n  The enforcer owner must run this once:`);
     console.log(`\n  cast send ${ENFORCER} \\`);
@@ -408,19 +363,19 @@ async function main() {
   }
   ok('[3]', `Agent EOA authorized in enforcer ✓`);
 
-  // [4] Sign ERC-7710 delegation — what the frontend's "Sign" button does.
-  //
-  //     PolicyTerms are the USER'S signed commitments (immutable after signing):
-  //       minAPYBps      — informational APY floor (agent software enforces, NOT the contract)
-  //       maxDrawdownBps — HARD on-chain revert if portfolio drops > this % from all-time peak
-  //       managedUSD6    — capital cap: agent can never deploy more than this amount
-  //       maxFeeBps      — fee cap: agent can never charge more than this % of yield
-  //       treasury       — YieldGeko treasury that receives performance fees (NOT the agent)
-  //       expiresAt      — delegation auto-expires; redemptions revert after this timestamp
-  //       feeToken       — ERC-20 token fees are collected in (USDC on Arbitrum)
-  //
-  //     args = '0x' at signing time; agent injects per-execution values at redemption.
-  //     Field order MUST match the PolicyTerms struct in YieldGekoPolicyCaveatEnforcer.sol.
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
   info('[4]', 'Building and signing ERC-7710 delegation...');
 
   const expiresAt   = BigInt(Math.floor(Date.now() / 1000) + 365 * 24 * 3600);
@@ -429,25 +384,25 @@ async function main() {
   const policyTerms = encodeAbiParameters(
     parseAbiParameters('uint256, uint256, uint256, uint256, address, uint256, address'),
     [
-      200n,         // minAPYBps:      2%  — informational, not enforced on-chain
-      2000n,        // maxDrawdownBps: 20% — hard revert if breached
-      managedUSD6,  // managedUSD6:        — capital cap in USDC 6-decimal units
-      1000n,        // maxFeeBps:      10% — max performance fee cap
-      TREASURY,     // treasury:           — YieldGeko fee recipient (NOT the agent EOA)
-      expiresAt,    // expiresAt:          — unix timestamp, auto-expires in 1 year
-      USDC,         // feeToken:           — USDC on Arbitrum
+      200n,         
+      2000n,        
+      managedUSD6,  
+      1000n,        
+      TREASURY,     
+      expiresAt,    
+      USDC,         
     ],
   ) as Hex;
 
-  // AllowedTargetsEnforcer dropped — it throws CaveatEnforcer:invalid-call-type on
-  // BATCH mode executions (3-exec delta-neutral). YieldGekoPolicyCaveatEnforcer
-  // handles all policy enforcement; AllowedTargets was redundant.
+  
+  
+  
   const delegation = {
-    delegate:  agentAddress as `0x${string}`,   // agent Pimlico SA — actual msg.sender on-chain
-    delegator: smartAccountAddress,              // user's MetaMask smart account
+    delegate:  agentAddress as `0x${string}`,   
+    delegator: smartAccountAddress,              
     authority: ROOT_AUTHORITY,
     caveats: [
-      createCaveat(ENFORCER, policyTerms, '0x'), // index 0 (args injected at redemption)
+      createCaveat(ENFORCER, policyTerms, '0x'), 
     ],
     salt: '0x0000000000000000000000000000000000000000000000000000000000000000' as Hex,
   };
@@ -462,13 +417,13 @@ async function main() {
   console.log(`        caveats:   YieldGekoPolicyCaveatEnforcer only`);
   console.log(`        sig:       ${signature.slice(0, 20)}…`);
 
-  // ══════════════════════════════════════════════════════════
-  // PHASE 2 — Agent registers + decides + executes
-  // ══════════════════════════════════════════════════════════
+  
+  
+  
 
   section('PHASE 2 — Agent registration + GENESIS');
 
-  // Check agent is reachable before doing anything
+  
   info('[5]', `Checking agent at ${AGENT_URL}/health...`);
   let healthRes: { status: number; data: unknown };
   try {
@@ -480,13 +435,13 @@ async function main() {
   const health = healthRes!.data as Record<string, unknown>;
   ok('[5]', `Agent healthy — uptime ${health.uptime}s, ${health.clients} SSE client(s)`);
 
-  // [5] Any existing registration for this address is handled at step [6] via 409 reset-and-retry
+  
 
-  // [6] POST /api/register — backend generates the userId from displayName
+  
   info('[6]', 'Registering V2 user with agent...');
 
   const registerPayload = {
-    // No 'id' field — backend derives it: 0xgeko-{slugify(displayName)}
+    
     displayName:           `v2 e2e`,
     riskTier:              RISK_TIER,
     managedUSD:            DEPOSIT_USD,
@@ -497,7 +452,7 @@ async function main() {
     migrationThresholdPct: 10,
     userAddress:           userAccount.address,
     chainId:               42161,
-    // V2 fields — this is what the frontend will POST after the user signs
+    
     smartAccountAddress:   smartAccountAddress,
     signedDelegation: {
       delegate:  signedDelegation.delegate,
@@ -519,19 +474,19 @@ async function main() {
     fail('[6]', `Registration failed (${regRes.status}): ${regRes.raw.slice(0, 200)}`);
   }
   const reg    = regRes.data as Record<string, unknown>;
-  const userId = reg.userId as string;  // backend-assigned: 0xgeko-v2-e2e
+  const userId = reg.userId as string;  
   ok('[6]', `Registered — mode: ${reg.mode}`);
   console.log(`        userId:       ${userId}`);
   console.log(`        smartAccount: ${reg.smartAccountAddress}`);
 
-  // [7] Poll /state until phase = MONITORING (agent ran GENESIS autonomously)
-  //     The agent will tick within 60 s, run the universe engine, pick the best
-  //     opportunity, build redeemDelegations calldata via DelegationClient, and
-  //     submit the tx via Pimlico. We just wait.
+  
+  
+  
+  
   section('Waiting for agent GENESIS...');
   console.log('  Agent will tick within 60 s, pick best protocol, and execute.\n');
 
-  const TIMEOUT_MS = 10 * 60_000; // 10 minutes
+  const TIMEOUT_MS = 10 * 60_000; 
   const deadline   = Date.now() + TIMEOUT_MS;
   let lastPhase    = '';
 
@@ -556,14 +511,14 @@ async function main() {
 
     if (phase === 'ERROR') fail('[7]', `Agent entered ERROR: ${JSON.stringify(state).slice(0, 200)}`);
 
-    // Accept any active phase (MONITORING, ALLOCATED, etc.) once GENESIS execution exists
+    
     const isActivePhase = phase === 'MONITORING' || phase === 'ALLOCATED' || phase === 'EVALUATING';
     if ((isActivePhase || executions.length > 0) && executions.length > 0) {
       const lastExec = executions[executions.length - 1] as Record<string, unknown>;
       const action   = lastExec.action as string;
 
       if (action === 'GENESIS') {
-        // ── [8] Verify ──────────────────────────────────────────────────────
+        
         section('PHASE 2 RESULT — GENESIS confirmed');
 
         ok('[8]', 'Agent selected protocol and executed GENESIS via delegation');
@@ -573,14 +528,14 @@ async function main() {
         console.log(`        receiptHash: ${lastExec.receiptHash}`);
         console.log(`        txHash:      ${lastExec.txHash ?? 'pending'}`);
 
-        // ── On-chain links ───────────────────────────────────────────────────
+        
         console.log('\n  ── On-chain ────────────────────────────────────────');
         if (lastExec.txHash) {
           console.log(`  Arbitrum tx:    https://arbiscan.io/tx/${lastExec.txHash}`);
           console.log(`  Smart account:  https://arbiscan.io/address/${smartAccountAddress}`);
         }
 
-        // ── 0G Proof trail links ─────────────────────────────────────────────
+        
         console.log('\n  ── 0G Proof trail ──────────────────────────────────');
         if (lastExec.zgTraceCID) {
           console.log(`  [1] Execution trace (0G Storage):`);
@@ -620,9 +575,9 @@ async function main() {
     fail('[7]', `Timed out after ${TIMEOUT_MS / 60_000} min waiting for GENESIS. Check agent logs.`);
   }
 
-  // ══════════════════════════════════════════════════════════
-  // Summary
-  // ══════════════════════════════════════════════════════════
+  
+  
+  
 
   console.log('\n══════════════════════════════════════════════════════');
   console.log('  ALL CHECKS PASSED ✅');

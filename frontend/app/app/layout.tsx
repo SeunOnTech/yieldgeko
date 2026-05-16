@@ -2,7 +2,8 @@
 
 import React, { useState, useEffect, memo } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
-import { useAccount, useDisconnect } from 'wagmi'
+import { useAccount, useDisconnect, useReadContract } from 'wagmi'
+import { formatUnits, parseAbi } from 'viem'
 import { useAppKit } from '@reown/appkit/react'
 import { WalletAvatar } from '../components/WalletAvatar'
 import Image from 'next/image'
@@ -176,6 +177,18 @@ const SidebarContent = React.memo(({
   address, pathname, router, onNav, agentUserId,
 }: { address?: string; pathname: string; router: any; onNav?: () => void; agentUserId?: string | null }) => {
   const shortAddr   = address ? `${address.slice(0, 6)}...${address.slice(-4)}` : ''
+
+  const { data: usdcRaw } = useReadContract({
+    address: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
+    abi: parseAbi(['function balanceOf(address) external view returns (uint256)']),
+    functionName: 'balanceOf',
+    args: address ? [address as `0x${string}`] : undefined,
+    chainId: 42161,
+    query: { enabled: !!address, refetchInterval: 30_000 },
+  })
+  const usdcBalance = usdcRaw !== undefined
+    ? `$${parseFloat(formatUnits(usdcRaw as bigint, 6)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    : '—'
   const isPortfolio = pathname === '/app'
   const isStrategy  = pathname.startsWith('/app/strategy')
   const isExplore   = pathname === '/app/explore'
@@ -221,7 +234,7 @@ const SidebarContent = React.memo(({
                 <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {shortAddr}
                 </div>
-                <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 2 }}>$1,240.50</div>
+                <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 2 }}>{usdcBalance} USDC</div>
               </div>
               <svg
                 width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2"
